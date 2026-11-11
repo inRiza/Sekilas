@@ -6,7 +6,8 @@
 #   opsional --splat: Gaussian splat dengan Brush (Metal) -> twin.splat
 #
 # Pakai:
-#   ./scripts/local_twin.sh <video.mp4> <nama> [--fps 2] [--splat] [--steps 5000]
+#   ./scripts/local_twin.sh <video.mp4> <nama> [--fps 2] [--splat] [--steps 5000] [--reuse]
+#   --reuse : pakai frame + hasil COLMAP yang sudah ada (lewati langkah 1-2)
 # Hasil di twin/work/<nama>/out/. Muat twin.ply atau twin.splat lewat tombol
 # "Muat .ply / .splat" di halaman /dasbor.
 set -euo pipefail
@@ -17,11 +18,13 @@ shift 2
 fps=2
 splat=0
 steps=5000
+reuse=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --fps) fps="$2"; shift 2 ;;
     --splat) splat=1; shift ;;
     --steps) steps="$2"; shift 2 ;;
+    --reuse) reuse=1; shift ;;
     *) echo "opsi tidak dikenal: $1" >&2; exit 2 ;;
   esac
 done
@@ -40,6 +43,13 @@ colmap() { "$colmap_bin" "$@"; }
 t0=$(date +%s)
 step() { echo "[$(( $(date +%s) - t0 ))s] $*"; }
 
+db="$work/colmap/database.db"
+log="$work/colmap.log"
+fail() { echo "COLMAP gagal di tahap $1, lihat $log" >&2; exit 1; }
+
+if [[ "$reuse" == 1 && -d "$work/colmap/sparse" ]]; then
+  step "1-2/4 Pakai ulang frame + hasil COLMAP yang sudah ada"
+else
 step "1/4 Ekstraksi frame (${fps} fps, lebar maks 1600 px)"
 rm -f "$work/images/"*.jpg
 ffmpeg -y -loglevel error -i "$video" -vf "fps=${fps},scale='min(1600,iw)':-2" -q:v 2 "$work/images/%04d.jpg"
@@ -47,10 +57,7 @@ echo "      $(ls "$work/images" | wc -l | tr -d ' ') frame"
 
 step "2/4 Pose kamera + awan titik renggang (COLMAP, CPU)"
 rm -rf "$work/colmap" && mkdir -p "$work/colmap/sparse"
-db="$work/colmap/database.db"
-log="$work/colmap.log"
 : > "$log"
-fail() { echo "COLMAP gagal di tahap $1, lihat $log" >&2; exit 1; }
 # Tahap dijalankan terpisah (bukan automatic_reconstructor) agar loop detection
 # berbasis vocabulary tree bisa dimatikan; cukup sequential matching untuk video.
 colmap feature_extractor --database_path "$db" --image_path "$work/images" \
@@ -64,18 +71,35 @@ colmap sequential_matcher --database_path "$db" --FeatureMatching.use_gpu 0 \
 echo "      pencocokan selesai"
 colmap mapper --database_path "$db" --image_path "$work/images" \
   --output_path "$work/colmap/sparse" >> "$log" 2>&1 || fail "rekonstruksi"
+echo $(( $(date +%s) - t0 )) > "$work/colmap/elapsed_s"
+fi
+prev_s=0
+[[ "$reuse" == 1 && -f "$work/colmap/elapsed_s" ]] && prev_s=$(cat "$work/colmap/elapsed_s")
 
-model="$work/colmap/sparse/0"
-[[ -d "$model" ]] || { echo "COLMAP tidak menghasilkan model (pose gagal)" >&2; exit 1; }
-registered=$(colmap model_analyzer --path "$model" 2>&1 | sed -n 's/.*Registered images: *\([0-9]*\).*/\1/p' | head -1)
-points=$(colmap model_analyzer --path "$model" 2>&1 | sed -n 's/.*Points: *\([0-9]*\).*/\1/p' | head -1)
-echo "      ${registered:-?} frame teregistrasi, ${points:-?} titik"
+# Mapper bisa memecah video menjadi beberapa model (sparse/0, 1, ...) bila jejak
+# kamera terputus. Pakai model dengan frame teregistrasi terbanyak.
+model="" registered=0 points=0 models=0
+for m in "$work/colmap/sparse"/*/; do
+  [[ -d "$m" ]] || continue
+  models=$((models + 1))
+  stats=$(colmap model_analyzer --path "$m" 2>&1)
+  reg=$(sed -n 's/.*Registered images: *\([0-9]*\).*/\1/p' <<< "$stats" | head -1)
+  pts=$(sed -n 's/.*Points: *\([0-9]*\).*/\1/p' <<< "$stats" | head -1)
+  if (( ${reg:-0} > registered )); then model="${m%/}" registered=${reg:-0} points=${pts:-0}; fi
+done
+[[ -n "$model" ]] || { echo "COLMAP tidak menghasilkan model (pose gagal)" >&2; exit 1; }
+total=$(ls "$work/images" | wc -l | tr -d ' ')
+echo "      $models model; dipakai $(basename "$model"): $registered/$total frame teregistrasi, $points titik"
+if (( registered * 2 < total )); then
+  echo "      PERINGATAN: kurang dari separuh frame teregistrasi. Video kemungkinan terlalu"
+  echo "      gelap/buram/banyak orang bergerak, atau kamera hanya berputar di tempat."
+fi
 
 step "3/4 Ekspor twin.ply + camera_path.json"
 colmap model_converter --input_path "$model" --output_path "$work/out/twin.ply" --output_type PLY
 mkdir -p "$work/colmap/txt"
 colmap model_converter --input_path "$model" --output_path "$work/colmap/txt" --output_type TXT
-(cd "$root" && uv run --quiet python scripts/colmap_to_twin.py "$work/colmap/txt" "$fps" "$work/out/camera_path.json")
+(cd "$root" && uv run --quiet python scripts/colmap_to_twin.py "$work/colmap/txt" "$fps" "$work/out/camera_path.json" "$work/out/up.json")
 
 if [[ "$splat" == 1 ]]; then
   [[ -x "$brush" ]] || { echo "Brush belum ada di $brush" >&2; exit 1; }
@@ -108,7 +132,8 @@ cat > "$samples/$name.json" <<JSON
   "frames": $(ls "$work/images" | wc -l | tr -d ' '),
   "registered": ${registered:-0},
   "points": ${points:-0},
-  "seconds": $(( $(date +%s) - t0 )),
+  "seconds": $(( $(date +%s) - t0 + prev_s )),
+  "up": $(cat "$work/out/up.json"),
   "created_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
   "files": [$files]
 }
