@@ -1,4 +1,3 @@
-import Image from "next/image";
 import Link from "next/link";
 import type { ReactNode } from "react";
 
@@ -10,48 +9,56 @@ const START_HREF = "/analisis/baru";
 
 /* ---------- Primitif ---------- */
 
-function ArrowRight({ className = "size-4" }: { className?: string }) {
+function Section({ id, children, className = "" }: { id?: string; children: ReactNode; className?: string }) {
   return (
-    <svg viewBox="0 0 20 20" fill="none" className={className} aria-hidden>
-      <path d="M4 10h12m0 0-5-5m5 5-5 5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
+    <section id={id} className="section">
+      <div className={`col ${className}`}>{children}</div>
+    </section>
   );
 }
 
-function PrimaryButton({ href, children, className = "" }: { href: string; children: ReactNode; className?: string }) {
+function PrimaryButton({ href, children }: { href: string; children: ReactNode }) {
   return (
     <Link
       href={href}
-      className={`group inline-flex items-center justify-center gap-2 rounded-full bg-primary-45 bg-[linear-gradient(180deg,rgb(255_255_255/0.12),transparent)] px-6 py-3.5 text-[15px] font-semibold text-white shadow-[var(--shadow-button)] transition hover:bg-primary-40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-40 ${className}`}
-    >
-      {children}
-      <ArrowRight className="size-4 transition-transform group-hover:translate-x-0.5" />
-    </Link>
-  );
-}
-
-function GhostButton({ href, children }: { href: string; children: ReactNode }) {
-  return (
-    <Link
-      href={href}
-      className="inline-flex items-center justify-center rounded-full px-6 py-3.5 text-[15px] font-semibold text-primary-50 ring-1 ring-primary-20 transition hover:bg-primary-10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-40"
+      className="btn-primary inline-flex h-11 min-w-40 items-center justify-center rounded-md px-6 text-[15px] font-medium text-white transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-40"
     >
       {children}
     </Link>
   );
 }
 
-function Eyebrow({ children }: { children: ReactNode }) {
-  return <p className="text-sm font-semibold text-primary-50">{children}</p>;
+function SecondaryButton({ href, children }: { href: string; children: ReactNode }) {
+  return (
+    <Link
+      href={href}
+      className="inline-flex h-11 min-w-40 items-center justify-center rounded-md border border-line bg-white px-6 text-[15px] text-ink transition hover:bg-panel focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-40"
+    >
+      {children}
+    </Link>
+  );
 }
 
-function SectionHeading({ eyebrow, title, body }: { eyebrow: string; title: string; body?: string }) {
+function Label({ children }: { children: ReactNode }) {
+  return <p className="font-mono text-[12px] uppercase tracking-[0.08em] text-muted">{children}</p>;
+}
+
+function Heading({ children, className = "" }: { children: ReactNode; className?: string }) {
   return (
-    <Reveal className="mx-auto max-w-2xl text-center">
-      <Eyebrow>{eyebrow}</Eyebrow>
-      <h2 className="mt-3 text-[28px] font-semibold leading-10 text-gray-70 sm:text-4xl sm:leading-[48px]">{title}</h2>
-      {body && <p className="mt-4 text-base leading-7 text-gray-50 sm:text-lg">{body}</p>}
-    </Reveal>
+    <h2
+      className={`text-[32px] leading-[1.1] font-normal tracking-[-0.035em] text-ink sm:text-[44px] ${className}`}
+    >
+      {children}
+    </h2>
+  );
+}
+
+function Chip({ children, dot }: { children: ReactNode; dot?: string }) {
+  return (
+    <span className="inline-flex items-center gap-1.5 rounded-full border border-line bg-white px-2.5 py-1 text-[13px] text-ink">
+      {dot && <span className={`size-1.5 rounded-full ${dot}`} />}
+      {children}
+    </span>
   );
 }
 
@@ -63,18 +70,29 @@ const NAV = [
   { href: "#rekomendasi", label: "Rekomendasi" },
 ];
 
+function Logo() {
+  return (
+    <Link href="/" className="flex items-center gap-2 text-[17px] font-semibold tracking-[-0.02em] text-ink">
+      <span className="grid size-5 grid-cols-2 gap-[2px] rounded-[3px] bg-primary-40 p-[3px]" aria-hidden>
+        <span className="rounded-[1px] bg-white" />
+        <span className="rounded-[1px] bg-white/40" />
+        <span className="rounded-[1px] bg-white/40" />
+        <span className="rounded-[1px] bg-white" />
+      </span>
+      Sekilas
+    </Link>
+  );
+}
+
 export function Navbar() {
   return (
-    <header className="sticky top-0 z-50 border-b border-gray-20/70 bg-white/80 backdrop-blur-md">
-      <nav className="mx-auto flex h-16 max-w-6xl items-center justify-between px-5 sm:px-8">
-        <Link href="/" className="flex items-center gap-2 text-[17px] font-bold text-primary-50">
-          <span className="grid size-7 place-items-center rounded-lg bg-primary-40 text-xs font-bold text-white">S</span>
-          Sekilas
-        </Link>
-        <ul className="hidden items-center gap-8 text-sm font-medium text-gray-50 md:flex">
+    <header className="sticky top-0 z-50 border-b border-hairline bg-white/85 backdrop-blur-md">
+      <nav className="col flex h-14 items-center justify-between">
+        <Logo />
+        <ul className="hidden items-center gap-7 text-[15px] text-ink-soft md:flex">
           {NAV.map((item) => (
             <li key={item.href}>
-              <a href={item.href} className="transition hover:text-gray-70">
+              <a href={item.href} className="transition hover:text-ink">
                 {item.label}
               </a>
             </li>
@@ -82,7 +100,7 @@ export function Navbar() {
         </ul>
         <Link
           href={START_HREF}
-          className="rounded-full bg-primary-40 px-4 py-2 text-sm font-semibold text-white transition hover:bg-primary-50"
+          className="btn-primary inline-flex h-9 items-center rounded-md px-4 text-sm font-medium text-white"
         >
           Mulai Analisis
         </Link>
@@ -93,85 +111,64 @@ export function Navbar() {
 
 /* ---------- Hero ---------- */
 
-const HERO_POINTS = [
-  "Satu video dari pintu masuk, dengan panduan titik periksa",
-  "Transkrip kejadian yang bisa kamu periksa dulu",
-  "Laporan singkat: mana yang perlu diperbaiki dulu",
+const PIPELINE = [
+  { label: "1 video", dot: "bg-primary-40" },
+  { label: "Transkrip kejadian" },
+  { label: "500 agen" },
+  { label: "Dasbor + Visual Twin" },
 ];
 
 export function Hero() {
   return (
-    <section className="relative overflow-hidden">
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-x-0 -top-40 -z-10 h-[520px] bg-[radial-gradient(60%_60%_at_70%_30%,var(--color-primary-10),transparent)]"
-      />
-      <div className="mx-auto grid max-w-6xl items-center gap-12 px-5 pb-20 pt-12 sm:px-8 lg:grid-cols-[1.05fr_1fr] lg:gap-16 lg:pb-28 lg:pt-20">
-        <Reveal>
-          <span className="inline-flex items-center gap-2 rounded-full bg-primary-10 px-3 py-1 text-xs font-semibold text-primary-50">
-            <span className="size-1.5 rounded-full bg-primary-40" />
-            Untuk UMKM makanan
-          </span>
-          <h1 className="mt-5 text-[34px] font-bold leading-[42px] tracking-tight text-gray-70 sm:text-5xl sm:leading-[58px]">
-            Tahu di mana pelanggan ragu, dari satu video
-          </h1>
-          <p className="mt-5 max-w-xl text-lg leading-7 text-gray-50">
-            Rekam satu kali dari depan tempatmu. Kami membantu menemukan titik gesekan dan saran perubahan
-            yang paling berdampak, dengan bahasa sehari-hari dan tanpa istilah rumit.
-          </p>
-          <ul className="mt-6 space-y-3">
-            {HERO_POINTS.map((point) => (
-              <li key={point} className="flex items-start gap-3 text-base leading-6 text-gray-60">
-                <span className="mt-2 size-1.5 shrink-0 rounded-full bg-primary-40" />
-                {point}
-              </li>
-            ))}
-          </ul>
-          <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-            <PrimaryButton href={START_HREF}>Mulai Analisis</PrimaryButton>
-            <GhostButton href="#cara-kerja">Lihat cara kerja</GhostButton>
-          </div>
-          <p className="mt-4 text-xs text-gray-30">Ini hasil simulasi, bukan jumlah pelanggan nyata.</p>
-        </Reveal>
-
-        <div className="relative">
-          <Reveal delay={120}>
-            <TwinPreview className="shadow-[var(--shadow-card)] ring-1 ring-primary-20" />
-          </Reveal>
-          <FunnelCard className="relative z-10 -mt-10 ml-auto w-[88%] sm:-mt-16 sm:w-[70%]" />
+    <Section className="pb-16 pt-12 sm:pb-20 sm:pt-16">
+      <Reveal className="flex flex-col items-center text-center">
+        <span className="inline-flex items-center gap-2 rounded-full border border-line px-3 py-1 text-[13px] text-muted">
+          Untuk UMKM makanan
+          <span className="h-3 w-px bg-line" />
+          <span className="text-ink">Simulasi 500 agen</span>
+        </span>
+        <h1 className="mt-6 max-w-[15ch] text-[44px] leading-[1.02] font-normal tracking-[-0.045em] text-ink sm:text-[72px]">
+          Tahu di mana pelanggan ragu, dari satu video.
+        </h1>
+        <p className="mt-6 max-w-xl text-[17px] leading-7 text-muted sm:text-xl">
+          Rekam sekali dari depan tempatmu. Sekilas menunjukkan titik gesekan dan perbaikan paling berdampak.
+        </p>
+        <div className="mt-9 flex w-full flex-col justify-center gap-3 sm:w-auto sm:flex-row">
+          <PrimaryButton href={START_HREF}>Mulai Analisis</PrimaryButton>
+          <SecondaryButton href="#cara-kerja">Cara kerja</SecondaryButton>
         </div>
-      </div>
-    </section>
+      </Reveal>
+
+      <Reveal delay={150} className="mt-16 overflow-hidden rounded-[10px] border border-line bg-white">
+        <div className="flex flex-wrap items-center justify-center gap-2 border-b border-hairline px-4 py-3">
+          {PIPELINE.map((step, i) => (
+            <span key={step.label} className="flex items-center gap-2">
+              {i > 0 && <span className="font-mono text-[12px] text-subtle">→</span>}
+              <Chip dot={step.dot}>{step.label}</Chip>
+            </span>
+          ))}
+        </div>
+        <TwinPreview uid="hero" className="px-2 py-4 sm:px-6" />
+      </Reveal>
+    </Section>
   );
 }
 
-/* ---------- Angka ringkas ---------- */
+/* ---------- Pernyataan masalah ---------- */
 
-const STATS = [
-  { value: "1", unit: "video", label: "Rekam 1–2 menit dari jalan sampai kasir" },
-  { value: "500", unit: "agen", label: "Pengunjung sintetis dengan sifat berbeda" },
-  { value: "<15", unit: "menit", label: "Dari rekam video sampai dasbor siap" },
-  { value: "80/20", unit: "", label: "Rekomendasi diurutkan dampak terbesar dulu" },
-];
-
-export function Stats() {
+export function Statement() {
   return (
-    <section className="border-y border-gray-20 bg-gray-10/60">
-      <dl className="mx-auto grid max-w-6xl grid-cols-2 gap-px px-5 sm:px-8 lg:grid-cols-4">
-        {STATS.map((s, i) => (
-          <Reveal key={s.label} delay={i * 80} className="px-2 py-8 sm:px-6">
-            <dt className="sr-only">{s.label}</dt>
-            <dd>
-              <p className="text-3xl font-bold tracking-tight text-gray-70">
-                {s.value}
-                {s.unit && <span className="ml-1 text-base font-semibold text-primary-40">{s.unit}</span>}
-              </p>
-              <p className="mt-1.5 text-sm leading-5 text-gray-50">{s.label}</p>
-            </dd>
-          </Reveal>
-        ))}
-      </dl>
-    </section>
+    <Section className="py-20 sm:py-24">
+      <Reveal>
+        <p className="max-w-3xl text-[26px] leading-[1.25] tracking-[-0.03em] text-ink sm:text-[34px]">
+          Pemilik hanya melihat pelanggan yang masuk.
+          <br />
+          Yang ragu lalu pergi tidak pernah tercatat.
+          <br />
+          <span className="text-muted">Padahal di situlah omzet hilang.</span>
+        </p>
+      </Reveal>
+    </Section>
   );
 }
 
@@ -184,273 +181,212 @@ const STEPS = [
   },
   {
     title: "Rekam tempat usaha",
-    body: "Jalan pelan dari sisi jalan sampai kasir. Panduan titik periksa muncul di layar, wajah otomatis diburamkan.",
+    body: "Jalan pelan dari sisi jalan sampai kasir. Titik periksa muncul di layar, wajah diburamkan otomatis.",
   },
   {
     title: "Periksa transkrip",
-    body: "Setiap kejadian punya bukti frame video. Kamu yang memutuskan mana yang benar sebelum simulasi.",
+    body: "Setiap kejadian punya bukti frame video. Kamu yang memastikan sebelum simulasi berjalan.",
   },
   {
     title: "Dapatkan insight",
-    body: "500 agen sintetis mengunjungi tempatmu. Hasilnya dasbor dengan titik gesekan dan saran perbaikan.",
+    body: "500 agen sintetis mengunjungi tempatmu. Hasilnya dasbor titik gesekan dan saran perbaikan.",
   },
 ];
 
 export function HowItWorks() {
   return (
-    <section id="cara-kerja" className="mx-auto max-w-6xl px-5 py-24 sm:px-8">
-      <div className="grid items-center gap-14 lg:grid-cols-[1fr_1.1fr]">
-        <Reveal className="order-last flex justify-center rounded-3xl bg-primary-10 p-10 lg:order-first">
-          <Image
-            src="/illustrations/asking-question.svg"
-            alt="Ilustrasi pemilik usaha bertanya-tanya kenapa pelanggan ragu"
-            width={220}
-            height={164}
-            className="h-auto w-full max-w-[320px]"
-          />
-        </Reveal>
+    <Section id="cara-kerja" className="py-20 sm:py-24">
+      <Reveal>
+        <Label>Cara kerja</Label>
+        <Heading className="mt-4">Dari video ke keputusan.</Heading>
+      </Reveal>
 
-        <div>
-          <Reveal>
-            <Eyebrow>Cara kerja</Eyebrow>
-            <h2 className="mt-3 text-[28px] font-semibold leading-10 text-gray-70 sm:text-4xl sm:leading-[48px]">
-              Kenali alasan pelanggan ragu datang ke tokomu
-            </h2>
-          </Reveal>
+      <div className="mt-14 grid items-start gap-14 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] lg:gap-20">
+        <ol className="relative">
+          <span aria-hidden className="absolute bottom-8 left-[4px] top-2 border-l border-dashed border-line" />
+          {STEPS.map((step, i) => (
+            <Reveal as="li" key={step.title} delay={i * 90} className="relative pb-10 pl-8 last:pb-0">
+              <span className="absolute left-0 top-[7px] size-[9px] border border-subtle bg-white" />
+              <p className="font-mono text-[11px] text-subtle">0{i + 1}</p>
+              <h3 className="mt-1 text-xl tracking-[-0.02em] text-ink">{step.title}</h3>
+              <p className="mt-2 max-w-sm text-[15px] leading-6 text-muted">{step.body}</p>
+            </Reveal>
+          ))}
+        </ol>
 
-          <ol className="relative mt-8 space-y-3">
-            <span aria-hidden className="absolute bottom-6 left-[5px] top-6 w-px bg-primary-20" />
-            {STEPS.map((step, i) => (
-              <Reveal as="li" key={step.title} delay={i * 90} className="relative flex items-center gap-4">
-                <span className="relative z-10 size-3 shrink-0 rounded-full border-2 border-primary-40 bg-white" />
-                <div className="flex-1 rounded-lg bg-white p-4 shadow-[var(--shadow-card)]">
-                  <p className="text-sm font-semibold text-gray-70">
-                    <span className="mr-2 text-primary-40">0{i + 1}</span>
-                    {step.title}
-                  </p>
-                  <p className="mt-1 text-sm leading-5 text-gray-50">{step.body}</p>
-                </div>
-              </Reveal>
-            ))}
-          </ol>
+        <div className="lg:sticky lg:top-24 lg:mt-2">
+          <FunnelCard />
         </div>
       </div>
-    </section>
+    </Section>
   );
 }
 
-/* ---------- Dasbor + Visual Twin ---------- */
+/* ---------- Dasbor ---------- */
 
 const FINDINGS = [
   "Keraguan terbesar terjadi di dasar tangga karena plang menu dan jam buka tidak terlihat dari jalan.",
   "Calon pengunjung mengira lantai 2 bukan untuk umum atau sedang tutup.",
-  "Pengunjung terbantu saat ada kepastian kisaran harga sebelum melangkah masuk.",
+  "Kepastian kisaran harga sebelum masuk membuat pengunjung lebih yakin naik.",
 ];
 
-const LAYERS = ["Kejadian", "Gesekan", "Agen", "Rekomendasi"];
+const KPIS = [
+  { label: "Tahap gesekan terbesar", value: "Naik tangga", tone: "text-friction" },
+  { label: "Faktor utama", value: "Jam buka tak terlihat", tone: "text-ink" },
+  { label: "Peluang naik jika diperbaiki", value: "+25–39%", tone: "text-impact" },
+];
 
 export function DashboardShowcase() {
   return (
-    <section id="dasbor" className="bg-gray-10/60 py-24">
-      <div className="mx-auto max-w-6xl px-5 sm:px-8">
-        <SectionHeading
-          eyebrow="Dasbor analitik"
-          title="Lihat masalahnya tepat di lokasinya"
-          body="Video diubah menjadi Visual Twin, peta 3D sederhana dari jalur yang kamu rekam. Titik ragu pengunjung tampil langsung di tempat terjadinya."
-        />
+    <Section id="dasbor" className="py-20 sm:py-24">
+      <Reveal className="mx-auto max-w-2xl text-center">
+        <Heading>Lihat masalahnya tepat di lokasinya.</Heading>
+        <p className="mt-5 text-[17px] leading-7 text-muted">
+          Video diubah menjadi Visual Twin, peta 3D sederhana dari jalur yang kamu rekam. Titik ragu pengunjung tampil di
+          tempat terjadinya.
+        </p>
+      </Reveal>
 
-        <Reveal className="mt-14 overflow-hidden rounded-3xl bg-white shadow-[var(--shadow-card)] ring-1 ring-gray-20">
-          {/* Toolbar dasbor */}
-          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-20 px-5 py-3.5">
-            <div className="flex items-center gap-2">
-              <span className="size-2.5 rounded-full bg-gray-20" />
-              <span className="size-2.5 rounded-full bg-gray-20" />
-              <span className="size-2.5 rounded-full bg-gray-20" />
-              <p className="ml-3 text-sm font-semibold text-gray-70">Laporan Analisis</p>
+      <Reveal delay={120} className="mt-14 overflow-hidden rounded-[10px] border border-line bg-white">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-hairline px-4 py-3 sm:px-5">
+          <p className="text-sm font-medium text-ink">Laporan analisis</p>
+          <div className="flex items-center gap-2 text-[13px]">
+            <span className="hidden text-muted sm:inline">Skenario</span>
+            <Chip dot="bg-primary-40">Normal</Chip>
+            <span className="text-subtle">Jam ramai</span>
+            <span className="text-subtle">Hujan</span>
+          </div>
+        </div>
+
+        <dl className="grid grid-cols-1 divide-y divide-hairline border-b border-hairline sm:grid-cols-3 sm:divide-x sm:divide-y-0">
+          {KPIS.map((k) => (
+            <div key={k.label} className="px-5 py-4">
+              <dt className="font-mono text-[11px] uppercase tracking-[0.06em] text-subtle">{k.label}</dt>
+              <dd className={`mt-1.5 text-lg tracking-[-0.02em] ${k.tone}`}>{k.value}</dd>
             </div>
-            <div className="flex gap-1 rounded-full bg-gray-10 p-1 text-xs font-medium">
-              {["Normal", "Jam ramai", "Hujan"].map((s, i) => (
-                <span
-                  key={s}
-                  className={`rounded-full px-3 py-1 ${i === 0 ? "bg-white text-gray-70 shadow-sm" : "text-gray-50"}`}
-                >
-                  {s}
-                </span>
+          ))}
+        </dl>
+
+        <div className="grid lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
+          <div className="border-b border-hairline bg-panel/60 p-3 lg:border-b-0 lg:border-r">
+            <TwinPreview uid="dash" />
+          </div>
+          <div className="p-5">
+            <p className="font-mono text-[11px] uppercase tracking-[0.06em] text-subtle">3 temuan utama</p>
+            <ol className="mt-4 divide-y divide-hairline">
+              {FINDINGS.map((f, i) => (
+                <li key={f} className="flex gap-3 py-3.5 first:pt-0">
+                  <span className="font-mono text-[12px] text-primary-40">0{i + 1}</span>
+                  <p className="text-[14px] leading-[1.55] text-ink-soft">{f}</p>
+                </li>
               ))}
-            </div>
+            </ol>
           </div>
-
-          {/* KPI */}
-          <div className="grid grid-cols-1 divide-y divide-gray-20 border-b border-gray-20 sm:grid-cols-3 sm:divide-x sm:divide-y-0">
-            <Kpi label="Tahap gesekan terbesar" value="Naik tangga" tone="friction" />
-            <Kpi label="Faktor utama" value="Jam buka tak terlihat" />
-            <Kpi label="Peluang naik jika diperbaiki" value="+25–39%" tone="impact" />
-          </div>
-
-          <div className="grid gap-6 p-5 lg:grid-cols-[1.4fr_1fr] lg:p-6">
-            <div>
-              <TwinPreview />
-              <div className="mt-3 flex flex-wrap gap-2">
-                {LAYERS.map((layer, i) => (
-                  <span
-                    key={layer}
-                    className={`rounded-full px-3 py-1 text-xs font-medium ring-1 ${
-                      i < 2 ? "bg-primary-10 text-primary-50 ring-primary-20" : "text-gray-50 ring-gray-20"
-                    }`}
-                  >
-                    {layer}
-                  </span>
-                ))}
-              </div>
-            </div>
-
-            <div>
-              <p className="text-sm font-semibold text-gray-70">3 temuan utama</p>
-              <ol className="mt-3 space-y-2.5">
-                {FINDINGS.map((f, i) => (
-                  <li key={f} className="flex gap-3 rounded-xl p-3 ring-1 ring-gray-20">
-                    <span className="grid size-6 shrink-0 place-items-center rounded-full bg-primary-10 text-xs font-semibold text-primary-50">
-                      {i + 1}
-                    </span>
-                    <p className="text-[13px] leading-5 text-gray-60">{f}</p>
-                  </li>
-                ))}
-              </ol>
-            </div>
-          </div>
-        </Reveal>
-        <p className="mt-4 text-center text-xs text-gray-30">Contoh tampilan. Angka berupa rentang hasil simulasi.</p>
-      </div>
-    </section>
+        </div>
+      </Reveal>
+      <p className="mt-4 text-center font-mono text-[11px] text-subtle">
+        Contoh tampilan · angka berupa rentang hasil simulasi
+      </p>
+    </Section>
   );
 }
 
-function Kpi({ label, value, tone }: { label: string; value: string; tone?: "friction" | "impact" }) {
-  const color = tone === "friction" ? "text-friction" : tone === "impact" ? "text-impact" : "text-gray-70";
-  return (
-    <div className="px-5 py-4">
-      <p className="text-xs text-gray-50">{label}</p>
-      <p className={`mt-1 text-lg font-semibold ${color}`}>{value}</p>
-    </div>
-  );
-}
-
-/* ---------- Rekomendasi Pareto ---------- */
+/* ---------- Rekomendasi ---------- */
 
 const RECS = [
   {
-    rank: 1,
-    tag: "Prioritas tinggi · dampak besar, usaha kecil",
-    tagTone: "impact",
-    title: "Pasang standing banner menu dan jam buka di dasar tangga",
-    body: "Menunjukkan harga dan status buka sebelum pengunjung memutuskan naik.",
+    tag: "Prioritas",
+    title: "Standing banner menu dan jam buka di dasar tangga",
+    body: "Harga dan status buka terlihat sebelum pengunjung memutuskan naik.",
     impact: "+32% naik tangga",
-    effort: "Rendah (±Rp150rb)",
+    effort: "Rendah · ±Rp150rb",
   },
   {
-    rank: 2,
-    tag: "Prioritas tinggi · tanpa biaya",
-    tagTone: "primary",
+    tag: "Prioritas",
     title: "Buka pintu tangga dan nyalakan lampu",
     body: "Menghilangkan kesan lantai 2 tertutup atau kantor pribadi.",
     impact: "+18% trafik masuk",
-    effort: "Sangat rendah (nol)",
+    effort: "Sangat rendah · nol",
   },
   {
-    rank: 3,
     tag: "Nanti",
-    tagTone: "muted",
-    title: "Papan petunjuk 'Buka di Lantai 2' setinggi mata",
-    body: "Membantu pejalan kaki di trotoar depan menemukan pintu masuk.",
+    title: "Papan 'Buka di Lantai 2' setinggi mata",
+    body: "Membantu pejalan kaki di trotoar menemukan pintu masuk.",
     impact: "+14% navigasi",
     effort: "Rendah",
   },
-] as const;
-
-const TAG = {
-  impact: "bg-impact-10 text-impact ring-impact/20",
-  primary: "bg-primary-10 text-primary-50 ring-primary-20",
-  muted: "bg-gray-10 text-gray-50 ring-gray-20",
-} as const;
+];
 
 export function Recommendations() {
   return (
-    <section id="rekomendasi" className="mx-auto max-w-6xl px-5 py-24 sm:px-8">
-      <SectionHeading
-        eyebrow="Rekomendasi Pareto 80/20"
-        title="Kerjakan yang paling berdampak dulu"
-        body="Setiap saran diuji ulang lewat simulasi, bukan opini. Yang ditandai Prioritas mencakup sekitar 80% dampak dengan usaha paling kecil."
-      />
+    <Section id="rekomendasi" className="py-20 sm:py-24">
+      <Reveal className="grid gap-6 lg:grid-cols-2 lg:items-end">
+        <div>
+          <Label>Rekomendasi 80/20</Label>
+          <Heading className="mt-4">Kerjakan yang paling berdampak dulu.</Heading>
+        </div>
+        <p className="max-w-md text-[17px] leading-7 text-muted lg:justify-self-end">
+          Setiap saran diuji ulang lewat simulasi, bukan opini. Prioritas mencakup sekitar 80% dampak dengan usaha
+          paling kecil.
+        </p>
+      </Reveal>
 
-      <div className="mt-14 grid gap-5 md:grid-cols-3">
+      <div className="mt-14 grid overflow-hidden rounded-[10px] border border-line md:grid-cols-3">
         {RECS.map((rec, i) => (
           <Reveal
-            key={rec.rank}
-            delay={i * 100}
-            className="flex flex-col rounded-2xl bg-white p-5 shadow-[var(--shadow-card)] ring-1 ring-gray-20 transition hover:-translate-y-0.5 hover:shadow-lg"
+            key={rec.title}
+            delay={i * 90}
+            className="flex flex-col border-line p-6 not-last:border-b md:not-last:border-r md:not-last:border-b-0"
           >
-            <div className="flex items-start justify-between gap-3">
-              <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ring-1 ${TAG[rec.tagTone]}`}>
-                {rec.tag}
-              </span>
-              <span className="text-sm font-semibold text-primary-40">#{rec.rank}</span>
+            <div className="flex items-center justify-between font-mono text-[11px] uppercase tracking-[0.06em]">
+              <span className={rec.tag === "Prioritas" ? "text-primary-40" : "text-subtle"}>{rec.tag}</span>
+              <span className="text-subtle">#{i + 1}</span>
             </div>
-            <h3 className="mt-4 text-base font-semibold leading-6 text-gray-70">{rec.title}</h3>
-            <p className="mt-2 flex-1 text-sm leading-5 text-gray-50">{rec.body}</p>
-            <div className="mt-5 grid grid-cols-2 gap-2">
-              <div className="rounded-lg bg-gray-10 p-3">
-                <p className="text-[11px] text-gray-50">Prediksi dampak</p>
-                <p className="mt-0.5 text-sm font-semibold text-impact">{rec.impact}</p>
+            <h3 className="mt-5 text-lg leading-snug tracking-[-0.02em] text-ink">{rec.title}</h3>
+            <p className="mt-2 flex-1 text-[14px] leading-6 text-muted">{rec.body}</p>
+            <dl className="mt-6 grid grid-cols-2 gap-4 border-t border-hairline pt-4 text-[13px]">
+              <div>
+                <dt className="text-subtle">Dampak</dt>
+                <dd className="mt-0.5 text-impact">{rec.impact}</dd>
               </div>
-              <div className="rounded-lg bg-gray-10 p-3">
-                <p className="text-[11px] text-gray-50">Estimasi usaha</p>
-                <p className="mt-0.5 text-sm font-semibold text-gray-70">{rec.effort}</p>
+              <div>
+                <dt className="text-subtle">Usaha</dt>
+                <dd className="mt-0.5 text-ink">{rec.effort}</dd>
               </div>
-            </div>
+            </dl>
           </Reveal>
         ))}
       </div>
-    </section>
+    </Section>
   );
 }
 
 /* ---------- Kepercayaan ---------- */
 
 const TRUST = [
-  { title: "Bukti di setiap temuan", body: "Klik temuan, langsung lihat frame video dan lokasinya di Visual Twin." },
-  { title: "Kamu yang memegang kendali", body: "Transkrip diperiksa dan dikoreksi pemilik sebelum simulasi berjalan." },
-  { title: "Privasi dijaga", body: "Wajah dan plat nomor diburamkan di ponselmu sebelum video diunggah." },
+  { title: "Bukti di setiap temuan", body: "Setiap temuan tertaut ke frame video dan lokasinya di Visual Twin." },
+  { title: "Kamu yang memegang kendali", body: "Transkrip diperiksa pemilik sebelum simulasi berjalan." },
+  { title: "Privasi dijaga", body: "Wajah dan plat nomor diburamkan di ponselmu sebelum diunggah." },
 ];
 
 export function Trust() {
   return (
-    <section className="mx-auto max-w-6xl px-5 pb-24 sm:px-8">
-      <div className="grid gap-5 md:grid-cols-3">
+    <Section className="py-20 sm:py-24">
+      <div className="grid gap-10 md:grid-cols-3 md:gap-0 md:divide-x md:divide-hairline">
         {TRUST.map((t, i) => (
-          <Reveal key={t.title} delay={i * 80} className="rounded-2xl p-6 ring-1 ring-gray-20">
-            <span className="grid size-9 place-items-center rounded-xl bg-primary-10 text-primary-40">
-              <svg viewBox="0 0 20 20" fill="none" className="size-4" aria-hidden>
-                <path d="m5 10.5 3 3 7-7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-            </span>
-            <h3 className="mt-4 text-base font-semibold text-gray-70">{t.title}</h3>
-            <p className="mt-1.5 text-sm leading-5 text-gray-50">{t.body}</p>
+          <Reveal key={t.title} delay={i * 80} className="md:px-8 md:first:pl-0 md:last:pr-0">
+            <p className="font-mono text-[11px] text-subtle">0{i + 1}</p>
+            <h3 className="mt-3 text-xl tracking-[-0.02em] text-ink">{t.title}</h3>
+            <p className="mt-2 text-[15px] leading-6 text-muted">{t.body}</p>
           </Reveal>
         ))}
       </div>
-
-      <Reveal className="mt-6 flex items-start gap-3 rounded-2xl bg-gray-10 p-5 text-sm leading-5 text-gray-60">
-        <svg viewBox="0 0 20 20" fill="none" className="mt-0.5 size-4 shrink-0 text-gray-50" aria-hidden>
-          <circle cx="10" cy="10" r="8" stroke="currentColor" strokeWidth="1.6" />
-          <path d="M10 9v5M10 6.5v.01" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-        </svg>
-        <p>
-          <b className="font-semibold text-gray-70">Catatan:</b> hasil Sekilas adalah simulasi 500 agen sintetis sebagai
-          hipotesis titik gesekan, bukan prediksi jumlah pelanggan atau omzet. Dasbor juga memberi rencana pengukuran
-          sederhana supaya kamu bisa membuktikannya sendiri.
-        </p>
+      <Reveal className="mt-14 rounded-[10px] border border-line bg-panel px-5 py-4 text-[14px] leading-6 text-ink-soft">
+        <span className="font-medium text-ink">Catatan.</span> Hasil Sekilas adalah simulasi 500 agen sintetis sebagai
+        hipotesis titik gesekan, bukan prediksi jumlah pelanggan atau omzet. Dasbor juga memberi rencana pengukuran
+        sederhana supaya kamu bisa membuktikannya sendiri.
       </Reveal>
-    </section>
+    </Section>
   );
 }
 
@@ -458,47 +394,27 @@ export function Trust() {
 
 export function CtaBand() {
   return (
-    <section className="mx-auto w-full max-w-6xl px-5 pb-24 sm:px-8">
-      <Reveal className="relative grid items-center gap-8 overflow-hidden rounded-3xl bg-primary-45 px-8 py-12 text-white sm:px-12 md:grid-cols-[1fr_auto]">
-        <div
-          aria-hidden
-          className="pointer-events-none absolute -right-20 -top-20 size-80 rounded-full bg-white/10 blur-2xl"
-        />
-        <div className="relative">
-          <h2 className="text-[28px] font-semibold leading-10 sm:text-4xl sm:leading-[48px]">
-            Cukup satu video untuk mulai
-          </h2>
-          <p className="mt-3 max-w-lg text-base leading-6 text-white/80">
-            Temukan titik gesekan dan peluang perbaikan pada tempat usahamu dalam kurang dari 15 menit.
-          </p>
-        </div>
-        <div className="relative flex items-center gap-6">
-          <Image
-            src="/illustrations/video-check.svg"
-            alt=""
-            width={200}
-            height={167}
-            className="hidden h-auto w-28 rounded-2xl bg-white p-3 lg:block"
-          />
-          <Link
-            href={START_HREF}
-            className="group inline-flex items-center gap-2 rounded-full bg-white px-6 py-3.5 text-[15px] font-semibold text-primary-50 transition hover:bg-primary-10"
-          >
-            Analisis Sekarang
-            <ArrowRight className="size-4 transition-transform group-hover:translate-x-0.5" />
-          </Link>
+    <Section className="py-24 sm:py-28">
+      <Reveal className="flex flex-col items-center text-center">
+        <Heading className="max-w-[18ch]">Cukup satu video untuk mulai.</Heading>
+        <p className="mt-5 max-w-md text-[17px] leading-7 text-muted">
+          Temukan titik gesekan dan peluang perbaikan tempat usahamu dalam kurang dari 15 menit.
+        </p>
+        <div className="mt-9 flex w-full flex-col justify-center gap-3 sm:w-auto sm:flex-row">
+          <PrimaryButton href={START_HREF}>Analisis sekarang</PrimaryButton>
+          <SecondaryButton href="#dasbor">Lihat contoh dasbor</SecondaryButton>
         </div>
       </Reveal>
-    </section>
+    </Section>
   );
 }
 
 export function Footer() {
   return (
-    <footer className="border-t border-gray-20">
-      <div className="mx-auto flex max-w-6xl flex-col gap-3 px-5 py-8 text-sm text-gray-50 sm:flex-row sm:items-center sm:justify-between sm:px-8">
-        <p className="font-semibold text-primary-50">Sekilas</p>
-        <p>Simulator pengunjung untuk UMKM makanan.</p>
+    <footer>
+      <div className="col flex flex-col gap-3 py-8 text-sm text-muted sm:flex-row sm:items-center sm:justify-between">
+        <Logo />
+        <p className="font-mono text-[12px]">Simulator pengunjung untuk UMKM makanan</p>
       </div>
     </footer>
   );
