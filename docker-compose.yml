@@ -1,0 +1,29 @@
+services:
+  db:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: sekilas
+      POSTGRES_PASSWORD: sekilas
+      POSTGRES_DB: sekilas
+    ports: ["5432:5432"]
+    volumes: [pgdata:/var/lib/postgresql/data]
+
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+
+  # Worker GPU, hanya di mesin NVIDIA: docker compose --profile gpu up twin
+  twin:
+    build: ./twin
+    profiles: ["gpu"]
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      TWIN_QUEUE_NAME: twin
+    deploy:
+      resources:
+        reservations:
+          devices: [{ driver: nvidia, count: 1, capabilities: [gpu] }]
+    depends_on: [redis]
+
+volumes:
+  pgdata:
