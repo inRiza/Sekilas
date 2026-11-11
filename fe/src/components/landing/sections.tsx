@@ -5,7 +5,7 @@ import { FunnelCard } from "./funnel-card";
 import { Reveal } from "./reveal";
 import { TwinPreview } from "./twin-preview";
 
-const START_HREF = "/analisis/baru";
+const START_HREF = "/dasbor";
 
 /* ---------- Primitif ---------- */
 
@@ -70,7 +70,7 @@ const NAV = [
   { href: "#rekomendasi", label: "Rekomendasi" },
 ];
 
-function Logo() {
+export function Logo() {
   return (
     <Link href="/" className="flex items-center gap-2 text-[17px] font-semibold tracking-[-0.02em] text-ink">
       <span className="grid size-5 grid-cols-2 gap-[2px] rounded-[3px] bg-primary-40 p-[3px]" aria-hidden>
