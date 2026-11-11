@@ -1,0 +1,14 @@
+[project]
+name = "sekilas-twin"
+version = "0.1.0"
+description = "Worker GPU Visual Twin: video terburam -> peta 3D (PRD F7, 11.1)"
+requires-python = ">=3.10,<3.12"
+dependencies = [
+    "arq>=0.26",
+    "pydantic>=2.9",
+    "numpy>=1.26",
+    "opencv-python-headless>=4.10",
+]
+
+[dependency-groups]
+dev = ["pytest>=8.3", "ruff>=0.7"]

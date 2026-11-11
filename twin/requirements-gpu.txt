@@ -1,0 +1,3 @@
+# Dipasang di atas image nerfstudio (sudah berisi nerfstudio, gsplat, COLMAP). Linux + CUDA saja.
+sam2
+# vggt: tambahkan setelah lisensi varian model dicek (PRD 11.1)
