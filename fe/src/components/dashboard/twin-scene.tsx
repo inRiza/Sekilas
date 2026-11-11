@@ -137,9 +137,12 @@ function PlyModel({ url }: { url: string }) {
   const hasColor = Boolean(geometry.getAttribute("color"));
   const isMesh = Boolean(geometry.index);
 
-  useMemo(() => {
+  // Skala koordinat COLMAP/nerfstudio tidak tentu: ukuran titik mengikuti besar model.
+  const pointSize = useMemo(() => {
     geometry.center();
     if (isMesh && !geometry.getAttribute("normal")) geometry.computeVertexNormals();
+    geometry.computeBoundingSphere();
+    return (geometry.boundingSphere?.radius ?? 1) * 0.006;
   }, [geometry, isMesh]);
 
   return isMesh ? (
@@ -148,7 +151,7 @@ function PlyModel({ url }: { url: string }) {
     </mesh>
   ) : (
     <points geometry={geometry}>
-      <pointsMaterial size={0.02} vertexColors={hasColor} color={hasColor ? undefined : "#7d8693"} sizeAttenuation />
+      <pointsMaterial size={pointSize} vertexColors={hasColor} color={hasColor ? undefined : "#7d8693"} sizeAttenuation />
     </points>
   );
 }

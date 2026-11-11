@@ -31,10 +31,19 @@ function formatSize(bytes: number) {
   return bytes > 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : `${(bytes / 1e6).toFixed(1)} MB`;
 }
 
-export function TwinWorkbench() {
+/** `/dasbor?src=/samples/twin.ply` memuat hasil 3D dari URL (demo & uji tanpa upload). */
+function sourceFromUrl(src?: string): TwinSource {
+  const ext = src?.split("?")[0].split(".").pop()?.toLowerCase();
+  if (src && (ext === "ply" || ext === "splat")) {
+    return { kind: ext, url: src, name: src.split("/").pop() ?? src };
+  }
+  return { kind: "demo" };
+}
+
+export function TwinWorkbench({ initialSrc }: { initialSrc?: string }) {
   const [video, setVideo] = useState<VideoInfo | null>(null);
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
-  const [source, setSource] = useState<TwinSource>({ kind: "demo" });
+  const [source, setSource] = useState<TwinSource>(() => sourceFromUrl(initialSrc));
   const [loadError, setLoadError] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
   const timers = useRef<number[]>([]);
@@ -169,7 +178,7 @@ export function TwinWorkbench() {
               type="button"
               disabled={!accepted || phase.kind === "running"}
               onClick={build}
-              className="btn-primary inline-flex h-10 flex-1 items-center justify-center rounded-md px-4 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-40 disabled:[filter:none]"
+              className="btn-primary inline-flex h-10 flex-1 items-center justify-center rounded-md px-4 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-40 disabled:filter-none"
             >
               {phase.kind === "running" ? "Memproses…" : "Bangun Visual Twin"}
             </button>
@@ -249,7 +258,7 @@ export function TwinWorkbench() {
           </div>
         </header>
 
-        <div className="relative h-[420px] sm:h-[520px] lg:h-full lg:min-h-[560px]">
+        <div className="relative h-105 sm:h-130 lg:h-full lg:min-h-140">
           <TwinScene source={source} onLoadError={() => setLoadError("File 3D tidak bisa dibaca.")} />
 
           {phase.kind === "running" && (

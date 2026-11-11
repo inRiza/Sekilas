@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { Suspense } from "react";
 
 import { TwinWorkbench } from "@/components/dashboard/twin-workbench";
 import { Logo } from "@/components/landing/sections";
@@ -8,7 +9,12 @@ export const metadata: Metadata = {
   title: "Dasbor — Sekilas",
 };
 
-export default function DashboardPage() {
+async function WorkbenchFromUrl({ searchParams }: { searchParams: PageProps<"/dasbor">["searchParams"] }) {
+  const { src } = await searchParams;
+  return <TwinWorkbench initialSrc={typeof src === "string" ? src : undefined} />;
+}
+
+export default function DashboardPage({ searchParams }: PageProps<"/dasbor">) {
   return (
     <>
       <header className="sticky top-0 z-50 border-b border-hairline bg-white/85 backdrop-blur-md">
@@ -32,11 +38,14 @@ export default function DashboardPage() {
           </h1>
           <p className="mt-3 max-w-2xl text-[15px] leading-6 text-muted">
             Unggah video tempat usaha di kiri. Hasil pemetaan 3D tampil di kanan. Untuk sekarang viewer memakai scene
-            contoh; file <code className="font-mono text-[13px] text-ink">.ply</code> hasil{" "}
-            <code className="font-mono text-[13px] text-ink">ns-export</code> bisa dimuat langsung.
+            contoh; file <code className="font-mono text-[13px] text-ink">.ply</code> dari COLMAP atau{" "}
+            <code className="font-mono text-[13px] text-ink">ns-export</code> dan{" "}
+            <code className="font-mono text-[13px] text-ink">.splat</code> bisa dimuat langsung.
           </p>
           <div className="mt-10">
-            <TwinWorkbench />
+            <Suspense fallback={<TwinWorkbench />}>
+              <WorkbenchFromUrl searchParams={searchParams} />
+            </Suspense>
           </div>
         </div>
       </main>
