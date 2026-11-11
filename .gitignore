@@ -20,6 +20,7 @@ research/
 twin/.tools/
 twin/testdata/
 twin/work/
+twin/target/
 
 # Hasil twin lokal untuk uji viewer (/dasbor?src=/samples/...)
 fe/public/samples/
