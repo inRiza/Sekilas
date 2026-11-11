@@ -15,3 +15,11 @@ research/
 
 # OS
 .DS_Store
+
+# Visual Twin lokal: binari alat, data uji, dan hasil kerja
+twin/.tools/
+twin/testdata/
+twin/work/
+
+# Hasil twin lokal untuk uji viewer (/dasbor?src=/samples/...)
+fe/public/samples/
