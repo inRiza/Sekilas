@@ -8,6 +8,8 @@
 # Pakai:
 #   ./scripts/local_twin.sh <video.mp4> <nama> [--fps 2] [--splat] [--steps 5000] [--reuse]
 #   --reuse : pakai frame + hasil COLMAP yang sudah ada (lewati langkah 1-2)
+#   --matcher exhaustive : cocokkan semua pasangan frame (lebih lambat, menolong
+#             video gelap/ramai yang jejak kameranya sering putus)
 # Hasil di twin/work/<nama>/out/. Muat twin.ply atau twin.splat lewat tombol
 # "Muat .ply / .splat" di halaman /dasbor.
 set -euo pipefail
@@ -19,12 +21,14 @@ fps=2
 splat=0
 steps=5000
 reuse=0
+matcher=sequential
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --fps) fps="$2"; shift 2 ;;
     --splat) splat=1; shift ;;
     --steps) steps="$2"; shift 2 ;;
     --reuse) reuse=1; shift ;;
+    --matcher) matcher="$2"; shift 2 ;;
     *) echo "opsi tidak dikenal: $1" >&2; exit 2 ;;
   esac
 done
@@ -65,9 +69,14 @@ colmap feature_extractor --database_path "$db" --image_path "$work/images" \
   --FeatureExtraction.max_image_size 1600 --SiftExtraction.max_num_features 4096 >> "$log" 2>&1 \
   || fail "ekstraksi fitur"
 echo "      fitur selesai"
-colmap sequential_matcher --database_path "$db" --FeatureMatching.use_gpu 0 \
-  --SequentialMatching.overlap 10 --SequentialMatching.loop_detection 0 >> "$log" 2>&1 \
-  || fail "pencocokan"
+if [[ "$matcher" == exhaustive ]]; then
+  colmap exhaustive_matcher --database_path "$db" --FeatureMatching.use_gpu 0 >> "$log" 2>&1 \
+    || fail "pencocokan"
+else
+  colmap sequential_matcher --database_path "$db" --FeatureMatching.use_gpu 0 \
+    --SequentialMatching.overlap 10 --SequentialMatching.loop_detection 0 >> "$log" 2>&1 \
+    || fail "pencocokan"
+fi
 echo "      pencocokan selesai"
 colmap mapper --database_path "$db" --image_path "$work/images" \
   --output_path "$work/colmap/sparse" >> "$log" 2>&1 || fail "rekonstruksi"
