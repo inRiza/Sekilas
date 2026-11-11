@@ -253,6 +253,37 @@ function SplatModel({ url }: { url: string }) {
   );
 }
 
+/* ---------- Orientasi: putar model agar tegak ---------- */
+
+// Hasil pipeline lokal punya metadata /samples/<nama>.json berisi "up" (arah atas
+// dunia dari orientasi kamera HP). COLMAP tidak tahu gravitasi, jadi tanpa ini model
+// tampil miring/terbalik.
+const orientationCache = new Map<string, Promise<THREE.Quaternion>>();
+
+function orientationFor(url: string): Promise<THREE.Quaternion> {
+  let promise = orientationCache.get(url);
+  if (!promise) {
+    const meta = url.startsWith("/samples/") ? url.replace(/\.(ply|splat)(\?.*)?$/, ".json") : null;
+    promise = (meta ? fetch(meta).then((r) => (r.ok ? r.json() : null)) : Promise.resolve(null))
+      .then((data: { up?: number[] } | null) => {
+        const up = data?.up;
+        if (!up || up.length !== 3) return new THREE.Quaternion();
+        return new THREE.Quaternion().setFromUnitVectors(
+          new THREE.Vector3(up[0], up[1], up[2]).normalize(),
+          new THREE.Vector3(0, 1, 0),
+        );
+      })
+      .catch(() => new THREE.Quaternion());
+    orientationCache.set(url, promise);
+  }
+  return promise;
+}
+
+function Upright({ url, children }: { url: string; children: ReactNode }) {
+  const quaternion = use(orientationFor(url));
+  return <group quaternion={quaternion}>{children}</group>;
+}
+
 class LoadBoundary extends Component<{ children: ReactNode; onError: () => void }, { failed: boolean }> {
   state = { failed: false };
   static getDerivedStateFromError() {
@@ -287,8 +318,16 @@ export default function TwinScene({ source, onLoadError }: { source: TwinSource;
       <LoadBoundary key={source.kind === "demo" ? "demo" : source.url} onError={onLoadError}>
         <Suspense fallback={null}>
           {source.kind === "demo" && <DemoTwin />}
-          {source.kind === "ply" && <PlyModel url={source.url} />}
-          {source.kind === "splat" && <SplatModel url={source.url} />}
+          {source.kind === "ply" && (
+            <Upright url={source.url}>
+              <PlyModel url={source.url} />
+            </Upright>
+          )}
+          {source.kind === "splat" && (
+            <Upright url={source.url}>
+              <SplatModel url={source.url} />
+            </Upright>
+          )}
         </Suspense>
       </LoadBoundary>
       <OrbitControls makeDefault target={[0, 1, 0]} enableDamping dampingFactor={0.08} maxPolarAngle={Math.PI / 2.05} />
