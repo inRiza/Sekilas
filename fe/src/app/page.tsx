@@ -6,7 +6,7 @@ import {
   HowItWorks,
   Navbar,
   Recommendations,
-  Stats,
+  Statement,
   Trust,
 } from "@/components/landing/sections";
 
@@ -16,7 +16,7 @@ export default function Home() {
       <Navbar />
       <main className="flex-1">
         <Hero />
-        <Stats />
+        <Statement />
         <HowItWorks />
         <DashboardShowcase />
         <Recommendations />
