@@ -1,26 +1,106 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+/* Token dari Figma Logicodix (primary/*, neutral/*) */
+@theme {
+  --color-primary-10: #eaf0ff;
+  --color-primary-20: #c9d8fd;
+  --color-primary-40: #3466e5;
+  --color-primary-45: #1d61e7;
+  --color-primary-50: #2852c2;
+
+  --color-gray-10: #f6f7f9;
+  --color-gray-20: #e6e8ec;
+  --color-gray-30: #a6a6a6;
+  --color-gray-50: #666666;
+  --color-gray-60: #404040;
+  --color-gray-70: #1e1e1e;
+
+  --color-friction: #e11d48;
+  --color-friction-10: #fff1f3;
+  --color-impact: #059669;
+  --color-impact-10: #ecfdf5;
+
+  --font-sans: var(--font-jakarta), ui-sans-serif, system-ui, sans-serif;
+
+  --shadow-card: 0 0 2.2px rgb(0 0 0 / 0.1), 0 8px 24px -12px rgb(30 30 30 / 0.12);
+  --shadow-button: 0 1px 2px rgb(37 62 167 / 0.48), 0 0 0 1px #375dfb;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html {
+  scroll-behavior: smooth;
+  scroll-padding-top: 5rem;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: #ffffff;
+  color: var(--color-gray-70);
+}
+
+/* Reveal saat scroll (lihat components/landing/reveal.tsx) */
+[data-reveal] {
+  opacity: 0;
+  transform: translateY(16px);
+  transition:
+    opacity 600ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 600ms cubic-bezier(0.22, 1, 0.36, 1);
+  transition-delay: var(--reveal-delay, 0ms);
+}
+
+[data-reveal][data-visible="true"] {
+  opacity: 1;
+  transform: none;
+}
+
+/* Bar funnel tumbuh saat terlihat */
+[data-visible="true"] .funnel-fill {
+  transform: scaleX(1);
+}
+
+.funnel-fill {
+  transform-origin: left;
+  transform: scaleX(0);
+  transition: transform 900ms cubic-bezier(0.22, 1, 0.36, 1) 200ms;
+}
+
+@keyframes pulse-ring {
+  0% {
+    transform: scale(0.6);
+    opacity: 0.7;
+  }
+  100% {
+    transform: scale(1.8);
+    opacity: 0;
+  }
+}
+
+.pulse-ring {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: pulse-ring 2.4s ease-out infinite;
+}
+
+@keyframes dash-move {
+  to {
+    stroke-dashoffset: -24;
+  }
+}
+
+.path-flow {
+  animation: dash-move 1.6s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  [data-reveal],
+  .funnel-fill {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+  .pulse-ring,
+  .path-flow {
+    animation: none;
+  }
 }
