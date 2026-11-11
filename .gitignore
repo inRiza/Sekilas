@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# Env & data
+.env
+be/storage/
+twin/data/
+twin/outputs/
+twin/exports/
+research/
+
+# OS
+.DS_Store
