@@ -24,8 +24,8 @@ export default function DashboardPage({ searchParams }: PageProps<"/dasbor">) {
             <span className="text-line">/</span>
             <span className="text-sm text-muted">Analisis baru</span>
           </div>
-          <Link href="/" className="text-sm text-muted hover:text-ink">
-            Kembali
+          <Link href="/hasil" className="text-sm text-muted hover:text-ink">
+            ← Semua hasil
           </Link>
         </div>
       </header>

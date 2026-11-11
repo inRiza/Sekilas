@@ -92,5 +92,27 @@ else
   step "4/4 Lewati splat (tambahkan --splat untuk tampilan realistis)"
 fi
 
-step "Selesai -> $work/out/"
+# Terbitkan ke dasbor: fe/public/samples/<nama>.{ply,splat,json} -> muncul di halaman /hasil
+samples="$root/../fe/public/samples"
+mkdir -p "$samples"
+cp "$work/out/twin.ply" "$samples/$name.ply"
+files="\"$name.ply\""
+if [[ -f "$work/out/twin.splat" ]]; then
+  cp "$work/out/twin.splat" "$samples/$name.splat"
+  files="$files, \"$name.splat\""
+fi
+cat > "$samples/$name.json" <<JSON
+{
+  "name": "$name",
+  "video": "$(basename "$video")",
+  "frames": $(ls "$work/images" | wc -l | tr -d ' '),
+  "registered": ${registered:-0},
+  "points": ${points:-0},
+  "seconds": $(( $(date +%s) - t0 )),
+  "created_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "files": [$files]
+}
+JSON
+
+step "Selesai -> $work/out/ (juga diterbitkan ke halaman /hasil)"
 ls -lh "$work/out" | tail -n +2

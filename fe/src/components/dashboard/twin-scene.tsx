@@ -1,8 +1,8 @@
 "use client";
 
-import { Bounds, Grid, Html, Line, OrbitControls, Splat } from "@react-three/drei";
-import { Canvas, useLoader } from "@react-three/fiber";
-import { Component, Suspense, useMemo, type ReactNode } from "react";
+import { Grid, Html, Line, OrbitControls, Splat } from "@react-three/drei";
+import { Canvas, useLoader, useThree } from "@react-three/fiber";
+import { Component, Suspense, use, useEffect, useMemo, type ReactNode } from "react";
 import * as THREE from "three";
 import { PLYLoader } from "three/examples/jsm/loaders/PLYLoader.js";
 
@@ -132,8 +132,56 @@ function DemoTwin() {
 
 /* ---------- File hasil ns-export ---------- */
 
+/**
+ * Awan titik COLMAP renggang punya titik nyasar jauh dari objek; tanpa dibuang,
+ * bingkai kamera otomatis jadi terlalu jauh. Simpan titik dalam 95% jarak terdekat
+ * dari median (dengan kelonggaran 1,5x).
+ */
+function dropOutliers(source: THREE.BufferGeometry): THREE.BufferGeometry {
+  const pos = source.getAttribute("position");
+  const n = pos.count;
+  if (source.index || n < 100) return source;
+
+  const median = (axis: number) => {
+    const values = Array.from({ length: n }, (_, i) => pos.getComponent(i, axis)).sort((a, b) => a - b);
+    return values[Math.floor(n / 2)];
+  };
+  const center = new THREE.Vector3(median(0), median(1), median(2));
+  const p = new THREE.Vector3();
+  const dist = Array.from({ length: n }, (_, i) => p.fromBufferAttribute(pos, i).distanceTo(center));
+  const limit = [...dist].sort((a, b) => a - b)[Math.floor(n * 0.95)] * 1.5;
+
+  const keep = dist.flatMap((d, i) => (d <= limit ? [i] : []));
+  const filtered = new THREE.BufferGeometry();
+  for (const name of Object.keys(source.attributes)) {
+    const attr = source.getAttribute(name);
+    const out = new Float32Array(keep.length * attr.itemSize);
+    keep.forEach((src, dst) => {
+      for (let k = 0; k < attr.itemSize; k++) out[dst * attr.itemSize + k] = attr.getComponent(src, k);
+    });
+    filtered.setAttribute(name, new THREE.BufferAttribute(out, attr.itemSize, attr.normalized));
+  }
+  return filtered;
+}
+
+/** Arahkan kamera ke model berpusat di (0,0,0) dengan jari-jari tertentu, tanpa animasi. */
+function useFrameCamera(radius: number) {
+  const getState = useThree((s) => s.get);
+  useEffect(() => {
+    const { camera } = getState();
+    const controls = getState().controls as unknown as { target: THREE.Vector3; update: () => void } | null;
+    camera.position.set(radius * 0.9, radius * 0.8, radius * 1.6);
+    camera.near = radius / 100;
+    camera.far = radius * 50;
+    camera.updateProjectionMatrix();
+    controls?.target.set(0, 0, 0);
+    controls?.update();
+  }, [radius, getState]);
+}
+
 function PlyModel({ url }: { url: string }) {
-  const geometry = useLoader(PLYLoader, url);
+  const raw = useLoader(PLYLoader, url);
+  const geometry = useMemo(() => dropOutliers(raw), [raw]);
   const hasColor = Boolean(geometry.getAttribute("color"));
   const isMesh = Boolean(geometry.index);
 
@@ -145,6 +193,8 @@ function PlyModel({ url }: { url: string }) {
     return (geometry.boundingSphere?.radius ?? 1) * 0.006;
   }, [geometry, isMesh]);
 
+  useFrameCamera(geometry.boundingSphere?.radius ?? 1);
+
   return isMesh ? (
     <mesh geometry={geometry}>
       <meshStandardMaterial vertexColors={hasColor} color={hasColor ? undefined : "#b8bec7"} />
@@ -153,6 +203,53 @@ function PlyModel({ url }: { url: string }) {
     <points geometry={geometry}>
       <pointsMaterial size={pointSize} vertexColors={hasColor} color={hasColor ? undefined : "#7d8693"} sizeAttenuation />
     </points>
+  );
+}
+
+/* ---------- Splat (.splat antimatter15: 32 byte per splat, posisi 3xfloat32 di depan) ---------- */
+
+type Bounds = { center: [number, number, number]; radius: number };
+const splatBoundsCache = new Map<string, Promise<Bounds>>();
+
+function splatBounds(url: string): Promise<Bounds> {
+  let promise = splatBoundsCache.get(url);
+  if (!promise) {
+    promise = fetch(url)
+      .then((r) => {
+        if (!r.ok) throw new Error(`gagal memuat ${url}`);
+        return r.arrayBuffer();
+      })
+      .then((buf) => {
+        const f = new Float32Array(buf, 0, Math.floor(buf.byteLength / 4));
+        const n = Math.floor(buf.byteLength / 32);
+        const step = Math.max(1, Math.floor(n / 20000));
+        const xs: number[] = [];
+        const ys: number[] = [];
+        const zs: number[] = [];
+        for (let i = 0; i < n; i += step) {
+          xs.push(f[i * 8]);
+          ys.push(f[i * 8 + 1]);
+          zs.push(f[i * 8 + 2]);
+        }
+        const med = (a: number[]) => [...a].sort((x, y) => x - y)[Math.floor(a.length / 2)];
+        const center: [number, number, number] = [med(xs), med(ys), med(zs)];
+        const dist = xs
+          .map((x, i) => Math.hypot(x - center[0], ys[i] - center[1], zs[i] - center[2]))
+          .sort((a, b) => a - b);
+        return { center, radius: Math.max(dist[Math.floor(dist.length * 0.9)] ?? 1, 1e-3) };
+      });
+    splatBoundsCache.set(url, promise);
+  }
+  return promise;
+}
+
+function SplatModel({ url }: { url: string }) {
+  const { center, radius } = use(splatBounds(url));
+  useFrameCamera(radius);
+  return (
+    <group position={[-center[0], -center[1], -center[2]]}>
+      <Splat src={url} />
+    </group>
   );
 }
 
@@ -190,12 +287,8 @@ export default function TwinScene({ source, onLoadError }: { source: TwinSource;
       <LoadBoundary key={source.kind === "demo" ? "demo" : source.url} onError={onLoadError}>
         <Suspense fallback={null}>
           {source.kind === "demo" && <DemoTwin />}
-          {source.kind === "ply" && (
-            <Bounds fit clip observe margin={1.2}>
-              <PlyModel url={source.url} />
-            </Bounds>
-          )}
-          {source.kind === "splat" && <Splat src={source.url} position={[0, 1, 0]} scale={2} />}
+          {source.kind === "ply" && <PlyModel url={source.url} />}
+          {source.kind === "splat" && <SplatModel url={source.url} />}
         </Suspense>
       </LoadBoundary>
       <OrbitControls makeDefault target={[0, 1, 0]} enableDamping dampingFactor={0.08} maxPolarAngle={Math.PI / 2.05} />

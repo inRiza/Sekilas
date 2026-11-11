@@ -68,6 +68,7 @@ const NAV = [
   { href: "#cara-kerja", label: "Cara kerja" },
   { href: "#dasbor", label: "Dasbor" },
   { href: "#rekomendasi", label: "Rekomendasi" },
+  { href: "/hasil", label: "Hasil" },
 ];
 
 export function Logo() {
@@ -135,7 +136,7 @@ export function Hero() {
         </p>
         <div className="mt-9 flex w-full flex-col justify-center gap-3 sm:w-auto sm:flex-row">
           <PrimaryButton href={START_HREF}>Mulai Analisis</PrimaryButton>
-          <SecondaryButton href="#cara-kerja">Cara kerja</SecondaryButton>
+          <SecondaryButton href="/hasil">Lihat hasil</SecondaryButton>
         </div>
       </Reveal>
 
@@ -402,7 +403,7 @@ export function CtaBand() {
         </p>
         <div className="mt-9 flex w-full flex-col justify-center gap-3 sm:w-auto sm:flex-row">
           <PrimaryButton href={START_HREF}>Analisis sekarang</PrimaryButton>
-          <SecondaryButton href="#dasbor">Lihat contoh dasbor</SecondaryButton>
+          <SecondaryButton href="/hasil">Lihat hasil Visual Twin</SecondaryButton>
         </div>
       </Reveal>
     </Section>
