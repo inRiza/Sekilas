@@ -14,6 +14,9 @@ const TwinScene = dynamic(() => import("./twin-scene"), {
 
 const MIN_S = 20;
 const MAX_S = 180;
+// Sisi terpendek video (px). Di bawah MIN ditolak; MIN..GOOD diterima dengan peringatan.
+const MIN_SHORT_SIDE = 480;
+const GOOD_SHORT_SIDE = 720;
 const SAMPLE_SPLAT = "https://huggingface.co/cakewalk/splat-data/resolve/main/nike.splat";
 
 // Tahap sama dengan twin/twin_worker/pipeline.py
@@ -88,10 +91,22 @@ export function TwinWorkbench({ initialSrc }: { initialSrc?: string }) {
     setSource({ kind: ext, url: URL.createObjectURL(file), name: file.name });
   };
 
-  const checks = video
+  // Resolusi dinilai dari sisi terpendek, jadi video portrait dan landscape diperlakukan sama.
+  const shortSide = video ? Math.min(video.width, video.height) : 0;
+  const checks: { label: string; ok: boolean; warn?: boolean; hint: string }[] = video
     ? [
         { label: `Durasi ${formatDuration(video.duration)}`, ok: video.duration >= MIN_S && video.duration <= MAX_S, hint: "20 detik – 3 menit" },
-        { label: `Resolusi ${video.width}×${video.height}`, ok: Math.min(video.width, video.height) >= 720, hint: "minimal 720p" },
+        {
+          label: `Resolusi ${video.width}×${video.height}`,
+          ok: shortSide >= MIN_SHORT_SIDE,
+          warn: shortSide >= MIN_SHORT_SIDE && shortSide < GOOD_SHORT_SIDE,
+          hint:
+            shortSide < MIN_SHORT_SIDE
+              ? `sisi pendek min ${MIN_SHORT_SIDE} px`
+              : shortSide < GOOD_SHORT_SIDE
+                ? "rendah, hasil bisa kurang detail"
+                : "baik",
+        },
         { label: `Ukuran ${formatSize(video.file.size)}`, ok: video.file.size < 1e9, hint: "di bawah 1 GB" },
       ]
     : [];
@@ -157,8 +172,12 @@ export function TwinWorkbench({ initialSrc }: { initialSrc?: string }) {
               checks.map((c) => (
                 <li key={c.label} className="flex items-center justify-between gap-3">
                   <span className="flex items-center gap-2 text-ink-soft">
-                    <span className={`grid size-4 place-items-center rounded-full text-[10px] text-white ${c.ok ? "bg-impact" : "bg-friction"}`}>
-                      {c.ok ? "✓" : "!"}
+                    <span
+                      className={`grid size-4 place-items-center rounded-full text-[10px] text-white ${
+                        !c.ok ? "bg-friction" : c.warn ? "bg-amber-500" : "bg-impact"
+                      }`}
+                    >
+                      {c.ok && !c.warn ? "✓" : "!"}
                     </span>
                     {c.label}
                   </span>

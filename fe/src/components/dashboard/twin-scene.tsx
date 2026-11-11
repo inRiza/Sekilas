@@ -164,22 +164,33 @@ function dropOutliers(source: THREE.BufferGeometry): THREE.BufferGeometry {
   return filtered;
 }
 
-/** Arahkan kamera ke model berpusat di (0,0,0) dengan jari-jari tertentu, tanpa animasi. */
-function useFrameCamera(radius: number) {
+/** Arahkan kamera ke model (titik tengah di ketinggian targetY) tanpa animasi. */
+function useFrameCamera(radius: number, targetY = 0) {
   const getState = useThree((s) => s.get);
   useEffect(() => {
     const { camera } = getState();
     const controls = getState().controls as unknown as { target: THREE.Vector3; update: () => void } | null;
-    camera.position.set(radius * 0.9, radius * 0.8, radius * 1.6);
+    camera.position.set(radius * 0.9, targetY + radius * 0.8, radius * 1.6);
     camera.near = radius / 100;
     camera.far = radius * 50;
     camera.updateProjectionMatrix();
-    controls?.target.set(0, 0, 0);
+    controls?.target.set(0, targetY, 0);
     controls?.update();
-  }, [radius, getState]);
+  }, [radius, targetY, getState]);
+}
+
+/** Ketinggian "lantai": persentil 2% proyeksi titik ke arah atas (abaikan titik nyasar). */
+function floorAlong(up: THREE.Vector3, count: number, at: (i: number, out: THREE.Vector3) => THREE.Vector3) {
+  const step = Math.max(1, Math.floor(count / 20000));
+  const p = new THREE.Vector3();
+  const heights: number[] = [];
+  for (let i = 0; i < count; i += step) heights.push(at(i, p).dot(up));
+  heights.sort((a, b) => a - b);
+  return heights[Math.floor(heights.length * 0.02)] ?? 0;
 }
 
 function PlyModel({ url }: { url: string }) {
+  const { quaternion, up } = use(orientationFor(url));
   const raw = useLoader(PLYLoader, url);
   const geometry = useMemo(() => dropOutliers(raw), [raw]);
   const hasColor = Boolean(geometry.getAttribute("color"));
@@ -193,22 +204,33 @@ function PlyModel({ url }: { url: string }) {
     return (geometry.boundingSphere?.radius ?? 1) * 0.006;
   }, [geometry, isMesh]);
 
-  useFrameCamera(geometry.boundingSphere?.radius ?? 1);
+  const lift = useMemo(() => {
+    const pos = geometry.getAttribute("position");
+    return -floorAlong(up, pos.count, (i, out) => out.fromBufferAttribute(pos, i));
+  }, [geometry, up]);
 
-  return isMesh ? (
-    <mesh geometry={geometry}>
-      <meshStandardMaterial vertexColors={hasColor} color={hasColor ? undefined : "#b8bec7"} />
-    </mesh>
-  ) : (
-    <points geometry={geometry}>
-      <pointsMaterial size={pointSize} vertexColors={hasColor} color={hasColor ? undefined : "#7d8693"} sizeAttenuation />
-    </points>
+  useFrameCamera(geometry.boundingSphere?.radius ?? 1, lift);
+
+  return (
+    <group position={[0, lift, 0]}>
+      <group quaternion={quaternion}>
+        {isMesh ? (
+          <mesh geometry={geometry}>
+            <meshStandardMaterial vertexColors={hasColor} color={hasColor ? undefined : "#b8bec7"} />
+          </mesh>
+        ) : (
+          <points geometry={geometry}>
+            <pointsMaterial size={pointSize} vertexColors={hasColor} color={hasColor ? undefined : "#7d8693"} sizeAttenuation />
+          </points>
+        )}
+      </group>
+    </group>
   );
 }
 
 /* ---------- Splat (.splat antimatter15: 32 byte per splat, posisi 3xfloat32 di depan) ---------- */
 
-type Bounds = { center: [number, number, number]; radius: number };
+type Bounds = { center: [number, number, number]; radius: number; sample: Float32Array };
 const splatBoundsCache = new Map<string, Promise<Bounds>>();
 
 function splatBounds(url: string): Promise<Bounds> {
@@ -236,7 +258,9 @@ function splatBounds(url: string): Promise<Bounds> {
         const dist = xs
           .map((x, i) => Math.hypot(x - center[0], ys[i] - center[1], zs[i] - center[2]))
           .sort((a, b) => a - b);
-        return { center, radius: Math.max(dist[Math.floor(dist.length * 0.9)] ?? 1, 1e-3) };
+        const sample = new Float32Array(xs.length * 3);
+        xs.forEach((x, i) => sample.set([x - center[0], ys[i] - center[1], zs[i] - center[2]], i * 3));
+        return { center, radius: Math.max(dist[Math.floor(dist.length * 0.9)] ?? 1, 1e-3), sample };
       });
     splatBoundsCache.set(url, promise);
   }
@@ -244,11 +268,25 @@ function splatBounds(url: string): Promise<Bounds> {
 }
 
 function SplatModel({ url }: { url: string }) {
-  const { center, radius } = use(splatBounds(url));
-  useFrameCamera(radius);
+  const { center, radius, sample } = use(splatBounds(url));
+  const { quaternion, up } = use(orientationFor(url));
+  const lift = useMemo(
+    () => -floorAlong(up, sample.length / 3, (i, out) => out.fromArray(sample, i * 3)),
+    [sample, up],
+  );
+  useFrameCamera(radius, lift);
   return (
-    <group position={[-center[0], -center[1], -center[2]]}>
-      <Splat src={url} />
+    <group position={[0, lift, 0]}>
+      <group quaternion={quaternion}>
+        <group position={[-center[0], -center[1], -center[2]]}>
+          {/* drei <Splat> merender posisi file sebagai (x, -y, -z) (konvensi .splat
+              antimatter15). Putar balik 180° di sumbu X agar sama dengan sistem
+              koordinat COLMAP/.ply, baru orientasi "atas" bisa diterapkan. */}
+          <group rotation={[Math.PI, 0, 0]}>
+            <Splat src={url} />
+          </group>
+        </group>
+      </group>
     </group>
   );
 }
@@ -258,30 +296,24 @@ function SplatModel({ url }: { url: string }) {
 // Hasil pipeline lokal punya metadata /samples/<nama>.json berisi "up" (arah atas
 // dunia dari orientasi kamera HP). COLMAP tidak tahu gravitasi, jadi tanpa ini model
 // tampil miring/terbalik.
-const orientationCache = new Map<string, Promise<THREE.Quaternion>>();
+type Orientation = { quaternion: THREE.Quaternion; up: THREE.Vector3 };
+const orientationCache = new Map<string, Promise<Orientation>>();
+const NO_ROTATION: Orientation = { quaternion: new THREE.Quaternion(), up: new THREE.Vector3(0, 1, 0) };
 
-function orientationFor(url: string): Promise<THREE.Quaternion> {
+function orientationFor(url: string): Promise<Orientation> {
   let promise = orientationCache.get(url);
   if (!promise) {
     const meta = url.startsWith("/samples/") ? url.replace(/\.(ply|splat)(\?.*)?$/, ".json") : null;
     promise = (meta ? fetch(meta).then((r) => (r.ok ? r.json() : null)) : Promise.resolve(null))
       .then((data: { up?: number[] } | null) => {
-        const up = data?.up;
-        if (!up || up.length !== 3) return new THREE.Quaternion();
-        return new THREE.Quaternion().setFromUnitVectors(
-          new THREE.Vector3(up[0], up[1], up[2]).normalize(),
-          new THREE.Vector3(0, 1, 0),
-        );
+        if (!data?.up || data.up.length !== 3) return NO_ROTATION;
+        const up = new THREE.Vector3(data.up[0], data.up[1], data.up[2]).normalize();
+        return { quaternion: new THREE.Quaternion().setFromUnitVectors(up, new THREE.Vector3(0, 1, 0)), up };
       })
-      .catch(() => new THREE.Quaternion());
+      .catch(() => NO_ROTATION);
     orientationCache.set(url, promise);
   }
   return promise;
-}
-
-function Upright({ url, children }: { url: string; children: ReactNode }) {
-  const quaternion = use(orientationFor(url));
-  return <group quaternion={quaternion}>{children}</group>;
 }
 
 class LoadBoundary extends Component<{ children: ReactNode; onError: () => void }, { failed: boolean }> {
@@ -318,16 +350,8 @@ export default function TwinScene({ source, onLoadError }: { source: TwinSource;
       <LoadBoundary key={source.kind === "demo" ? "demo" : source.url} onError={onLoadError}>
         <Suspense fallback={null}>
           {source.kind === "demo" && <DemoTwin />}
-          {source.kind === "ply" && (
-            <Upright url={source.url}>
-              <PlyModel url={source.url} />
-            </Upright>
-          )}
-          {source.kind === "splat" && (
-            <Upright url={source.url}>
-              <SplatModel url={source.url} />
-            </Upright>
-          )}
+          {source.kind === "ply" && <PlyModel url={source.url} />}
+          {source.kind === "splat" && <SplatModel url={source.url} />}
         </Suspense>
       </LoadBoundary>
       <OrbitControls makeDefault target={[0, 1, 0]} enableDamping dampingFactor={0.08} maxPolarAngle={Math.PI / 2.05} />
