@@ -18,7 +18,16 @@ function formatDate(iso: string) {
   return new Intl.DateTimeFormat("id-ID", { dateStyle: "medium", timeStyle: "short" }).format(new Date(iso));
 }
 
+// Gerbang kualitas (PRD F7): porsi frame yang berhasil dipetakan COLMAP.
+function quality(r: TwinResult) {
+  const ratio = r.frames > 0 ? r.registered / r.frames : 0;
+  if (ratio >= 0.8) return { label: "Kualitas baik", tone: "border-impact/30 text-impact", low: false };
+  if (ratio >= 0.5) return { label: "Kualitas cukup", tone: "border-line text-muted", low: false };
+  return { label: "Kualitas rendah", tone: "border-friction/30 text-friction", low: true };
+}
+
 function ResultCard({ result }: { result: TwinResult }) {
+  const q = quality(result);
   const href = (file: string) => `/dasbor?src=${encodeURIComponent(`/samples/${file}`)}`;
   const ply = result.files.find((f) => f.endsWith(".ply"));
   const splat = result.files.find((f) => f.endsWith(".splat"));
@@ -29,12 +38,12 @@ function ResultCard({ result }: { result: TwinResult }) {
       <Link href={href(main)} className="group block flex-1 p-5">
         <div className="flex items-start justify-between gap-3">
           <h2 className="text-lg tracking-[-0.02em] text-ink group-hover:text-primary-40">{result.name}</h2>
-          <span className="shrink-0 rounded-full border border-line px-2 py-0.5 font-mono text-[11px] text-muted">
-            {splat ? "splat + titik" : "awan titik"}
+          <span className={`shrink-0 rounded-full border px-2 py-0.5 font-mono text-[11px] ${q.tone}`}>
+            {q.label}
           </span>
         </div>
         <p className="mt-1 font-mono text-[11px] text-subtle">
-          {result.video} · {formatDate(result.created_at)}
+          {result.video} · {formatDate(result.created_at)} · {splat ? "splat + titik" : "awan titik"}
         </p>
         <dl className="mt-5 grid grid-cols-3 gap-3 border-t border-hairline pt-4 text-[13px]">
           <div>
@@ -52,6 +61,12 @@ function ResultCard({ result }: { result: TwinResult }) {
             <dd className="mt-0.5 text-ink">{formatDuration(result.seconds)}</dd>
           </div>
         </dl>
+        {q.low && (
+          <p className="mt-4 rounded-md bg-friction-10 px-3 py-2 text-[12px] leading-5 text-ink-soft">
+            Hanya sebagian kecil video yang terpetakan. Coba rekam ulang: lebih terang, jalan lebih pelan, kamera
+            tegak, dan hindari jam ramai.
+          </p>
+        )}
       </Link>
       <div className="flex gap-2 border-t border-hairline px-5 py-3 text-[13px]">
         {ply && (
