@@ -1,285 +1,237 @@
 'use client';
 
-import React, { useState, Suspense } from 'react';
-import { useParams, useRouter } from 'next/navigation';
-import { AppNavbar } from '@/components/layout/app-navbar';
-import { Card } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
+import { Check, EyeOff, ImageIcon, PencilLine, Trash2 } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import React, { Suspense, useState } from 'react';
+
 import { Badge } from '@/components/ui/badge';
-import { CheckIcon, ArrowRightIcon } from '@/components/ui/icons';
+import { Button } from '@/components/ui/button';
+import { Textarea } from '@/components/ui/form';
+import { ArrowLeftIcon, ArrowRightIcon } from '@/components/ui/icons';
 import { MOCK_TRANSCRIPT } from '@/lib/mock/transcript';
 import { TranscriptSegment } from '@/types/api';
 
-function VerifikasiTranskripInner() {
-  const params = useParams();
-  const router = useRouter();
-  const analysisId = (params?.id as string) || 'selasar-kopi';
+const VANTAGE_LABEL: Record<TranscriptSegment['vantage'], string> = {
+  jalan: 'Dari jalan',
+  pintu: 'Di pintu / tangga',
+  dalam: 'Di dalam',
+};
 
-  const [segments, setSegments] = useState<TranscriptSegment[]>(MOCK_TRANSCRIPT);
-  const [selectedSegmentId, setSelectedSegmentId] = useState<string>(MOCK_TRANSCRIPT[1].id);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [editText, setEditText] = useState('');
+function mmss(seconds: number) {
+  const m = Math.floor(seconds / 60);
+  const s = Math.round(seconds % 60);
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}
 
-  // Antrean Wajib Konfirmasi (hanya segmen tidak_pasti yang belum confirmed)
-  const unconfirmedUncertainCount = segments.filter(
-    (s) => s.confidence === 'tidak_pasti' && !s.is_confirmed_by_owner
-  ).length;
-
-  const handleConfirm = (id: string) => {
-    setSegments((prev) =>
-      prev.map((s) => (s.id === id ? { ...s, is_confirmed_by_owner: true } : s))
-    );
-  };
-
-  const handleDelete = (id: string) => {
-    setSegments((prev) => prev.filter((s) => s.id !== id));
-  };
-
-  const handleStartEdit = (seg: TranscriptSegment) => {
-    setEditingId(seg.id);
-    setEditText(seg.narrative);
-  };
-
-  const handleSaveEdit = (id: string) => {
-    setSegments((prev) =>
-      prev.map((s) =>
-        s.id === id
-          ? { ...s, narrative: editText, is_confirmed_by_owner: true }
-          : s
-      )
-    );
-    setEditingId(null);
-  };
-
-  const activeSegment = segments.find((s) => s.id === selectedSegmentId) || segments[0];
-
-  const handleNext = () => {
-    if (unconfirmedUncertainCount > 0) return;
-    router.push(`/business/analysis`);
-  };
+function SegmentItem({
+  seg,
+  onConfirm,
+  onSave,
+  onDelete,
+}: {
+  seg: TranscriptSegment;
+  onConfirm: () => void;
+  onSave: (text: string) => void;
+  onDelete: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [text, setText] = useState(seg.narrative);
+  const needsAction = seg.confidence === 'tidak_pasti' && !seg.is_confirmed_by_owner;
 
   return (
-    <div className="min-h-screen bg-white flex flex-col justify-between">
-      <AppNavbar mode="wizard" currentStep={4} analysisId={analysisId} />
+    <li
+      className={`rounded-md border p-4 transition-colors sm:p-5 ${
+        needsAction ? 'border-friction/40 bg-friction-10/40' : 'border-line bg-white'
+      }`}
+    >
+      {/* Kepala: waktu, sudut pandang, status */}
+      <div className="flex flex-wrap items-center gap-1.5">
+        <Badge>{`${mmss(seg.timestamp_start)} – ${mmss(seg.timestamp_end)}`}</Badge>
+        <Badge>{VANTAGE_LABEL[seg.vantage]}</Badge>
+        <span className="flex-1" />
+        {needsAction ? (
+          <Badge variant="friction">Perlu dicek</Badge>
+        ) : (
+          <Badge variant="impact">
+            <Check size={11} strokeWidth={2.5} /> Terverifikasi
+          </Badge>
+        )}
+      </div>
 
-      <main className="section flex-1 py-8 sm:py-12">
-        <div className="col space-y-6">
-        {/* Banner Gerbang Wajib */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-2 pb-3 border-b border-hairline">
-          <div>
-            <h1 className="text-2xl sm:text-[28px] font-normal tracking-[-0.03em] text-ink">
-              Verifikasi Transkrip (F4)
-            </h1>
-            <p className="text-xs sm:text-[13px] text-muted mt-1">
-              Transkrip adalah satu-satunya mata bagi 500 agen. Pastikan catatan visual akurat dengan kondisi tokomu.
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <span
-              className={`font-mono text-xs font-semibold px-3 py-1 rounded-full ${
-                unconfirmedUncertainCount === 0
-                  ? 'bg-impact/10 text-impact border border-impact/20'
-                  : 'bg-friction-10 text-friction border border-friction/20 animate-pulse'
-              }`}
-            >
-              {unconfirmedUncertainCount === 0
-                ? 'Semua Segmen Terverifikasi'
-                : `${unconfirmedUncertainCount} Segmen Wajib Konfirmasi`}
-            </span>
-          </div>
+      {/* Isi: frame bukti + narasi */}
+      <div className="mt-4 flex flex-col gap-4 sm:flex-row">
+        <div className="flex h-24 w-full shrink-0 flex-col items-center justify-center gap-1 rounded-md bg-panel text-muted sm:w-40">
+          <ImageIcon size={18} />
+          <span className="text-[11px]">Frame bukti</span>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-          {/* Kolom Kiri: Pemutar Video & Frame Snapshot (5 Kolom) */}
-          <div className="lg:col-span-5 space-y-4">
-            <Card padded={false} className="overflow-hidden">
-              <div className="flex items-center justify-between px-4 py-2.5 border-b border-hairline bg-surface">
-                <span className="text-xs font-semibold text-ink">
-                  Frame Bukti: {activeSegment?.id}
-                </span>
-                <span className="font-mono text-[11px] text-subtle">
-                  Detik {activeSegment?.timestamp_start} – {activeSegment?.timestamp_end}
-                </span>
-              </div>
-              <div className="w-full h-64 bg-panel flex flex-col items-center justify-center p-4 text-center border-b border-hairline">
-                <div className="w-12 h-12 rounded-full bg-primary-10 text-primary-40 flex items-center justify-center mb-2 font-mono text-xs font-bold">
-                  IMG
-                </div>
-                <p className="text-xs font-medium text-ink">Snapshot Frame Terburam</p>
-                <p className="font-mono text-[11px] text-muted mt-0.5">
-                  Zona: {activeSegment?.zone_id?.replace('_', ' ')}
-                </p>
-              </div>
-              <div className="p-3 bg-surface flex items-center justify-between text-xs">
-                <span className="text-muted">Sudut pandang:</span>
-                <span className="font-mono uppercase font-semibold text-primary-40 bg-primary-10 px-2 py-0.5 rounded">
-                  {activeSegment?.vantage}
-                </span>
-              </div>
-            </Card>
-
-            <Card className="flex flex-col gap-3">
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-muted">Status gerbang simulasi:</span>
-                <span className={unconfirmedUncertainCount === 0 ? 'text-impact font-medium' : 'text-friction font-medium'}>
-                  {unconfirmedUncertainCount === 0 ? 'Siap Jalankan' : 'Tertahan Konfirmasi'}
-                </span>
-              </div>
-              <Button
-                variant="primary"
-                size="lg"
-                disabled={unconfirmedUncertainCount > 0}
-                onClick={handleNext}
-                className="w-full justify-center"
-              >
-                Buka Dasbor Hasil Analisis (20 Agen) <ArrowRightIcon size={16} />
-              </Button>
-              {unconfirmedUncertainCount > 0 && (
-                <p className="text-[11px] text-muted text-center leading-relaxed">
-                  Tombol akan aktif setelah kamu mengonfirmasi atau memperbaiki segmen bertanda "Perlu Konfirmasi".
-                </p>
-              )}
-            </Card>
-          </div>
-
-          {/* Kolom Kanan: Daftar Segmen Transkrip (7 Kolom) */}
-          <div className="lg:col-span-7 space-y-4">
-            {segments.map((seg) => {
-              const isSelected = seg.id === selectedSegmentId;
-              const isUncertain = seg.confidence === 'tidak_pasti';
-              const needsAction = isUncertain && !seg.is_confirmed_by_owner;
-              const isEditing = editingId === seg.id;
-
-              return (
-                <Card
-                  key={seg.id}
-                  onClick={() => setSelectedSegmentId(seg.id)}
-                  className={`cursor-pointer transition-all ${
-                    isSelected ? 'ring-2 ring-primary-40/30 border-primary-40' : 'hover:border-subtle'
-                  } ${needsAction ? 'bg-friction-10/40 border-friction/30' : ''}`}
+        <div className="min-w-0 flex-1">
+          {editing ? (
+            <div className="space-y-3">
+              <Textarea value={text} onChange={(e) => setText(e.target.value)} className="!border-primary-40" />
+              <div className="flex justify-end gap-2">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="!rounded-md"
+                  onClick={() => {
+                    setText(seg.narrative);
+                    setEditing(false);
+                  }}
                 >
-                  <div className="flex items-center justify-between border-b border-hairline pb-2.5 mb-3">
-                    <div className="flex items-center gap-2">
-                      <span className="font-mono text-xs font-semibold text-ink">{seg.id}</span>
-                      <span className="font-mono text-[11px] text-subtle">
-                        {seg.timestamp_start}s – {seg.timestamp_end}s
-                      </span>
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      {needsAction ? (
-                        <span className="font-mono text-[10px] uppercase font-bold text-friction bg-friction-10 px-2 py-0.5 rounded-full border border-friction/30 animate-pulse">
-                          Perlu Konfirmasi
-                        </span>
-                      ) : (
-                        <span className="font-mono text-[10px] uppercase text-impact bg-impact-10 px-2 py-0.5 rounded-full flex items-center gap-1">
-                          <CheckIcon size={10} /> Terverifikasi
-                        </span>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Isi Narasi VLM */}
-                  {isEditing ? (
-                    <div className="space-y-2">
-                      <textarea
-                        value={editText}
-                        onChange={(e) => setEditText(e.target.value)}
-                        className="w-full rounded-xl border border-primary-40 bg-white p-3 text-xs text-ink focus:outline-none"
-                        rows={3}
-                      />
-                      <div className="flex justify-end gap-2">
-                        <Button variant="secondary" size="sm" onClick={() => setEditingId(null)}>
-                          Batal
-                        </Button>
-                        <Button variant="primary" size="sm" onClick={() => handleSaveEdit(seg.id)}>
-                          Simpan Koreksi
-                        </Button>
-                      </div>
-                    </div>
-                  ) : (
-                    <div>
-                      <p className="text-xs text-ink leading-relaxed font-normal">{seg.narrative}</p>
-                      {seg.not_visible && (
-                        <div className="mt-2.5 rounded-lg bg-panel p-2.5 border border-hairline text-[11px] text-muted">
-                          <strong className="text-ink-soft font-medium">TIDAK Terlihat / Terbaca:</strong>{' '}
-                          {seg.not_visible}
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Aksi Per Segmen */}
-                  {!isEditing && (
-                    <div className="mt-4 pt-3 border-t border-hairline flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        {needsAction ? (
-                          <Button
-                            variant="primary"
-                            size="sm"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleConfirm(seg.id);
-                            }}
-                          >
-                            <CheckIcon size={12} /> Konfirmasi Benar
-                          </Button>
-                        ) : (
-                          <Button
-                            variant="secondary"
-                            size="sm"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleStartEdit(seg);
-                            }}
-                          >
-                            Ubah Teks
-                          </Button>
-                        )}
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleStartEdit(seg);
-                          }}
-                        >
-                          Koreksi
-                        </Button>
-                      </div>
-
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleDelete(seg.id);
-                        }}
-                        className="text-xs text-subtle hover:text-friction font-medium px-2 py-1"
-                      >
-                        Hapus Segmen
-                      </button>
-                    </div>
-                  )}
-                </Card>
-              );
-            })}
-          </div>
+                  Batal
+                </Button>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  className="!rounded-md"
+                  onClick={() => {
+                    onSave(text);
+                    setEditing(false);
+                  }}
+                >
+                  Simpan koreksi
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <p className="text-[13px] leading-relaxed text-ink">{seg.narrative}</p>
+              {seg.not_visible && (
+                <div className="mt-3 flex items-start gap-2 rounded-md bg-panel px-3 py-2.5">
+                  <EyeOff size={14} className="mt-0.5 shrink-0 text-muted" />
+                  <p className="text-[12px] leading-relaxed text-ink-soft">
+                    <span className="font-medium text-ink">Tidak terlihat: </span>
+                    {seg.not_visible}
+                  </p>
+                </div>
+              )}
+            </>
+          )}
         </div>
+      </div>
+
+      {/* Aksi */}
+      {!editing && (
+        <div className="mt-4 flex items-center gap-2">
+          {needsAction && (
+            <Button variant="primary" size="sm" className="!rounded-md" onClick={onConfirm}>
+              <Check size={14} /> Sudah benar
+            </Button>
+          )}
+          <Button variant="secondary" size="sm" className="!rounded-md" onClick={() => setEditing(true)}>
+            <PencilLine size={14} /> Koreksi
+          </Button>
+          <span className="flex-1" />
+          <button
+            type="button"
+            onClick={onDelete}
+            className="inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-[12px] text-muted transition-colors hover:bg-friction-10 hover:text-friction"
+          >
+            <Trash2 size={14} /> Hapus
+          </button>
+        </div>
+      )}
+    </li>
+  );
+}
+
+function VerifikasiTranskripInner() {
+  const router = useRouter();
+  const [segments, setSegments] = useState<TranscriptSegment[]>(MOCK_TRANSCRIPT);
+
+  const update = (id: string, patch: Partial<TranscriptSegment>) =>
+    setSegments((prev) => prev.map((s) => (s.id === id ? { ...s, ...patch } : s)));
+
+  const pending = segments.filter((s) => s.confidence === 'tidak_pasti' && !s.is_confirmed_by_owner).length;
+  const verified = segments.length - pending;
+  const ready = pending === 0;
+
+  return (
+    <div className="flex min-h-full flex-col bg-white">
+      <main className="flex-1 px-4 pb-16 pt-10 sm:px-6">
+        <div className="mx-auto w-full max-w-4xl space-y-8">
+          {/* Judul halaman */}
+          <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
+            <div>
+              <h1 className="text-2xl font-normal tracking-[-0.03em] text-ink sm:text-[28px]">Verifikasi transkrip</h1>
+              <p className="mt-1 text-[13px] text-muted">
+                Agen hanya melihat tokomu lewat catatan ini. Pastikan isinya sesuai kondisi sebenarnya.
+              </p>
+            </div>
+            <Badge variant={ready ? 'impact' : 'friction'} size="md">
+              {ready ? 'Semua segmen terverifikasi' : `${pending} segmen perlu dicek`}
+            </Badge>
+          </div>
+
+          <div className="rounded-md border border-line bg-white">
+            <div className="space-y-6 p-6 sm:p-10">
+              {/* Ringkasan progres */}
+              <div>
+                <div className="mb-2 flex items-center justify-between text-[13px]">
+                  <span className="font-medium text-ink">Segmen video</span>
+                  <span className="tabular-nums text-muted">
+                    {verified} dari {segments.length} terverifikasi
+                  </span>
+                </div>
+                <div className="h-1.5 w-full overflow-hidden rounded-full bg-soft">
+                  <div
+                    className="h-full rounded-full bg-impact transition-[width] duration-500"
+                    style={{ width: `${segments.length ? (verified / segments.length) * 100 : 0}%` }}
+                  />
+                </div>
+                <p className="mt-3 text-[13px] leading-relaxed text-muted">
+                  Segmen bertanda <span className="font-medium text-friction">Perlu dicek</span> wajib dikonfirmasi atau
+                  dikoreksi sebelum simulasi dijalankan. Segmen lain cukup ditinjau.
+                </p>
+              </div>
+
+              <ol className="space-y-3">
+                {segments.map((seg) => (
+                  <SegmentItem
+                    key={seg.id}
+                    seg={seg}
+                    onConfirm={() => update(seg.id, { is_confirmed_by_owner: true })}
+                    onSave={(text) => update(seg.id, { narrative: text, is_confirmed_by_owner: true })}
+                    onDelete={() => setSegments((prev) => prev.filter((s) => s.id !== seg.id))}
+                  />
+                ))}
+              </ol>
+            </div>
+
+            {/* Kaki container */}
+            <div className="flex flex-col-reverse gap-3 rounded-b-md bg-panel px-6 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-10">
+              <Button
+                variant="secondary"
+                size="lg"
+                onClick={() => router.push('/business/analysis/proses')}
+                className="justify-center !rounded-md"
+              >
+                <ArrowLeftIcon size={16} /> Kembali ke pemrosesan
+              </Button>
+              <div className="flex flex-col items-stretch gap-2 sm:items-end">
+                <Button
+                  variant="primary"
+                  size="lg"
+                  disabled={!ready}
+                  onClick={() => ready && router.push('/analisis/selasar-kopi/simulasi')}
+                  className="justify-center !rounded-md"
+                >
+                  Jalankan simulasi agen <ArrowRightIcon size={16} />
+                </Button>
+                {!ready && <span className="text-[12px] text-muted">Cek {pending} segmen dulu untuk melanjutkan</span>}
+              </div>
+            </div>
+          </div>
         </div>
       </main>
-
-      <footer className="border-t border-hairline py-6 text-center text-xs text-subtle">
-        <div className="col">
-          Sekilas © 2026 · Simulator Calon Pelanggan untuk UMKM Makanan
-        </div>
-      </footer>
     </div>
   );
 }
 
 export default function VerifikasiTranskripPage() {
   return (
-    <Suspense fallback={<div className="min-h-screen bg-white" />}>
+    <Suspense fallback={<div className="min-h-full bg-white" />}>
       <VerifikasiTranskripInner />
     </Suspense>
   );

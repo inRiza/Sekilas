@@ -2,13 +2,90 @@
 
 import React, { useState, Suspense } from 'react';
 import Link from 'next/link';
-import { useParams } from 'next/navigation';
-import { AppNavbar } from '@/components/layout/app-navbar';
+import { TrendingDown, TrendingUp, TriangleAlert, Wallet, type LucideIcon } from 'lucide-react';
+import { InfoIcon, TrendingUpIcon } from '@/components/ui/icons';
+import { Badge } from '@/components/ui/badge';
+import { TwinViewer } from '@/components/dashboard/twin-viewer';
 import { MOCK_DASHBOARD, MOCK_WHAT_IF_PROJECTION, WhatIfFix } from '@/lib/mock/dashboard';
 
+const KPI_TONE = {
+  impact: 'bg-impact-10 text-impact',
+  friction: 'bg-friction-10 text-friction',
+  neutral: 'bg-soft text-ink-soft',
+} as const;
+
+/** Metrik ringkas proyeksi: format sama dengan KPI (angka hitam, warna di ikon). */
+function ProjectionStat({
+  label,
+  value,
+  sub,
+  icon: Icon,
+  tone,
+}: {
+  label: string;
+  value: string;
+  sub: string;
+  icon: LucideIcon;
+  tone: keyof typeof KPI_TONE;
+}) {
+  return (
+    <div className="flex h-full flex-col rounded-lg border border-line bg-white p-3.5">
+      <div className="flex items-center gap-2">
+        <span className={`grid size-6 shrink-0 place-items-center rounded-md ${KPI_TONE[tone]}`}>
+          <Icon size={13} strokeWidth={2} />
+        </span>
+        <span className="truncate text-[12px] text-muted">{label}</span>
+      </div>
+      <span className="mt-3 text-[22px] font-semibold leading-none tracking-[-0.02em] text-ink tabular-nums">{value}</span>
+      <span className="mt-1.5 text-[12px] text-muted">{sub}</span>
+    </div>
+  );
+}
+
+/** Kartu KPI seragam: angka hitam dengan ukuran & ketebalan sama; warna hanya pada ikon. */
+function KpiCard({
+  label,
+  info,
+  value,
+  unit,
+  sub,
+  icon: Icon,
+  tone,
+}: {
+  label: string;
+  info: string;
+  value: string;
+  unit?: string;
+  sub: string;
+  icon: LucideIcon;
+  tone: keyof typeof KPI_TONE;
+}) {
+  return (
+    <div className="flex h-full flex-col rounded-xl border border-line bg-white p-4 sm:p-5">
+      <div className="flex items-center gap-2.5">
+        <span className={`grid size-8 shrink-0 place-items-center rounded-lg ${KPI_TONE[tone]}`}>
+          <Icon size={16} strokeWidth={2} />
+        </span>
+        <span className="min-w-0 flex-1 truncate text-[13px] text-muted">{label}</span>
+        <div className="group/tip relative cursor-help">
+          <InfoIcon size={15} className="text-subtle transition-colors hover:text-ink" />
+          <div className="pointer-events-none absolute right-0 top-5 z-30 hidden w-56 rounded-md bg-ink p-2.5 text-[11px] leading-relaxed text-white shadow-lg group-hover/tip:block">
+            {info}
+          </div>
+        </div>
+      </div>
+      <div className="mt-4 flex items-baseline gap-1.5">
+        <span className="truncate text-[26px] font-semibold leading-none tracking-[-0.02em] text-ink tabular-nums">
+          {value}
+        </span>
+        {unit && <span className="text-[13px] text-muted">{unit}</span>}
+      </div>
+      <p className="mt-2 text-[12px] leading-snug text-muted">{sub}</p>
+    </div>
+  );
+}
+
 function DashboardResultInner() {
-  const params = useParams();
-  const analysisId = (params?.id as string) || 'selasar-kopi';
   const data = MOCK_DASHBOARD;
   const projection = MOCK_WHAT_IF_PROJECTION;
 
@@ -19,22 +96,22 @@ function DashboardResultInner() {
     {
       id: 'fix_1',
       title: 'Pasang papan menu & harga di depan etalase',
-      impact_label: 'DAMPAK TINGGI',
-      effort_label: 'USAHA RENDAH',
+      impact_label: 'Dampak tinggi',
+      effort_label: 'Usaha rendah',
       is_checked: true,
     },
     {
       id: 'fix_2',
       title: 'Putar papan nama menghadap trotoar',
-      impact_label: 'DAMPAK SEDANG',
-      effort_label: 'USAHA SEDANG',
+      impact_label: 'Dampak sedang',
+      effort_label: 'Usaha sedang',
       is_checked: true,
     },
     {
       id: 'fix_3',
       title: 'Tanda "Buka" dan singkap sedikit tirai',
-      impact_label: 'DAMPAK SEDANG',
-      effort_label: 'USAHA MINIMAL',
+      impact_label: 'Dampak sedang',
+      effort_label: 'Usaha minimal',
       is_checked: true,
     },
   ]);
@@ -57,24 +134,15 @@ function DashboardResultInner() {
   const checkedFixesCount = fixes.filter((f) => f.is_checked).length;
 
   return (
-    <div className="min-h-screen bg-white flex flex-col justify-between">
-      <AppNavbar
-        mode="analysis"
-        analysisId={analysisId}
-        businessName={data.business_name}
-        branchName={data.branch_name}
-      />
-
+    <div className="flex min-h-full flex-col justify-between bg-white">
       {/* Main Full-Width Page Container (Ujung Kiri ke Kanan) */}
       <main className="flex-1 py-6 sm:py-8 w-full px-4 sm:px-8 lg:px-12 space-y-8">
         {/* Top Header Title & Actions */}
-        <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 pb-3 border-b border-hairline">
+        <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 pb-3">
           <div>
-            <div className="flex items-center gap-2 mb-1">
-              <span className="font-mono text-[11px] uppercase tracking-wider text-muted">
-                Hasil Analisis Video
-              </span>
-              <span className="font-mono text-[11px] text-subtle">· 48 Detik Rekaman · 20 Agen Demo</span>
+            <div className="flex flex-wrap items-center gap-2 mb-2">
+              <span className="text-[13px] text-muted">Hasil analisis video</span>
+              <Badge>48 detik rekaman</Badge>
             </div>
             <h1 className="text-2xl sm:text-[32px] font-normal tracking-[-0.035em] text-ink">
               Dasbor Titik Gesekan & Peluang Konversi
@@ -87,188 +155,68 @@ function DashboardResultInner() {
           <div className="flex items-center gap-2 shrink-0">
             <Link
               href="/business/analysis/agents"
-              className="inline-flex h-9 items-center rounded-md border border-line bg-white px-3.5 text-xs font-medium text-ink hover:bg-panel transition shadow-xs"
+              className="inline-flex h-9 items-center rounded-md border border-line bg-white px-3.5 text-xs font-medium text-ink hover:bg-panel transition"
             >
-              Lihat 20 Monolog Agen Demo
+              Jelajah agen
             </Link>
           </div>
         </div>
 
-        {/* 4 KPI Cards: Compact, Visual Hierarchy Koheren, Tooltip on Hover */}
+        {/* 4 KPI: ukuran & ketebalan angka seragam (hitam); warna hanya di ikon arah/status */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          {/* KPI 1: Jumlah Agen yang Membeli (Hijau) */}
-          <div className="rounded-[10px] border border-line bg-white p-4 sm:p-4.5 flex flex-col justify-between shadow-xs hover:border-subtle transition relative group">
-            <div className="flex items-center justify-between">
-              <span className="font-mono text-[11px] uppercase tracking-[0.06em] text-muted font-medium">
-                Agen Membeli
-              </span>
-              <div className="relative group/tip cursor-help">
-                <span className="font-mono text-[10px] text-subtle hover:text-ink size-4 inline-flex items-center justify-center rounded-full border border-line">
-                  i
-                </span>
-                <div className="absolute right-0 top-5 z-30 hidden group-hover/tip:block w-56 rounded-md bg-ink text-white p-2.5 text-[11px] leading-relaxed shadow-lg pointer-events-none">
-                  {data.kpi.buyers_description}
-                </div>
-              </div>
-            </div>
-            <div className="my-1.5">
-              <div className="flex items-baseline gap-1.5">
-                <span className="text-[28px] sm:text-[30px] font-bold font-mono tracking-tight leading-none text-impact">
-                  {data.kpi.buyers_count}
-                </span>
-                <span className="text-xs font-medium text-ink-soft">agen</span>
-              </div>
-              <p className="font-mono text-[11px] text-muted mt-1 truncate">
-                {data.kpi.buyers_rate_text}
-              </p>
-            </div>
-          </div>
-
-          {/* KPI 2: Persentase Penurunan Terbesar (Merah) */}
-          <div className="rounded-[10px] border border-line bg-white p-4 sm:p-4.5 flex flex-col justify-between shadow-xs hover:border-subtle transition relative group">
-            <div className="flex items-center justify-between">
-              <span className="font-mono text-[11px] uppercase tracking-[0.06em] text-muted font-medium">
-                Penurunan Terbesar
-              </span>
-              <div className="relative group/tip cursor-help">
-                <span className="font-mono text-[10px] text-subtle hover:text-ink size-4 inline-flex items-center justify-center rounded-full border border-line">
-                  i
-                </span>
-                <div className="absolute right-0 top-5 z-30 hidden group-hover/tip:block w-56 rounded-md bg-ink text-white p-2.5 text-[11px] leading-relaxed shadow-lg pointer-events-none">
-                  {data.kpi.drop_off_description}
-                </div>
-              </div>
-            </div>
-            <div className="my-1.5">
-              <div className="flex items-baseline gap-1.5">
-                <span className="text-[28px] sm:text-[30px] font-bold font-mono tracking-tight leading-none text-friction">
-                  {data.kpi.drop_off_rate_text}
-                </span>
-              </div>
-              <p className="text-[11px] text-muted mt-1">
-                Dari {data.kpi.drop_off_from_stage} ke {data.kpi.drop_off_to_stage}
-              </p>
-            </div>
-          </div>
-
-          {/* KPI 3: Penyebab Utama Gak Beli (Merah) */}
-          <div className="rounded-[10px] border border-line bg-white p-4 sm:p-4.5 flex flex-col justify-between shadow-xs hover:border-subtle transition relative group">
-            <div className="flex items-center justify-between">
-              <span className="font-mono text-[11px] uppercase tracking-[0.06em] text-muted font-medium">
-                Penyebab Utama Batal
-              </span>
-              <div className="relative group/tip cursor-help">
-                <span className="font-mono text-[10px] text-subtle hover:text-ink size-4 inline-flex items-center justify-center rounded-full border border-line">
-                  i
-                </span>
-                <div className="absolute right-0 top-5 z-30 hidden group-hover/tip:block w-56 rounded-md bg-ink text-white p-2.5 text-[11px] leading-relaxed shadow-lg pointer-events-none">
-                  {data.kpi.main_cause_detail}
-                </div>
-              </div>
-            </div>
-            <div className="my-1.5">
-              <div className="flex items-baseline gap-1.5">
-                <span className="text-[22px] sm:text-[24px] font-semibold tracking-[-0.02em] leading-none text-friction">
-                  Menu & Harga
-                </span>
-              </div>
-              <p className="font-mono text-[11px] text-muted mt-1">
-                {data.kpi.main_cause_cue_rank}
-              </p>
-            </div>
-          </div>
-
-          {/* KPI 4: Potensi Omzet Lepas (Merah - 1 Angka Tanpa Rentang) */}
-          <div className="rounded-[10px] border border-line bg-white p-4 sm:p-4.5 flex flex-col justify-between shadow-xs hover:border-subtle transition relative group">
-            <div className="flex items-center justify-between">
-              <span className="font-mono text-[11px] uppercase tracking-[0.06em] text-muted font-medium">
-                Potensi Omzet Lepas
-              </span>
-              <div className="relative group/tip cursor-help">
-                <span className="font-mono text-[10px] text-subtle hover:text-ink size-4 inline-flex items-center justify-center rounded-full border border-line">
-                  i
-                </span>
-                <div className="absolute right-0 top-5 z-30 hidden group-hover/tip:block w-56 rounded-md bg-ink text-white p-2.5 text-[11px] leading-relaxed shadow-lg pointer-events-none">
-                  {data.kpi.potential_loss_detail}
-                </div>
-              </div>
-            </div>
-            <div className="my-1.5">
-              <div className="flex items-baseline gap-1.5">
-                <span className="text-[28px] sm:text-[30px] font-bold font-mono tracking-tight leading-none text-friction">
-                  {data.kpi.potential_loss_amount}
-                </span>
-              </div>
-              <p className="font-mono text-[11px] text-muted mt-1">
-                {data.kpi.potential_loss_basis}
-              </p>
-            </div>
-          </div>
+          <KpiCard
+            label="Agen membeli"
+            info={data.kpi.buyers_description}
+            value={String(data.kpi.buyers_count)}
+            unit="agen"
+            sub={data.kpi.buyers_rate_text}
+            icon={TrendingUp}
+            tone="impact"
+          />
+          <KpiCard
+            label="Penurunan terbesar"
+            info={data.kpi.drop_off_description}
+            value={data.kpi.drop_off_rate_text}
+            sub={`Dari ${data.kpi.drop_off_from_stage} ke ${data.kpi.drop_off_to_stage}`}
+            icon={TrendingDown}
+            tone="friction"
+          />
+          <KpiCard
+            label="Penyebab utama batal"
+            info={data.kpi.main_cause_detail}
+            value="Menu & Harga"
+            sub={data.kpi.main_cause_cue_rank}
+            icon={TriangleAlert}
+            tone="friction"
+          />
+          <KpiCard
+            label="Potensi omzet lepas"
+            info={data.kpi.potential_loss_detail}
+            value={data.kpi.potential_loss_amount}
+            sub={data.kpi.potential_loss_basis}
+            icon={TrendingDown}
+            tone="friction"
+          />
         </div>
 
         {/* Middle Section: Visual Twin 3D Viewport (Kiri) & Temuan/Rekomendasi (Kanan) */}
-        <div id="twin" className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-          {/* Viewport 3D Placeholder (7 Kolom) */}
-          <div className="lg:col-span-7 space-y-4">
-            <div className="rounded-[10px] border border-line bg-white overflow-hidden shadow-xs">
-              <div className="flex items-center justify-between px-4 py-3 border-b border-hairline bg-panel/60 text-xs">
-                <div className="flex items-center gap-2">
-                  <span className="size-2 rounded-full bg-primary-40" />
-                  <span className="font-medium text-ink">Viewport Visual Twin 3D</span>
-                </div>
-                <span className="font-mono text-[11px] text-subtle">
-                  Durasi: 48s · 1.440 Frame
-                </span>
-              </div>
-
-              {/* Viewport Box */}
-              <div className="relative w-full aspect-16/9 bg-panel flex flex-col justify-between p-5 border-b border-hairline overflow-hidden">
-                <div
-                  className="absolute inset-0 opacity-40 pointer-events-none"
-                  style={{
-                    backgroundImage: `radial-gradient(var(--color-line) 1px, transparent 1px)`,
-                    backgroundSize: '20px 20px',
-                  }}
-                />
-
-                <span className="absolute top-3 left-3 font-mono text-[11px] text-subtle select-none">+</span>
-                <span className="absolute top-3 right-3 font-mono text-[11px] text-subtle select-none">+</span>
-                <span className="absolute bottom-3 left-3 font-mono text-[11px] text-subtle select-none">+</span>
-                <span className="absolute bottom-3 right-3 font-mono text-[11px] text-subtle select-none">+</span>
-
-                <div className="flex items-center justify-between z-10">
-                  <span className="rounded-full bg-white border border-line px-3 py-1 font-mono text-[11px] text-ink-soft shadow-xs">
-                    Status: Visual Twin 3D (Dalam Kalibrasi Rekaman)
-                  </span>
-                  <span className="rounded-full bg-white border border-line px-2.5 py-1 font-mono text-[11px] text-impact">
-                    Pose Kamera Terkunci
-                  </span>
-                </div>
-
-                <div className="my-auto text-center z-10 py-6 max-w-sm mx-auto">
-                  <p className="font-mono text-[11px] uppercase tracking-wider text-muted">
-                    Proyeksi Ruang & Lintasan Fisik
-                  </p>
-                  <p className="text-xs text-ink-soft mt-1.5 leading-relaxed">
-                    Sistem 3D memetakan stempel waktu video ke koordinat waypoint kamera. Hasil simulasi agen dipasangkan langsung ke titik-titik fisik di bawah ini.
-                  </p>
-                </div>
-
-                <div className="flex items-center justify-between z-10 text-[11px] font-mono text-subtle pt-2 border-t border-hairline/80">
-                  <span>Target FPS: 30 · Resolusi 1080p</span>
-                  <span>3 Zona Terdaftar</span>
-                </div>
-              </div>
-
+        <div id="twin" className="space-y-6">
+          {/* Visual Twin 3D: selebar layar, dengan tab Putar / Jalan / Tur */}
+          <div className="space-y-4">
+            <TwinViewer
+              source={{ kind: 'ply', url: '/samples/goffee-depan-kasir.ply', name: 'goffee-depan-kasir' }}
+              meta={['48 detik', '3 zona']}
+            />
+            <div className="rounded-xl border border-line bg-white overflow-hidden">
               {/* 2D Waypoint Progression Bar */}
               <div className="p-4 bg-white">
                 <p className="font-mono text-[11px] uppercase tracking-wider text-subtle mb-3">
                   Titik Pantau Lintasan Video (Klik untuk detail)
                 </p>
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   {[
                     { id: 'jalan', time: '00:04', name: 'Trotoar Depan', status: 'Daya Tarik Baik' },
-                    { id: 'tangga', time: '00:18', name: 'Akses Kaki Tangga', status: 'v 65,5% Bocor', isHotspot: true },
+                    { id: 'tangga', time: '00:18', name: 'Akses Kaki Tangga', status: '65,5% bocor', isHotspot: true },
                     { id: 'kasir', time: '00:36', name: 'Meja Kasir Lantai 2', status: 'Konversi Solid' },
                   ].map((wp) => (
                     <button
@@ -298,16 +246,16 @@ function DashboardResultInner() {
             </div>
           </div>
 
-          {/* Temuan Utama & Rekomendasi Prioritas (5 Kolom) */}
-          <div className="lg:col-span-5 space-y-5">
+          {/* Temuan Utama & Rekomendasi Prioritas: dua kolom sejajar, tinggi sama */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-stretch">
             {/* Card 3 Temuan Utama */}
-            <div className="rounded-[10px] border border-line bg-white p-5 shadow-xs">
-              <div className="flex items-center justify-between pb-3 border-b border-hairline mb-4">
+            <div className="flex h-full flex-col rounded-xl border border-line bg-white p-5">
+              <div className="flex items-center justify-between pb-3 mb-4">
                 <h3 className="text-sm font-semibold text-ink">3 Temuan Utama Simulasi</h3>
-                <span className="font-mono text-[11px] text-subtle">Berdasarkan 20 agen demo</span>
+                <span className="font-mono text-[11px] text-subtle">Berdasarkan simulasi</span>
               </div>
 
-              <div className="space-y-4">
+              <div className="flex flex-1 flex-col justify-between gap-4">
                 {data.key_insights.map((ins) => (
                   <div key={ins.id} className="flex items-start gap-3 text-xs">
                     <span className="font-mono text-[12px] font-semibold text-primary-40 shrink-0 mt-0.5">
@@ -323,8 +271,8 @@ function DashboardResultInner() {
             </div>
 
             {/* Card Rekomendasi Perbaikan Prioritas */}
-            <div className="rounded-[10px] border border-line bg-white p-5 shadow-xs">
-              <div className="flex items-center justify-between pb-3 border-b border-hairline mb-3">
+            <div className="h-full rounded-xl border border-line bg-white p-5">
+              <div className="flex items-center justify-between pb-3 mb-3">
                 <div>
                   <h3 className="text-sm font-semibold text-ink">Rekomendasi Perbaikan Prioritas</h3>
                   <p className="text-[11px] text-muted mt-0.5">Dampak tertinggi dengan biaya termudah</p>
@@ -345,7 +293,7 @@ function DashboardResultInner() {
                         {rec.priority_tag} #{rec.rank}
                       </span>
                       <span className="font-mono text-[11px] font-semibold text-impact">
-                        {rec.estimated_lift_range}
+                        <span className="inline-flex items-center gap-1"><TrendingUpIcon size={13} strokeWidth={2.25} />{rec.estimated_lift_range}</span>
                       </span>
                     </div>
                     <h4 className="font-medium text-ink leading-snug">{rec.title}</h4>
@@ -360,7 +308,7 @@ function DashboardResultInner() {
         {/* ==================================================================== */}
         {/* SECTION BAWAH: SIMULASI HIPOTESIS (What-If Simulator Sesuai Figma)   */}
         {/* ==================================================================== */}
-        <div className="pt-4 border-t border-hairline space-y-4">
+        <div className="pt-4 space-y-4">
           <div className="flex items-center justify-between">
             <span className="font-mono text-[11px] uppercase tracking-wider text-muted font-semibold">
               SIMULASI HIPOTESIS
@@ -370,22 +318,22 @@ function DashboardResultInner() {
             </span>
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-            {/* Kolom Kiri: "Pilih perbaikan" (~5 Kolom) */}
-            <div className="lg:col-span-4 rounded-[10px] border border-line bg-white p-5 shadow-xs flex flex-col justify-between h-full">
+          <div className="space-y-6">
+            {/* "Pilih perbaikan" (~5 Kolom) */}
+            <div className="rounded-xl border border-line bg-white p-5 sm:p-6">
               <div>
                 <h3 className="text-base font-semibold text-ink">Pilih perbaikan</h3>
                 <p className="text-xs text-muted mt-1 leading-relaxed">
                   Centang yang ingin dicoba, lalu jalankan simulasi ulang. Hipotesis, bukan janji omzet.
                 </p>
 
-                {/* List Checkbox Perbaikan */}
-                <div className="mt-5 space-y-3">
+                {/* List Checkbox Perbaikan: berjajar selebar kartu */}
+                <div className="mt-5 grid grid-cols-1 gap-3 md:grid-cols-3">
                   {fixes.map((fix) => (
                     <div
                       key={fix.id}
                       onClick={() => toggleFix(fix.id)}
-                      className={`cursor-pointer rounded-md border p-3 transition flex items-start gap-3 select-none ${
+                      className={`cursor-pointer rounded-lg border p-3 transition-colors flex h-full items-start gap-3 select-none ${
                         fix.is_checked
                           ? 'border-primary-40/60 bg-primary-10/40'
                           : 'border-line bg-white hover:bg-panel'
@@ -401,9 +349,10 @@ function DashboardResultInner() {
                         <p className="text-xs font-semibold text-ink leading-snug">
                           {fix.title}
                         </p>
-                        <p className="font-mono text-[10px] uppercase text-subtle tracking-wider mt-1.5">
-                          {fix.impact_label} · {fix.effort_label}
-                        </p>
+                        <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                          <Badge variant="impact">{fix.impact_label}</Badge>
+                          <Badge>{fix.effort_label}</Badge>
+                        </div>
                       </div>
                     </div>
                   ))}
@@ -411,29 +360,29 @@ function DashboardResultInner() {
               </div>
 
               {/* Action Button & Meta */}
-              <div className="mt-6 pt-4 border-t border-hairline">
+              <div className="mt-5 flex flex-col items-center gap-3 sm:flex-row sm:justify-end">
                 <button
                   type="button"
                   disabled={isSimulating || checkedFixesCount === 0}
                   onClick={handleRunWhatIf}
-                  className="btn-primary w-full h-10 rounded-md text-xs font-semibold text-white shadow-xs flex items-center justify-center transition disabled:opacity-50"
+                  className="btn-primary order-2 flex h-10 w-full items-center justify-center rounded-lg px-5 text-[13px] font-medium text-white transition disabled:opacity-50 sm:w-auto"
                 >
                   {isSimulating ? 'Menjalankan Simulasi Ulang...' : 'Jalankan simulasi ulang'}
                 </button>
-                <p className="text-center font-mono text-[11px] text-subtle mt-2">
-                  ± 2 menit · memakai {projection.total_agents} agen yang sama
+                <p className="order-1 text-[12px] text-subtle">
+                  Sekitar 2 menit, memakai agen yang sama
                 </p>
               </div>
             </div>
 
-            {/* Kolom Kanan: "Proyeksi pasca simulasi" (~8 Kolom) */}
-            <div className="lg:col-span-8 rounded-[10px] border border-line bg-white p-5 sm:p-6 shadow-xs space-y-5">
+            {/* "Proyeksi pasca simulasi" */}
+            <div className="rounded-xl border border-line bg-white p-5 sm:p-6 space-y-5">
               {/* Header & Legend */}
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-hairline">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3">
                 <div>
                   <h3 className="text-base font-semibold text-ink">Proyeksi pasca simulasi</h3>
                   <p className="text-xs text-muted mt-0.5">
-                    Perbandingan perilaku {projection.total_agents} agen yang sama, sebelum dan sesudah perbaikan.
+                    Perbandingan perilaku agen yang sama, sebelum dan sesudah perbaikan.
                   </p>
                 </div>
                 <div className="flex items-center gap-3 text-xs font-medium text-ink-soft shrink-0">
@@ -446,59 +395,12 @@ function DashboardResultInner() {
                 </div>
               </div>
 
-              {/* 4 Kotak Metrik Ringkas */}
+              {/* 4 metrik ringkas: angka hitam seragam, arah perubahan lewat ikon berwarna */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                {/* 1. PEMBELI */}
-                <div className="rounded-md border border-line bg-panel/40 p-3">
-                  <span className="font-mono text-[10px] uppercase text-muted tracking-wider block">
-                    PEMBELI
-                  </span>
-                  <span className="text-xl sm:text-2xl font-bold font-mono text-impact block mt-0.5">
-                    {projection.buyers_projected} agen
-                  </span>
-                  <span className="font-mono text-[11px] text-muted block mt-0.5">
-                    Naik dari {projection.buyers_baseline} agen
-                  </span>
-                </div>
-
-                {/* 2. PENURUNAN */}
-                <div className="rounded-md border border-line bg-panel/40 p-3">
-                  <span className="font-mono text-[10px] uppercase text-muted tracking-wider block">
-                    PENURUNAN
-                  </span>
-                  <span className="text-xl sm:text-2xl font-bold font-mono text-friction block mt-0.5">
-                    {projection.drop_rate_projected}
-                  </span>
-                  <span className="font-mono text-[11px] text-muted block mt-0.5">
-                    Sebelumnya {projection.drop_rate_baseline}
-                  </span>
-                </div>
-
-                {/* 3. PERKIRAAN OMZET */}
-                <div className="rounded-md border border-line bg-panel/40 p-3">
-                  <span className="font-mono text-[10px] uppercase text-muted tracking-wider block">
-                    PERKIRAAN OMZET
-                  </span>
-                  <span className="text-xl sm:text-2xl font-bold font-mono text-impact block mt-0.5">
-                    {projection.revenue_lift}
-                  </span>
-                  <span className="font-mono text-[11px] text-muted block mt-0.5">
-                    Rupiah per hari
-                  </span>
-                </div>
-
-                {/* 4. MODAL */}
-                <div className="rounded-md border border-line bg-panel/40 p-3">
-                  <span className="font-mono text-[10px] uppercase text-muted tracking-wider block">
-                    MODAL
-                  </span>
-                  <span className="text-xl sm:text-2xl font-bold font-mono text-ink block mt-0.5">
-                    {projection.cost_estimate}
-                  </span>
-                  <span className="font-mono text-[11px] text-muted block mt-0.5">
-                    Tiga perbaikan
-                  </span>
-                </div>
+                <ProjectionStat label="Pembeli" value={`${projection.buyers_projected} agen`} sub={`Naik dari ${projection.buyers_baseline} agen`} icon={TrendingUp} tone="impact" />
+                <ProjectionStat label="Penurunan" value={projection.drop_rate_projected} sub={`Sebelumnya ${projection.drop_rate_baseline}`} icon={TrendingDown} tone="impact" />
+                <ProjectionStat label="Perkiraan omzet" value={projection.revenue_lift} sub="Rupiah per hari" icon={TrendingUp} tone="impact" />
+                <ProjectionStat label="Modal" value={projection.cost_estimate} sub="Tiga perbaikan" icon={Wallet} tone="neutral" />
               </div>
 
               {/* 4 Bar Perbandingan (Saat ini vs Simulasi) */}
@@ -513,7 +415,7 @@ function DashboardResultInner() {
                         className={`font-mono text-[10px] font-semibold px-2 py-0.5 rounded-full ${
                           stage.delta_label === 'Tetap'
                             ? 'bg-panel text-muted border border-line'
-                            : 'bg-impact/10 text-impact border border-impact/20'
+                            : 'bg-impact/10 text-impact'
                         }`}
                       >
                         {stage.delta_label}
@@ -565,19 +467,13 @@ function DashboardResultInner() {
         </div>
       </main>
 
-      {/* Footer */}
-      <footer className="border-t border-hairline py-6 text-center text-xs text-subtle">
-        <div className="w-full px-4 sm:px-8">
-          Sekilas © 2026 · Simulator Calon Pelanggan untuk UMKM Makanan
-        </div>
-      </footer>
     </div>
   );
 }
 
 export default function DashboardResultPage() {
   return (
-    <Suspense fallback={<div className="min-h-screen bg-white" />}>
+    <Suspense fallback={<div className="min-h-full bg-white" />}>
       <DashboardResultInner />
     </Suspense>
   );
