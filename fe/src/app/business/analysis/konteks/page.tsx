@@ -16,7 +16,7 @@ type MenuFile = { name: string; size: number; previewUrl?: string };
 
 const MENU_SOURCES: Record<MenuSource, { label: string; accept: string; hint: string }> = {
   excel: {
-    label: 'File Excel / CSV',
+    label: 'File Excel',
     accept: '.xlsx,.xls,.csv',
     hint: 'Kolom: nama menu, harga porsi. Format .xlsx, .xls, atau .csv.',
   },
@@ -231,10 +231,9 @@ function KonteksUsahaInner() {
                       {(
                         [
                           ['warung', 'Warung makan'],
-                          ['kedai', 'Kedai / coffee shop'],
+                          ['kedai', 'Kedai kopi'],
                           ['kafe', 'Kafe santai'],
                           ['resto_ruko', 'Restoran ruko'],
-                          ['lainnya', 'Lainnya'],
                         ] as const
                       ).map(([val, label]) => (
                         <Chip key={val} label={label} role="radio" selected={businessType === val} onClick={() => setBusinessType(val)} />
@@ -276,8 +275,7 @@ function KonteksUsahaInner() {
                           ['dekat_kampus', 'Dekat kampus'],
                           ['perkantoran', 'Kawasan perkantoran'],
                           ['permukiman', 'Permukiman warga'],
-                          ['jalan_utama', 'Jalan utama / protokol'],
-                          ['lainnya', 'Lainnya'],
+                          ['jalan_utama', 'Jalan utama'],
                         ] as const
                       ).map(([val, label]) => (
                         <Chip key={val} label={label} role="radio" selected={surroundingsType === val} onClick={() => setSurroundingsType(val)} />
@@ -293,7 +291,7 @@ function KonteksUsahaInner() {
                           ['pekerja_kantor', 'Pekerja kantor'],
                           ['warga_sekitar', 'Warga sekitar'],
                           ['keluarga', 'Keluarga'],
-                          ['pengendara', 'Pengendara / ojol lewat'],
+                          ['pengendara', 'Pengendara lewat'],
                         ] as const
                       ).map(([val, label]) => (
                         <Chip
@@ -326,7 +324,7 @@ function KonteksUsahaInner() {
                       {(
                         [
                           ['lokasi', 'Lokasi toko'],
-                          ['fasad', 'Struktur fasad / bangunan'],
+                          ['fasad', 'Fasad bangunan'],
                           ['menu', 'Konsep menu inti'],
                           ['harga', 'Standar harga pokok'],
                         ] as const
