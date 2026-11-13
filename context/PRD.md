@@ -23,6 +23,7 @@
 - Pelabelan faktor oleh LLM terpisah diganti **atribusi oleh agen sendiri** lewat pesan kedua: pertanyaan disesuaikan dengan stance (lewat, berhenti lalu pergi, masuk tanpa memesan, memesan), katalog disaring menurut sudut pandang (`vantage`) yang sudah dilewati agen, skala 0 sampai 3, kutipan wajib diverifikasi kode (F5, F6-C).
 - Katalog isyarat (8 butir) diperluas menjadi **katalog hipotesis** H1 sampai H10 ditambah H0 "lainnya", masing-masing dengan definisi, batasan, dan sudut pandang terkait (F6-C).
 - Agregasi baru: **share** (porsi kehilangan), **lift** (pembeda agen gagal vs agen memesan), dan **gesekan yang ditoleransi** (F6-C).
+- Penyusunan daftar prioritas perbaikan tanpa VLM tambahan: katalog tindakan menjadi wajib, satu panggilan LLM teks memilih tindakan dari katalog dan menulisnya spesifik untuk toko dengan aturan anti-karangan, lalu kode menyaring dan mengurutkan (F6-D).
 - Run dasar 3 kali dan ambang noise dihapus; ablasi menjadi uji lanjutan opsional; target metrik, risiko, biaya, dan milestone disesuaikan.
 
 **Perubahan 1.2 terhadap 1.1:**
@@ -172,7 +173,8 @@ Pemilik atau pengelola tempat makan kecil (warung, kedai, kafe, resto ruko) yang
           - corong 4 tahap (Melihat -> Berhenti -> Masuk -> Memesan)
           - bobot friksi per segmen (peta panas di jalur)
           - atribusi alasan ke katalog hipotesis: share, lift (F6-C)
-          - Pareto (filter batasan "tidak bisa diubah")
+          - prioritas perbaikan: katalog tindakan + 1 panggilan LLM teks
+            (spesifik toko, tanpa VLM), Pareto (filter "tidak bisa diubah")
           - ablasi berpasangan: opsional, atas permintaan
                       |
                       v
@@ -646,13 +648,43 @@ Hipotesis yang jelas tidak berlaku untuk toko itu (misal H5 bila tidak ada tangg
 
 #### D. Rekomendasi, Pareto, dan Ablasi Opsional
 
-1. Setiap hipotesis yang lolos peringkat (C.5) dipetakan ke tindakan dari katalog tindakan, dengan usaha rendah, sedang, atau tinggi.
-2. Lapisan rekomendasi membaca chip "tujuan" dan chip "tidak bisa diubah" dari F1:
-   - Saran yang melanggar batasan "tidak bisa diubah" (misal merombak fasad padahal fasad tidak bisa diubah) disaring atau dinaikkan skor usahanya.
-   - Urutan saran disesuaikan dengan prioritas tujuan usaha pemilik.
-3. Tanda **Prioritas** diberikan pada rekomendasi yang menutup sekitar 80% share kumulatif (maksimum 5 item, mengutamakan share besar dan usaha kecil). Sisanya masuk kategori Nanti.
-4. Tiap rekomendasi ditandai lokasinya di Visual Twin.
-5. **Ablasi (opsional, atas permintaan, tidak masuk alur standar).** Untuk menguji sebab-akibat satu hipotesis: tulis ulang hanya segmen terkait menjadi versi sudah diperbaiki dengan templat kalimat tetap (misal papan jam buka kini terbaca jelas dari jalan), jalankan ulang persona yang sama satu kali, lalu tampilkan jumlah agen yang berubah menjadi **Memesan** apa adanya, tanpa ambang noise. Hasilnya menandai rekomendasi sebagai "sudah diuji" dan mengisi matriks disebut x terbukti: sering disebut dan berdampak (penyebab utama), sering disebut tapi tidak berdampak (keluhan saja), jarang disebut tapi berdampak (penyebab tersembunyi).
+Daftar prioritas perbaikan disusun **tanpa VLM tambahan**. Semua bahannya sudah tersedia setelah simulasi:
+
+| Bahan | Sumber |
+| --- | --- |
+| Peringkat masalah (share, lift) | pesan 2 agen dan perhitungan kode (C) |
+| Bukti visual | transkrip VLM yang sudah diverifikasi pemilik: `narrative`, `not_visible`, frame bukti per segmen (F3, F4) |
+| Suara pelanggan | kutipan monolog agen yang lolos verifikasi (F5) |
+| Batasan pemilik | chip "tujuan" dan "tidak bisa diubah" dari F1 |
+| Lokasi | pose kamera segmen terkait (4.3, F7) |
+
+**Katalog tindakan (wajib, bukan bagian RAG opsional).** Untuk setiap hipotesis H1 sampai H10 tersedia 2 sampai 4 tindakan baku yang dikurasi tim, masing-masing dengan id, judul, usaha (rendah, sedang, tinggi), perkiraan biaya kasar, dan bagian toko yang diubah (dipakai untuk mencocokkan chip "tidak bisa diubah"). Contoh: H2 -> `A2.1` pasang papan jam buka yang terbaca dari jalan (rendah), `A2.2` lampu atau tanda BUKA yang menyala (rendah); H5 -> `A5.1` penunjuk arah dan info di kaki tangga (rendah), `A5.2` perbaikan akses masuk (tinggi).
+
+**Alur penyusunan:**
+
+1. **Urutkan masalah (kode).** Ambil hipotesis yang lolos peringkat C.5, maksimal 5 teratas.
+2. **Ambil kandidat tindakan (kode).** Untuk tiap hipotesis, ambil tindakannya dari katalog tindakan, lalu buang yang melanggar chip "tidak bisa diubah" (atau naikkan usahanya satu tingkat, sesuai keputusan pertanyaan terbuka 4).
+3. **Sesuaikan dengan toko (satu panggilan LLM teks, GPT-6 Luna).** Masukan: hipotesis teratas beserta share dan lift, segmen transkrip terkait (`narrative`, `not_visible`), 3 sampai 5 kutipan agen per hipotesis, chip "tujuan", dan kandidat tindakan dari langkah 2. Keluaran per hipotesis: satu `action_id` terpilih dan satu sampai dua kalimat yang spesifik untuk toko itu (misal *Pasang papan jam buka di dinding kanan kaki tangga; dari trotoar tidak terlihat info jam buka, dan 6 agen menyebut takut sudah tutup.*). Aturan:
+   - `action_id` wajib salah satu kandidat dari langkah 2; tindakan di luar katalog ditolak.
+   - Wajib menyebut `segment_ids` sumber; id yang tidak ada di transkrip ditolak.
+   - Detail fisik hanya boleh diambil dari teks segmen. Jika lokasi pemasangan tidak tertulis di transkrip, kalimat tetap umum (misal *di area yang terlihat dari jalan*), tidak menebak.
+   - Semua angka di kalimat diperiksa verifier F6 terhadap hasil agregasi; yang tidak cocok dibuat ulang atau dibuang.
+4. **Saring dan urutkan (kode).** Urutan disesuaikan dengan prioritas tujuan usaha pemilik. Pareto: share besar dan usaha kecil di atas. Tanda **Prioritas** diberikan pada rekomendasi yang menutup sekitar 80% share kumulatif (maksimum 5 item). Sisanya masuk kategori Nanti.
+5. **Tampilkan.** Setiap kartu rekomendasi berisi tindakan spesifik, usaha dan biaya kasar dari katalog, alasan (kutipan agen), tombol *Lihat bukti* ke frame segmen, dan lokasinya di Visual Twin.
+
+```typescript
+interface RecommendationDraft {        // keluaran langkah 3, divalidasi skema
+  hypothesis_id: string;               // dari peringkat C.5
+  action_id: string;                   // wajib salah satu kandidat langkah 2
+  text: string;                        // 1-2 kalimat spesifik untuk toko ini
+  segment_ids: string[];               // segmen sumber, wajib ada di transkrip
+  quote_agent_ids: number[];           // agen yang kutipannya dipakai
+}
+```
+
+**VLM tambahan hanya opsional.** Jika di kemudian hari rekomendasi butuh detail fisik yang tidak tertulis di transkrip (misal di mana ada ruang dinding kosong untuk papan), cukup kirim 1 sampai 3 frame bukti dari segmen terkait ke VLM, tanpa membaca ulang video. Tidak dikerjakan untuk demo.
+
+**Ablasi (opsional, atas permintaan, tidak masuk alur standar).** Untuk menguji sebab-akibat satu hipotesis: tulis ulang hanya segmen terkait menjadi versi sudah diperbaiki dengan templat kalimat tetap (misal papan jam buka kini terbaca jelas dari jalan), jalankan ulang persona yang sama satu kali, lalu tampilkan jumlah agen yang berubah menjadi **Memesan** apa adanya, tanpa ambang noise. Hasilnya menandai rekomendasi sebagai "sudah diuji" dan mengisi matriks disebut x terbukti: sering disebut dan berdampak (penyebab utama), sering disebut tapi tidak berdampak (keluhan saja), jarang disebut tapi berdampak (penyebab tersembunyi).
 
 #### E. Tata Letak Dasbor
 
@@ -756,7 +788,7 @@ Basis pengetahuan hanya membantu menjelaskan, tidak menghitung.
 | **Keterbacaan** | Mobile-first, bahasa Indonesia, tanpa istilah teknis di layar pemilik (tidak ada kata point cloud, splat, RAG, ablasi). |
 | **Auditabilitas** | Fitur input F1, versi matriks $W$, seed, versi tabel segmen, versi template prompt, daftar `PersonaSpec`, versi model LLM/VLM, semua panggilan model, perubahan transkrip oleh pemilik, parameter rekonstruksi 3D, dan nomor run tercatat (misal lewat Postgres dan Langfuse). Versi model dikunci per analisis. Mengubah isian F1 menandai persona dan hasil kedaluwarsa. |
 | **Keandalan** | Output JSON divalidasi skema; batch yang gagal diulang tanpa menjalankan ulang batch lain. Jika LLM gagal, edit langsung tetap bisa dipakai. Jika rekonstruksi 3D gagal atau kualitas rendah, dasbor tetap utuh dengan tampilan cadangan. |
-| **Biaya (PERKIRAAN)** | *Perkiraan biaya berdasarkan asumsi token, bukan hasil ukur pasti:*<br>- **Tarif GPT-6 Luna:** \$0,10 input / \$0,50 output per juta token (cache read \$0,01 per juta token; Batch API \$0,05 input / \$0,25 output).<br>- **Tarif Gemini 3.8 Flash:** \$0,75 input / \$3,75 output per juta token (harga perkenalan s.d. 31 Des 2026, setelahnya \$1,50 / \$7,50).<br>- **Biaya agen per analisis (1 run dasar, pesan 1 + pesan 2):** per batch 10 agen, pesan 1 sekitar \$0,003 (input ±8 ribu token, sebagian dari cache; output ±5 ribu token) dan pesan 2 sekitar \$0,001 (konteks dari cache, output ±1,5 ribu token).<br>- **Analisis penuh 500 agen:** 50 batch x 2 pesan = 100 panggilan, sekitar \$0,2 (±Rp3.600).<br>- **Demo 20 agen:** 2 batch x 2 pesan = 4 panggilan ditambah ringkasan, sekitar \$0,01 sampai \$0,015 (±Rp200 sampai Rp300).<br>- **Ablasi opsional:** per hipotesis yang diuji bertambah satu run pesan 1, sekitar \$0,15 (500 agen) atau \$0,006 (20 agen).<br>- **Di luar biaya agen:** VLM Gemini dan Visual Twin (GPU atau mode lokal gratis) dihitung terpisah; perkiraan sebelumnya untuk komponen ini tidak berubah.<br>- **Kurs acuan:** Rp18.096 per US\$ (JISDOR, 10 November 2026).<br>- **Optimasi biaya:** Sebagian besar biaya ada pada token output agen. Langkah penghematan: batasi `max_output_tokens`, turunkan kedalaman mode `thinking`, gunakan prompt caching untuk sistem pesan/transkrip, hanya tulis hipotesis bernilai di atas 0 di pesan 2, serta alihkan run ablasi opsional ke Batch API (diskon 50%). |
+| **Biaya (PERKIRAAN)** | *Perkiraan biaya berdasarkan asumsi token, bukan hasil ukur pasti:*<br>- **Tarif GPT-6 Luna:** \$0,10 input / \$0,50 output per juta token (cache read \$0,01 per juta token; Batch API \$0,05 input / \$0,25 output).<br>- **Tarif Gemini 3.8 Flash:** \$0,75 input / \$3,75 output per juta token (harga perkenalan s.d. 31 Des 2026, setelahnya \$1,50 / \$7,50).<br>- **Biaya agen per analisis (1 run dasar, pesan 1 + pesan 2):** per batch 10 agen, pesan 1 sekitar \$0,003 (input ±8 ribu token, sebagian dari cache; output ±5 ribu token) dan pesan 2 sekitar \$0,001 (konteks dari cache, output ±1,5 ribu token).<br>- **Analisis penuh 500 agen:** 50 batch x 2 pesan = 100 panggilan, sekitar \$0,2 (±Rp3.600).<br>- **Demo 20 agen:** 2 batch x 2 pesan = 4 panggilan ditambah ringkasan, sekitar \$0,01 sampai \$0,015 (±Rp200 sampai Rp300).<br>- **Penyusunan rekomendasi (F6-D langkah 3):** 1 panggilan LLM teks per analisis, sekitar \$0,002 (±Rp40).<br>- **Ablasi opsional:** per hipotesis yang diuji bertambah satu run pesan 1, sekitar \$0,15 (500 agen) atau \$0,006 (20 agen).<br>- **Di luar biaya agen:** VLM Gemini dan Visual Twin (GPU atau mode lokal gratis) dihitung terpisah; perkiraan sebelumnya untuk komponen ini tidak berubah.<br>- **Kurs acuan:** Rp18.096 per US\$ (JISDOR, 10 November 2026).<br>- **Optimasi biaya:** Sebagian besar biaya ada pada token output agen. Langkah penghematan: batasi `max_output_tokens`, turunkan kedalaman mode `thinking`, gunakan prompt caching untuk sistem pesan/transkrip, hanya tulis hipotesis bernilai di atas 0 di pesan 2, serta alihkan run ablasi opsional ke Batch API (diskon 50%). |
 | **Infrastruktur 3D** | Produksi: GPU NVIDIA (CUDA) sebagai antrean pekerjaan terpisah dari API utama. Pengembangan: mode lokal CPU/Metal (11.2). |
 | **Lisensi** | Hanya komponen berlisensi yang mengizinkan pemakaian komersial yang masuk jalur produksi (lihat 11.1). Video uji berlisensi Creative Commons dicantumkan atribusinya (Lampiran A). |
 
@@ -959,7 +991,7 @@ Urutan sengaja menempatkan pemodelan persona diskret (M4a) dan uji validitas per
 - [ ] **M7: Spike Visual Twin.** Baseline nerfstudio pada 1 video kalibrasi di GPU; petakan keluaran tiap tahap, catat waktu dan kebutuhan GPU. *Status: mode lokal (11.2) sudah jalan dan teruji pada 4 video; spike GPU belum.*
 - [ ] **M8: Visual Twin dasar.** Masking SAM 2, pose ke `transforms.json`, awan titik, jalur, zona, penyelarasan, gerbang kualitas, dibungkus sebagai pekerjaan antrean. *Status: pemilihan model terbesar, arah atas, lantai, dan gerbang kualitas sudah ada di mode lokal; SAM 2 dan antrean belum.*
 - [ ] **M9: Dasbor dan integrasi.** Tata letak, KPI, tiga poin, corong 4 tahap, lapisan Kejadian dan Gesekan, interaksi silang lewat Zustand, tampilan cadangan, halaman Riwayat. *Status: placeholder dasbor dengan viewer 3D dan halaman Riwayat sudah ada.*
-- [ ] **M10: Rekomendasi dan Pareto.** Pemetaan hipotesis ke katalog tindakan, Pareto dari share, filter batasan "tidak bisa diubah", tanda Prioritas. Ablasi opsional (penulisan ulang segmen dengan templat, run berpasangan, matriks disebut x terbukti) bila ada waktu.
+- [ ] **M10: Rekomendasi dan Pareto.** Kurasi katalog tindakan (2 sampai 4 tindakan per hipotesis), panggilan LLM penyesuaian dengan validasi `action_id` dan `segment_ids`, Pareto dari share, filter batasan "tidak bisa diubah", tanda Prioritas. Ablasi opsional (penulisan ulang segmen dengan templat, run berpasangan, matriks disebut x terbukti) bila ada waktu.
 - [ ] **M11: Rencana pengukuran.** Lembar tally cetak dengan titik berdiri dari Visual Twin, jadwal observasi dari jam ramai F1, catatan kepercayaan.
 - [ ] **M12: Kalibrasi.** 3 sampai 5 video dengan tally manual, uji arah efek, uji ketepatan pin.
 - [ ] **M13 (opsional):** Gaussian Splatting di produksi, lapisan Agen beranimasi, Jelajah Agen dengan jalur agen, peta mini di halaman 5, edit via LLM, RAG dan Panel Tanya Sekilas.
