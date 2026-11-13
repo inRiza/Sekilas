@@ -7,7 +7,11 @@
   --color-primary-40: #3466e5;
   --color-primary-50: #2852c2;
 
-  /* Netral bergaya "ink on paper" */
+  /* Canvas & Surfaces */
+  --color-bg: #f3f5f8;
+  --color-surface: #ffffff;
+
+  /* Netral bergaya modern */
   --color-ink: #262626;
   --color-ink-soft: #414040;
   --color-muted: #727272;
