@@ -55,7 +55,7 @@ function VerifikasiTranskripInner() {
 
   const handleNext = () => {
     if (unconfirmedUncertainCount > 0) return;
-    router.push(`/analisis/${analysisId}/simulasi`);
+    router.push(`/analisis/${analysisId}`);
   };
 
   return (
@@ -132,7 +132,7 @@ function VerifikasiTranskripInner() {
                 onClick={handleNext}
                 className="w-full justify-center"
               >
-                Jalankan Simulasi 500 Agen (F5) <ArrowRightIcon size={16} />
+                Buka Dasbor Hasil Analisis (20 Agen) <ArrowRightIcon size={16} />
               </Button>
               {unconfirmedUncertainCount > 0 && (
                 <p className="text-[11px] text-muted text-center leading-relaxed">
