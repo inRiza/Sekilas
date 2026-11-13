@@ -1,11 +1,13 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 
+import { SekilasLogo } from "@/components/brand/logo";
 import { FunnelCard } from "./funnel-card";
 import { Reveal } from "./reveal";
 import { TwinPreview } from "./twin-preview";
 
-const START_HREF = "/dasbor";
+const START_HREF = "/analisis/selasar-kopi/konteks";
+const EXAMPLE_HREF = "/analisis/selasar-kopi";
 
 /* ---------- Primitif ---------- */
 
@@ -68,19 +70,13 @@ const NAV = [
   { href: "#cara-kerja", label: "Cara kerja" },
   { href: "#dasbor", label: "Dasbor" },
   { href: "#rekomendasi", label: "Rekomendasi" },
-  { href: "/hasil", label: "Hasil" },
+  { href: EXAMPLE_HREF, label: "Contoh Analisis" },
 ];
 
 export function Logo() {
   return (
-    <Link href="/" className="flex items-center gap-2 text-[17px] font-semibold tracking-[-0.02em] text-ink">
-      <span className="grid size-5 grid-cols-2 gap-[2px] rounded-[3px] bg-primary-40 p-[3px]" aria-hidden>
-        <span className="rounded-[1px] bg-white" />
-        <span className="rounded-[1px] bg-white/40" />
-        <span className="rounded-[1px] bg-white/40" />
-        <span className="rounded-[1px] bg-white" />
-      </span>
-      Sekilas
+    <Link href="/" className="hover:opacity-90 transition">
+      <SekilasLogo size={24} />
     </Link>
   );
 }
@@ -99,12 +95,20 @@ export function Navbar() {
             </li>
           ))}
         </ul>
-        <Link
-          href={START_HREF}
-          className="btn-primary inline-flex h-9 items-center rounded-md px-4 text-sm font-medium text-white"
-        >
-          Mulai Analisis
-        </Link>
+        <div className="flex items-center gap-3">
+          <Link
+            href="/masuk"
+            className="text-sm font-medium text-ink-soft hover:text-ink px-2 py-1 transition hidden sm:inline-block"
+          >
+            Masuk
+          </Link>
+          <Link
+            href={START_HREF}
+            className="btn-primary inline-flex h-9 items-center rounded-md px-4 text-sm font-medium text-white shadow-xs"
+          >
+            Mulai Analisis
+          </Link>
+        </div>
       </nav>
     </header>
   );
@@ -136,7 +140,7 @@ export function Hero() {
         </p>
         <div className="mt-9 flex w-full flex-col justify-center gap-3 sm:w-auto sm:flex-row">
           <PrimaryButton href={START_HREF}>Mulai Analisis</PrimaryButton>
-          <SecondaryButton href="/hasil">Lihat hasil</SecondaryButton>
+          <SecondaryButton href={EXAMPLE_HREF}>Lihat Contoh Analisis</SecondaryButton>
         </div>
       </Reveal>
 
@@ -285,9 +289,18 @@ export function DashboardShowcase() {
           </div>
         </div>
       </Reveal>
-      <p className="mt-4 text-center font-mono text-[11px] text-subtle">
-        Contoh tampilan · angka berupa rentang hasil simulasi
-      </p>
+      <div className="mt-8 flex flex-col items-center justify-center gap-2">
+        <Link
+          href={EXAMPLE_HREF}
+          className="inline-flex items-center gap-2 rounded-md border border-line bg-white px-5 py-2.5 text-sm font-medium text-ink transition hover:bg-panel shadow-xs"
+        >
+          <span>Buka Contoh Analisis Lengkap (Selasar Kopi)</span>
+          <span className="font-mono text-xs text-primary-40">→</span>
+        </Link>
+        <p className="font-mono text-[11px] text-subtle">
+          Contoh nyata pemetaan video 48 detik dan simulasi 500 agen
+        </p>
+      </div>
     </Section>
   );
 }
@@ -402,8 +415,8 @@ export function CtaBand() {
           Temukan titik gesekan dan peluang perbaikan tempat usahamu dalam kurang dari 15 menit.
         </p>
         <div className="mt-9 flex w-full flex-col justify-center gap-3 sm:w-auto sm:flex-row">
-          <PrimaryButton href={START_HREF}>Analisis sekarang</PrimaryButton>
-          <SecondaryButton href="/hasil">Lihat hasil Visual Twin</SecondaryButton>
+          <PrimaryButton href={START_HREF}>Mulai Analisis Tempat Usaha</PrimaryButton>
+          <SecondaryButton href={EXAMPLE_HREF}>Lihat Contoh Hasil</SecondaryButton>
         </div>
       </Reveal>
     </Section>

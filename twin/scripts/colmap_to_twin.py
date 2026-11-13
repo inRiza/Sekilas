@@ -52,6 +52,8 @@ def read_camera_path(images_txt: Path, fps: float) -> list[dict]:
         center = -rot.T @ np.array([tx, ty, tz])
         # Sumbu y kamera COLMAP mengarah ke bawah gambar; "atas" kamera di dunia = R^T (0,-1,0)
         up = rot.T @ np.array([0.0, -1.0, 0.0])
+        # Sumbu z kamera COLMAP = arah pandang
+        forward = rot.T @ np.array([0.0, 0.0, 1.0])
         match = re.search(r"(\d+)", Path(name).stem)
         index = int(match.group(1)) - 1 if match else len(path)
         path.append(
@@ -64,6 +66,7 @@ def read_camera_path(images_txt: Path, fps: float) -> list[dict]:
                     "z": float(center[2]),
                 },
                 "up": [float(v) for v in up],
+                "forward": [float(v) for v in forward],
             }
         )
     return sorted(path, key=lambda p: p["timestamp_s"])
