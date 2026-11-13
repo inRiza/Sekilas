@@ -1,111 +1,225 @@
 'use client';
 
-import React, { useState, useEffect, Suspense } from 'react';
-import Link from 'next/link';
-import { useParams, useRouter } from 'next/navigation';
-import { AppNavbar } from '@/components/layout/app-navbar';
+import { BarChart3, Check, ListOrdered, LoaderCircle, Route, UserRound, Users, type LucideIcon } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import React, { Suspense, useEffect, useRef, useState } from 'react';
+
 import { SekilasMascot } from '@/components/brand/mascot';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { ArrowLeftIcon, ArrowRightIcon } from '@/components/ui/icons';
+import { MOCK_AGENTS } from '@/lib/mock/agents';
+
+/** Jeda antar-langkah animasi (UI simulasi; nanti diganti progres asli dari backend). */
+const TICK_MS = 1100;
+
+const STAGES: { icon: LucideIcon; title: string; description: string }[] = [
+  { icon: Users, title: 'Membentuk persona', description: 'Calon pelanggan dibentuk dari konteks usaha dan lingkungan sekitar.' },
+  { icon: Route, title: 'Agen menelusuri jalur', description: 'Setiap agen membaca transkrip berurutan dan memutuskan lanjut atau pergi.' },
+  { icon: ListOrdered, title: 'Merangkum alasan', description: 'Alasan agen dipetakan ke katalog masalah lalu diurutkan.' },
+  { icon: BarChart3, title: 'Menyusun dasbor', description: 'Corong, peta gesekan, dan rekomendasi perbaikan.' },
+];
+
+const DECISION: Record<string, { label: string; variant: 'impact' | 'friction' | 'neutral' | 'primary' }> = {
+  lewat: { label: 'Lewat', variant: 'neutral' },
+  berhenti_lalu_pergi: { label: 'Berhenti lalu pergi', variant: 'friction' },
+  masuk_tanpa_memesan: { label: 'Masuk tanpa memesan', variant: 'primary' },
+  memesan: { label: 'Memesan', variant: 'impact' },
+};
+
+const SEGMENT_LABEL = (s: string) => {
+  const t = s.replace(/_/g, ' ');
+  return t.charAt(0).toUpperCase() + t.slice(1);
+};
+
+/** Urutan animasi: tiap tick memajukan satu langkah. Tahap 2 sekaligus menampilkan monolog agen satu per satu. */
+const AGENT_TICKS = MOCK_AGENTS.length;
+const TOTAL_TICKS = 1 + AGENT_TICKS + 2; // persona, agen..., rangkum, dasbor
+
+function stageStatus(stage: number, tick: number): 'done' | 'running' | 'waiting' {
+  const start = [0, 1, 1 + AGENT_TICKS, 2 + AGENT_TICKS][stage]!;
+  const end = [1, 1 + AGENT_TICKS, 2 + AGENT_TICKS, TOTAL_TICKS][stage]!;
+  if (tick >= end) return 'done';
+  return tick >= start ? 'running' : 'waiting';
+}
+
+/** Judul bagian di dalam satu container, sama dengan halaman alur lain. */
+function SectionTitle({ n, title, description }: { n: number; title: string; description: string }) {
+  return (
+    <div className="mb-6 flex items-start gap-3">
+      <span className="grid size-6 shrink-0 place-items-center rounded-md bg-primary-10 text-[12px] font-semibold text-primary-40">
+        {n}
+      </span>
+      <div>
+        <h2 className="text-[15px] font-semibold text-ink">{title}</h2>
+        <p className="mt-0.5 text-[13px] text-muted">{description}</p>
+      </div>
+    </div>
+  );
+}
 
 function SimulasiAgenInner() {
-  const params = useParams();
   const router = useRouter();
-  const analysisId = (params?.id as string) || 'selasar-kopi';
-
-  const [completedAgents, setCompletedAgents] = useState(240);
-  const totalAgents = 500;
+  const [tick, setTick] = useState(0);
+  const feedRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const interval = setInterval(() => {
-      setCompletedAgents((prev) => {
-        if (prev >= totalAgents) {
-          clearInterval(interval);
-          return totalAgents;
-        }
-        return Math.min(totalAgents, prev + 65);
-      });
-    }, 550);
-    return () => clearInterval(interval);
-  }, [totalAgents]);
+    if (tick >= TOTAL_TICKS) return;
+    const t = setTimeout(() => setTick((n) => n + 1), TICK_MS);
+    return () => clearTimeout(t);
+  }, [tick]);
 
-  const percentage = Math.round((completedAgents / totalAgents) * 100);
+  // Gulir kotak monolog saja (bukan seluruh halaman) ke entri terbaru.
+  useEffect(() => {
+    const box = feedRef.current;
+    if (box) box.scrollTo({ top: box.scrollHeight, behavior: 'smooth' });
+  }, [tick]);
 
-  const logs = [
-    `Batch 1-10: 100 persona mahasiswa & pekerja kantor selesai bermonolog.`,
-    `Batch 11-20: 100 persona pengendara & warga sekitar selesai evaluasi jalan.`,
-    `Batch 21-30: 100 persona rombongan selesai menimbang menu dan harga.`,
-    completedAgents >= 400 ? `Batch 31-40: Agregasi titik berhenti dan deteksi friksi kaki tangga.` : 'Sedang memproses batch 31-40...',
-    completedAgents >= 500 ? `Batch 41-50: 500 agen selesai. Menghitung rekomendasi prioritas dan corong 4 tahap.` : 'Menunggu batch terakhir...',
-  ];
+  const done = tick >= TOTAL_TICKS;
+  const progress = Math.round((tick / TOTAL_TICKS) * 100);
+  const agentsShown = Math.max(0, Math.min(AGENT_TICKS, tick - 1));
 
   return (
-    <div className="min-h-screen bg-white flex flex-col justify-between">
-      <AppNavbar mode="wizard" currentStep={5} analysisId={analysisId} />
-
-      <main className="section flex-1 py-10 sm:py-16">
-        <div className="col max-w-xl mx-auto">
-          <div className="text-center mb-8 flex flex-col items-center">
-            <SekilasMascot size={74} className="mb-3" />
-            <span className="font-mono text-[11px] uppercase tracking-wider text-primary-40 bg-primary-10 px-2.5 py-0.5 rounded-full font-semibold mb-2">
-              Status: Menjalankan GPT-6 Luna
-            </span>
-            <h1 className="text-2xl sm:text-[28px] font-normal tracking-[-0.03em] text-ink">
-              Simulasi 500 Agen Berjalan (F5)
-            </h1>
-            <p className="text-xs sm:text-[13px] text-muted max-w-md mx-auto mt-1 leading-relaxed">
-              500 persona terstratifikasi sedang membaca transkrip kejadian tokomu, bermonolog, dan memutuskan apakah akan masuk atau berbalik pergi.
-            </p>
+    <div className="flex min-h-full flex-col bg-white">
+      <main className="flex-1 px-4 pb-16 pt-10 sm:px-6">
+        <div className="mx-auto w-full max-w-4xl space-y-8">
+          {/* Judul halaman */}
+          <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
+            <div>
+              <h1 className="text-2xl font-normal tracking-[-0.03em] text-ink sm:text-[28px]">Simulasi calon pelanggan</h1>
+              <p className="mt-1 text-[13px] text-muted">
+                Agen dengan latar berbeda menelusuri jalur tokomu lewat transkrip, lalu memutuskan masuk atau pergi.
+              </p>
+            </div>
+            <Badge variant={done ? 'impact' : 'primary'} size="md">
+              {done ? 'Hasil siap' : `Berjalan ${progress}%`}
+            </Badge>
           </div>
 
-          <div className="rounded-[10px] border border-line bg-white p-6 shadow-xs mb-6">
-            <div className="flex items-center justify-between text-xs font-medium mb-2">
-              <span className="text-ink">Progres Keputusan Agen</span>
-              <span className="font-mono text-primary-40 font-semibold">
-                {completedAgents} / {totalAgents} agen ({percentage}%)
-              </span>
-            </div>
-            <div className="h-2 w-full rounded-full bg-hairline overflow-hidden">
-              <div
-                className="h-full rounded-full bg-primary-40 transition-all duration-500 ease-out"
-                style={{ width: `${percentage}%` }}
-              />
-            </div>
-
-            {/* Terminal Log Transparan */}
-            <div className="mt-5 rounded-md bg-panel p-3.5 border border-hairline font-mono text-[11px] text-muted space-y-1.5">
-              {logs.map((log, i) => (
-                <div key={i} className="flex items-start gap-2">
-                  <span className="text-subtle select-none">&gt;</span>
-                  <span className={i === logs.length - 1 ? 'text-ink font-medium' : ''}>{log}</span>
+          <div className="rounded-md border border-line bg-white">
+            <div className="space-y-12 p-6 sm:p-10">
+              {/* 1. Tahapan */}
+              <section>
+                <SectionTitle n={1} title="Tahapan" description="Biasanya selesai dalam beberapa menit." />
+                <div className="mb-4">
+                  <div className="mb-2 flex items-center justify-between text-[13px]">
+                    <span className="flex items-center gap-2 font-medium text-ink">
+                      <SekilasMascot size={22} />
+                      {done ? 'Simulasi selesai' : 'Menjalankan simulasi…'}
+                    </span>
+                    <span className="tabular-nums text-muted">{progress}%</span>
+                  </div>
+                  <div className="h-1.5 w-full overflow-hidden rounded-full bg-soft">
+                    <div className="h-full rounded-full bg-primary-40 transition-[width] duration-700 ease-out" style={{ width: `${progress}%` }} />
+                  </div>
                 </div>
-              ))}
-            </div>
-          </div>
+                <ul className="space-y-2">
+                  {STAGES.map((st, i) => {
+                    const status = stageStatus(i, tick);
+                    const Icon = st.icon;
+                    return (
+                      <li key={st.title} className="flex items-center gap-3 rounded-md border border-line px-4 py-3">
+                        <span
+                          className={`grid size-8 shrink-0 place-items-center rounded-md ${
+                            status === 'done'
+                              ? 'bg-impact-10 text-impact'
+                              : status === 'running'
+                                ? 'bg-primary-10 text-primary-40'
+                                : 'bg-soft text-subtle'
+                          }`}
+                        >
+                          {status === 'done' ? (
+                            <Check size={16} strokeWidth={2.5} />
+                          ) : status === 'running' ? (
+                            <LoaderCircle size={16} className="animate-spin" />
+                          ) : (
+                            <Icon size={16} />
+                          )}
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <p className={`text-[13px] font-medium ${status === 'waiting' ? 'text-muted' : 'text-ink'}`}>{st.title}</p>
+                          <p className="mt-0.5 text-[12px] text-muted">{st.description}</p>
+                        </div>
+                        <Badge variant={status === 'done' ? 'impact' : status === 'running' ? 'primary' : 'neutral'}>
+                          {status === 'done' ? 'Selesai' : status === 'running' ? 'Berjalan' : 'Menunggu'}
+                        </Badge>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </section>
 
-          <div className="flex justify-center">
-            <button
-              type="button"
-              disabled={completedAgents < totalAgents}
-              onClick={() => router.push(`/analisis/${analysisId}`)}
-              className="btn-primary w-full sm:w-auto min-w-[280px] h-10 rounded-md text-xs font-medium text-white shadow-xs flex items-center justify-center transition disabled:opacity-50"
-            >
-              Buka Dasbor Hasil Analisis (F6) →
-            </button>
+              {/* 2. Monolog agen */}
+              <section>
+                <SectionTitle
+                  n={2}
+                  title="Cuplikan pikiran agen"
+                  description="Contoh monolog saat agen menelusuri jalur. Semua monolog bisa dibaca di Jelajah agen setelah selesai."
+                />
+                <div ref={feedRef} className="max-h-[440px] space-y-2 overflow-y-auto rounded-md border border-line bg-panel p-2">
+                  {agentsShown === 0 && (
+                    <div className="flex items-center gap-3 px-3 py-6 text-[13px] text-muted">
+                      <LoaderCircle size={14} className="animate-spin text-primary-40" />
+                      Menyiapkan persona calon pelanggan…
+                    </div>
+                  )}
+                  {MOCK_AGENTS.slice(0, agentsShown).map((ag) => {
+                    const d = DECISION[ag.final_decision] ?? { label: ag.final_decision, variant: 'neutral' as const };
+                    return (
+                      <article key={ag.agent_id} className="animate-[fadeIn_300ms_ease-out] rounded-md bg-white p-4">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="grid size-6 place-items-center rounded-md bg-soft text-ink-soft">
+                            <UserRound size={13} />
+                          </span>
+                          <Badge>{SEGMENT_LABEL(ag.persona.segment)}</Badge>
+                          <Badge>{`Anggaran Rp ${ag.persona.concrete_facts.meal_budget.toLocaleString('id-ID')}`}</Badge>
+                          <span className="flex-1" />
+                          <Badge variant={d.variant}>{d.label}</Badge>
+                        </div>
+                        <p className="mt-3 text-[13px] italic leading-relaxed text-ink-soft">“{ag.monologue}”</p>
+                      </article>
+                    );
+                  })}
+                  {!done && agentsShown > 0 && (
+                    <div className="flex items-center gap-3 px-3 py-2.5 text-[13px] text-muted">
+                      <LoaderCircle size={14} className="animate-spin text-primary-40" />
+                      {agentsShown < AGENT_TICKS ? 'Agen berikutnya sedang menelusuri jalur…' : 'Merangkum alasan dan menyusun dasbor…'}
+                    </div>
+                  )}
+                </div>
+              </section>
+            </div>
+
+            {/* Kaki container */}
+            <div className="flex flex-col-reverse gap-3 rounded-b-md bg-panel px-6 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-10">
+              <Button
+                variant="secondary"
+                size="lg"
+                onClick={() => router.push('/business/analysis/verifikasi')}
+                className="justify-center !rounded-md"
+              >
+                <ArrowLeftIcon size={16} /> Kembali ke verifikasi
+              </Button>
+              <Button
+                variant="primary"
+                size="lg"
+                disabled={!done}
+                onClick={() => done && router.push('/business/analysis')}
+                className="justify-center !rounded-md"
+              >
+                Buka dasbor hasil <ArrowRightIcon size={16} />
+              </Button>
+            </div>
           </div>
         </div>
       </main>
-
-      <footer className="border-t border-hairline py-6 text-center text-xs text-subtle">
-        <div className="col">
-          Sekilas © 2026 · Simulator Calon Pelanggan untuk UMKM Makanan
-        </div>
-      </footer>
     </div>
   );
 }
 
 export default function SimulasiAgenPage() {
   return (
-    <Suspense fallback={<div className="min-h-screen bg-white" />}>
+    <Suspense fallback={<div className="min-h-full bg-white" />}>
       <SimulasiAgenInner />
     </Suspense>
   );
