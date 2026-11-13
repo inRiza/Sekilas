@@ -13,7 +13,7 @@ export const WIZARD_STEPS: Step[] = [
   { step: 2, label: 'Rekam video', href: '/business/analysis/video', icon: Video },
   { step: 3, label: 'Pemrosesan', href: '/business/analysis/proses', icon: Cpu },
   { step: 4, label: 'Verifikasi transkrip', href: '/business/analysis/verifikasi', icon: ListChecks },
-  { step: 5, label: 'Simulasi agen', href: '/analisis/selasar-kopi/simulasi', icon: Users },
+  { step: 5, label: 'Simulasi agen', href: '/business/analysis/simulasi', icon: Users },
 ];
 
 /**

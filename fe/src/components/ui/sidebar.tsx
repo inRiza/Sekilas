@@ -250,7 +250,3 @@ export function SidebarMenuButton({
     </button>
   );
 }
-
-export function SidebarSeparator({ className }: { className?: string }) {
-  return <div className={cn('h-2', className)} />;
-}

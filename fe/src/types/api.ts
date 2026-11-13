@@ -1,6 +1,6 @@
 /**
  * Single Source of Truth untuk Kontrak Tipe API Sekilas
- * Mengacu ketat pada PRD v1.2 (Bagian 4.4, F1, F3, F5, F6, F7) dan Spesifikasi Entitas Produksi
+ * Mengacu ketat pada PRD v1.4 (Bagian 4.4, F1, F3, F5, F6, F7) dan Spesifikasi Entitas Produksi
  */
 
 // ---------------- 0. Akun Pengguna & Bisnis (1:N:N) ----------------
@@ -18,6 +18,7 @@ export interface Business {
   branch_name: string;
   category: BusinessType;
   address: string;
+  primary_analysis_id?: string | null;
   context: BusinessContext;
   created_at: string;
 }
@@ -36,19 +37,16 @@ export interface Analysis {
   quality_label?: 'Kualitas baik' | 'Kualitas cukup' | 'Kualitas rendah';
   total_agents: number; // 500 untuk analisis penuh, 20 untuk demo
   thumbnail_url?: string;
-  step_progress?: {
-    current_step: number; // 1: konteks, 2: video, 3: proses, 4: verifikasi, 5: simulasi, 6: hasil
-    total_steps: number;
-  };
 }
 
 // ---------------- F1. Konteks Usaha ----------------
-export type BusinessType = 'warung' | 'kedai' | 'kafe' | 'resto_ruko' | 'lainnya';
+export type BusinessType = 'warung' | 'kedai' | 'kafe' | 'resto_ruko';
 export type SurroundingsType = 'dekat_kampus' | 'perkantoran' | 'permukiman' | 'jalan_utama' | 'lainnya';
 export type PasserbyType = 'mahasiswa' | 'pekerja_kantor' | 'warga_sekitar' | 'keluarga' | 'pengendara';
 export type BusinessGoal = 'lebih_banyak_pembeli_baru' | 'naikkan_belanja_rata_rata' | 'ramaikan_jam_sepi';
 export type FixedConstraint = 'lokasi' | 'fasad' | 'menu' | 'harga';
 export type PriceLevel = 'hemat' | 'sedang' | 'premium';
+export type ParkingOption = 'motor' | 'mobil' | 'tidak_ada';
 
 export interface MenuItem {
   id: string;
@@ -57,7 +55,7 @@ export interface MenuItem {
 }
 
 export interface BusinessContext {
-  // Kartu 1: Informasi Dasar
+  // Bagian 1: Informasi Dasar
   business_type: BusinessType;
   business_name: string;
   location_name: string;
@@ -65,15 +63,19 @@ export interface BusinessContext {
   location_lng?: number;
   location_description: string;
 
-  // Kartu 2: Pelanggan dan Tujuan
+  // Bagian 2: Pelanggan dan Tujuan
   surroundings_type: SurroundingsType;
+  surroundings?: SurroundingsType[];
+  surroundings_other?: string;
   passersby: PasserbyType[];
   business_goal: BusinessGoal;
   fixed_constraints: FixedConstraint[];
 
-  // Kartu 3: Menu, Harga, dan Jam
+  // Bagian 3: Menu & Harga
   menu_items: MenuItem[];
   calculated_price_level: PriceLevel;
+
+  // Bagian 4: Jam Operasional
   opening_hours: {
     open: string;  // misal "08:00"
     close: string; // misal "22:00"
@@ -82,7 +84,11 @@ export interface BusinessContext {
     start: string; // misal "12:00"
     end: string;   // misal "14:00"
   }>;
-  nearby_competitors?: string;
+
+  // Bagian 5: Penjualan & Fasilitas (Opsional)
+  daily_sales_rp?: number;
+  daily_visitors?: number;
+  parking?: ParkingOption[];
 }
 
 // ---------------- F3. Transkrip VLM ----------------

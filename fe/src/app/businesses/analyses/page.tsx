@@ -6,12 +6,12 @@ import { Badge } from '@/components/ui/badge';
 import { MOCK_ANALYSES } from '@/lib/mock/analyses';
 import { MOCK_BUSINESSES } from '@/lib/mock/business';
 import { Analysis, Business } from '@/types/api';
-import { VideoIcon, PlusIcon, ArrowRightIcon, StoreIcon } from '@/components/ui/icons';
+import { PlusIcon, ArrowRightIcon, StoreIcon } from '@/components/ui/icons';
 
 export default function BusinessAnalysesPage() {
   const [analyses] = useState<Analysis[]>(MOCK_ANALYSES);
-  const [businesses, setBusinesses] = useState<Business[]>(MOCK_BUSINESSES);
-  const [activeBizId, setActiveBizId] = useState<string>(MOCK_BUSINESSES[0].id);
+  const [businesses] = useState<Business[]>(MOCK_BUSINESSES);
+  const [activeBizId] = useState<string>(MOCK_BUSINESSES[0].id);
 
   const activeBiz = businesses.find((b) => b.id === activeBizId) || businesses[0];
   const filteredAnalyses = analyses.filter((a) => a.business_id === activeBizId || !a.business_id);

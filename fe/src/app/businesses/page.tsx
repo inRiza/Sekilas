@@ -58,7 +58,6 @@ export default function BusinessesPage() {
         menu_items: [],
         opening_hours: { open: '08:00', close: '22:00' },
         rush_hours: [{ start: '12:00', end: '14:00' }],
-        nearby_competitors: '',
       },
       created_at: new Date().toISOString(),
     };
