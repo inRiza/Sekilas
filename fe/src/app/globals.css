@@ -80,6 +80,16 @@ body {
   right: -5px;
 }
 
+/* Figur hairline: plate harus sama dengan warna latar di belakangnya */
+.hairline-sekilas {
+  --hairline-plate: var(--color-surface);
+  --hairline-hi: var(--color-primary-40);
+  --hairline-edge: var(--color-ink-soft);
+  --hairline-mid: var(--color-subtle);
+  --hairline-lo: var(--color-line);
+  --hairline-stroke: 0.9;
+}
+
 /* Tombol utama: gradien biru halus */
 .btn-primary {
   background: linear-gradient(90deg, #2f5fe0 0%, #4f86ff 100%);

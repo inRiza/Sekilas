@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
+import { Drawer, Loupe, Padlock, Slow } from "@lucasmarkes/hairline/react";
 
 import { SekilasLogo } from "@/components/brand/logo";
 import { FunnelCard } from "./funnel-card";
@@ -164,15 +165,20 @@ export function Hero() {
 export function Statement() {
   return (
     <Section className="py-20 sm:py-24">
-      <Reveal>
-        <p className="max-w-3xl text-[26px] leading-[1.25] tracking-[-0.03em] text-ink sm:text-[34px]">
-          Pemilik hanya melihat pelanggan yang masuk.
-          <br />
-          Yang ragu lalu pergi tidak pernah tercatat.
-          <br />
-          <span className="text-muted">Padahal di situlah omzet hilang.</span>
-        </p>
-      </Reveal>
+      <div className="grid items-center gap-10 lg:grid-cols-[minmax(0,1.3fr)_minmax(0,0.7fr)]">
+        <Reveal>
+          <p className="max-w-3xl text-[26px] leading-[1.25] tracking-[-0.03em] text-ink sm:text-[34px]">
+            Pemilik hanya melihat pelanggan yang masuk.
+            <br />
+            Yang ragu lalu pergi tidak pernah tercatat.
+            <br />
+            <span className="text-muted">Padahal di situlah omzet hilang.</span>
+          </p>
+        </Reveal>
+        <Reveal delay={120} className="hairline-sekilas mx-auto w-full max-w-sm">
+          <Slow play intensity={0.6} label="Calon pembeli lewat di depan warung tanpa masuk" />
+        </Reveal>
+      </div>
     </Section>
   );
 }
@@ -378,9 +384,9 @@ export function Recommendations() {
 /* ---------- Kepercayaan ---------- */
 
 const TRUST = [
-  { title: "Bukti di setiap temuan", body: "Setiap temuan tertaut ke frame video dan lokasinya di Visual Twin." },
-  { title: "Kamu yang memegang kendali", body: "Transkrip diperiksa pemilik sebelum simulasi berjalan." },
-  { title: "Privasi dijaga", body: "Wajah dan plat nomor diburamkan di ponselmu sebelum diunggah." },
+  { title: "Bukti di setiap temuan", body: "Setiap temuan tertaut ke frame video dan lokasinya di Visual Twin.", Figure: Loupe, alt: "Kaca pembesar di atas lembar bukti" },
+  { title: "Kamu yang memegang kendali", body: "Transkrip diperiksa pemilik sebelum simulasi berjalan.", Figure: Drawer, alt: "Laci yang dibuka satu per satu" },
+  { title: "Privasi dijaga", body: "Wajah dan plat nomor diburamkan di ponselmu sebelum diunggah.", Figure: Padlock, alt: "Gembok yang terkunci" },
 ];
 
 export function Trust() {
@@ -389,6 +395,9 @@ export function Trust() {
       <div className="grid gap-10 md:grid-cols-3 md:gap-0 md:divide-x md:divide-hairline">
         {TRUST.map((t, i) => (
           <Reveal key={t.title} delay={i * 80} className="md:px-8 md:first:pl-0 md:last:pr-0">
+            <div className="hairline-sekilas mb-6 w-full max-w-[220px]">
+              <t.Figure intensity={0.5} label={t.alt} />
+            </div>
             <p className="font-mono text-[11px] text-subtle">0{i + 1}</p>
             <h3 className="mt-3 text-xl tracking-[-0.02em] text-ink">{t.title}</h3>
             <p className="mt-2 text-[15px] leading-6 text-muted">{t.body}</p>
