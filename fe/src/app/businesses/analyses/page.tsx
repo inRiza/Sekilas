@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import Link from 'next/link';
-import { AppNavbar } from '@/components/layout/app-navbar';
+import { Badge } from '@/components/ui/badge';
 import { MOCK_ANALYSES } from '@/lib/mock/analyses';
 import { MOCK_BUSINESSES } from '@/lib/mock/business';
 import { Analysis, Business } from '@/types/api';
@@ -17,17 +17,11 @@ export default function BusinessAnalysesPage() {
   const filteredAnalyses = analyses.filter((a) => a.business_id === activeBizId || !a.business_id);
 
   return (
-    <div className="min-h-screen bg-white flex flex-col justify-between">
-      <AppNavbar
-        mode="global"
-        businessName={activeBiz.name}
-        branchName={activeBiz.branch_name}
-      />
-
+    <div className="flex min-h-full flex-col justify-between bg-white">
       <main className="section flex-1 py-8 sm:py-12">
         <div className="col space-y-8">
           {/* Active Business Info Card */}
-          <div className="rounded-[10px] border border-line bg-white p-5 sm:p-6 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="rounded-xl border border-line bg-white p-5 sm:p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
               <div className="flex items-center gap-2">
                 <span className="font-mono text-[11px] uppercase tracking-wider text-primary-40 bg-primary-10 px-2 py-0.5 rounded-full font-semibold">
@@ -40,7 +34,7 @@ export default function BusinessAnalysesPage() {
               <h1 className="text-xl sm:text-2xl font-normal tracking-[-0.03em] text-ink mt-1.5 flex items-center gap-2">
                 <StoreIcon size={20} className="text-muted shrink-0" />
                 <span>{activeBiz.name}</span>
-                <span className="text-muted font-normal text-lg">· {activeBiz.branch_name}</span>
+                <Badge size="md">{activeBiz.branch_name}</Badge>
               </h1>
               <p className="text-xs text-muted mt-1">
                 {activeBiz.address}
@@ -50,7 +44,7 @@ export default function BusinessAnalysesPage() {
             <div className="flex items-center gap-2.5 shrink-0">
               <Link
                 href="/businesses"
-                className="inline-flex h-9 items-center rounded-md border border-line bg-white px-3.5 text-xs font-medium text-ink hover:bg-panel transition shadow-xs"
+                className="inline-flex h-9 items-center rounded-md border border-line bg-white px-3.5 text-xs font-medium text-ink hover:bg-panel transition"
               >
                 Ganti Tempat Usaha
               </Link>
@@ -88,7 +82,7 @@ export default function BusinessAnalysesPage() {
                 return (
                   <div
                     key={analysis.id}
-                    className="group rounded-[10px] border border-line bg-white p-4 flex flex-col justify-between shadow-xs hover:border-subtle transition"
+                    className="group rounded-xl border border-line bg-white p-4 flex flex-col justify-between hover:!border-[#d3d7dd] transition"
                   >
                     <div>
                       {/* Status Tag & Date */}
@@ -96,8 +90,8 @@ export default function BusinessAnalysesPage() {
                         <span
                           className={`font-mono text-[10px] uppercase font-semibold px-2 py-0.5 rounded-full ${
                             isReady
-                              ? 'bg-impact/10 text-impact border border-impact/20'
-                              : 'bg-primary-10 text-primary-40 border border-primary-20'
+                              ? 'bg-impact/10 text-impact'
+                              : 'bg-primary-10 text-primary-40'
                           }`}
                         >
                           {isReady ? 'Siap Ditinjau' : 'Memproses'}
@@ -115,7 +109,7 @@ export default function BusinessAnalysesPage() {
                         {analysis.name}
                       </h3>
 
-                      <div className="mt-3 py-2 border-y border-hairline flex items-center justify-between text-xs text-muted">
+                      <div className="mt-3 py-2 flex items-center justify-between text-xs text-muted">
                         <span className="font-mono text-[11px]">
                           {analysis.total_agents} Agen Demo
                         </span>
@@ -151,12 +145,6 @@ export default function BusinessAnalysesPage() {
         </div>
       </main>
 
-      {/* Footer */}
-      <footer className="border-t border-hairline py-6 text-center text-xs text-subtle">
-        <div className="w-full px-4 sm:px-8">
-          Sekilas © 2026 · Simulator Calon Pelanggan untuk UMKM Makanan
-        </div>
-      </footer>
     </div>
   );
 }
