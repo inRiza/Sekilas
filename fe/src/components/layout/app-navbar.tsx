@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { SekilasLogo } from '@/components/brand/logo';
 import { MOCK_BUSINESSES, CURRENT_USER } from '@/lib/mock/business';
+import { HierarchicalSidebar } from '@/components/layout/hierarchical-sidebar';
 
 interface AppNavbarProps {
   mode?: 'global' | 'analysis' | 'wizard';
@@ -244,130 +245,12 @@ export function AppNavbar({
         )}
       </header>
 
-      {/* Sidebar Drawer (Dibuka dengan Mengklik Logo Garis Tiga ≡) */}
-      {showSidebar && (
-        <div className="fixed inset-0 z-50 flex">
-          {/* Backdrop Overlay */}
-          <div
-            onClick={() => setShowSidebar(false)}
-            className="fixed inset-0 bg-black/40 backdrop-blur-xs transition-opacity animate-in fade-in"
-          />
-
-          {/* Drawer Content */}
-          <div className="relative z-10 w-72 max-w-[85vw] bg-white h-full shadow-2xl flex flex-col justify-between p-5 border-r border-line animate-in slide-in-from-left duration-200">
-            <div>
-              {/* Drawer Header */}
-              <div className="flex items-center justify-between pb-4 border-b border-hairline mb-4">
-                <SekilasLogo size={24} />
-                <button
-                  type="button"
-                  onClick={() => setShowSidebar(false)}
-                  className="p-1 rounded-md text-subtle hover:text-ink hover:bg-panel transition"
-                  aria-label="Tutup sidebar"
-                >
-                  <svg className="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <line x1="18" y1="6" x2="6" y2="18" />
-                    <line x1="6" y1="6" x2="18" y2="18" />
-                  </svg>
-                </button>
-              </div>
-
-              {/* Context Proyek Aktif */}
-              <div className="rounded-md bg-panel p-2.5 mb-5 border border-line">
-                <span className="font-mono text-[10px] uppercase tracking-wider text-muted block">
-                  Proyek Analisis Aktif
-                </span>
-                <p className="text-xs font-semibold text-ink mt-0.5 truncate">{activeBiz.name}</p>
-                <p className="text-[11px] text-muted truncate">{activeBiz.branch_name}</p>
-              </div>
-
-              {/* Navigasi Analisis (Sesuai Permintaan Pengguna) */}
-              <div className="space-y-1">
-                <span className="font-mono text-[10px] uppercase tracking-wider text-subtle px-2 mb-1 block">
-                  Navigasi Dasbor
-                </span>
-                <Link
-                  href={`/analisis/${analysisId}`}
-                  onClick={() => setShowSidebar(false)}
-                  className={`flex items-center gap-2.5 rounded-md px-3 py-2 text-xs font-medium transition ${
-                    pathname === `/analisis/${analysisId}`
-                      ? 'bg-primary-10 text-primary-40 font-semibold'
-                      : 'text-ink hover:bg-panel'
-                  }`}
-                >
-                  <span>📊</span> Ringkasan Dasbor
-                </Link>
-                <Link
-                  href={`/analisis/${analysisId}#twin`}
-                  onClick={() => setShowSidebar(false)}
-                  className="flex items-center gap-2.5 rounded-md px-3 py-2 text-xs font-medium text-ink hover:bg-panel transition"
-                >
-                  <span>🌐</span> Visual Twin 3D
-                </Link>
-                <Link
-                  href={`/analisis/${analysisId}/agen`}
-                  onClick={() => setShowSidebar(false)}
-                  className={`flex items-center gap-2.5 rounded-md px-3 py-2 text-xs font-medium transition ${
-                    pathname.includes('/agen')
-                      ? 'bg-primary-10 text-primary-40 font-semibold'
-                      : 'text-ink hover:bg-panel'
-                  }`}
-                >
-                  <span>👥</span> Jelajah Agen (20 Demo)
-                </Link>
-              </div>
-
-              {/* Divider & Menu Utama */}
-              <div className="mt-6 pt-5 border-t border-hairline space-y-1">
-                <span className="font-mono text-[10px] uppercase tracking-wider text-subtle px-2 mb-1 block">
-                  Aplikasi
-                </span>
-                <Link
-                  href="/proyek"
-                  onClick={() => setShowSidebar(false)}
-                  className="flex items-center gap-2.5 rounded-md px-3 py-2 text-xs font-medium text-ink hover:bg-panel transition"
-                >
-                  <span>📁</span> Semua Analisis
-                </Link>
-                <Link
-                  href="/profil"
-                  onClick={() => setShowSidebar(false)}
-                  className="flex items-center gap-2.5 rounded-md px-3 py-2 text-xs font-medium text-ink hover:bg-panel transition"
-                >
-                  <span>⚙️</span> Profil Usaha (F1)
-                </Link>
-                <Link
-                  href="/analisis/selasar-kopi/konteks"
-                  onClick={() => setShowSidebar(false)}
-                  className="flex items-center gap-2.5 rounded-md px-3 py-2 text-xs font-medium text-primary-40 hover:bg-primary-10 transition font-semibold"
-                >
-                  <span>+</span> Mulai Analisis Video Baru
-                </Link>
-              </div>
-            </div>
-
-            {/* Bottom Drawer Footer */}
-            <div className="pt-4 border-t border-hairline text-xs">
-              <div className="flex items-center gap-2 mb-2">
-                <span className="size-6 rounded-full bg-primary-40 text-white text-[11px] font-semibold flex items-center justify-center">
-                  {CURRENT_USER.name.charAt(0)}
-                </span>
-                <div className="truncate">
-                  <p className="font-medium text-ink truncate">{CURRENT_USER.name}</p>
-                  <p className="text-[11px] text-muted truncate">{CURRENT_USER.email}</p>
-                </div>
-              </div>
-              <Link
-                href="/masuk"
-                onClick={() => setShowSidebar(false)}
-                className="block text-friction hover:underline text-[11px] font-mono mt-1"
-              >
-                Keluar Akun
-              </Link>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Hierarchical Sidebar Drawer (Komponen Shadcn, Bebas Emoji, Sesuai Struktur Bisnis & Analisis) */}
+      <HierarchicalSidebar
+        isOpen={showSidebar}
+        onClose={() => setShowSidebar(false)}
+        activeAnalysisId={analysisId}
+      />
     </>
   );
 }
