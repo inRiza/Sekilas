@@ -1,6 +1,6 @@
 # PRD Final: Sekilas, Simulator Calon Pelanggan untuk UMKM Makanan
 
-**Versi:** 1.3 (atribusi alasan ke katalog hipotesis lewat pesan kedua agen, run dasar tunggal tanpa evaluasi noise, ablasi menjadi opsional)
+**Versi:** 1.4 (hierarki bisnis -> analisis, kontrak API bertingkat dengan job asinkron, proyeksi dua tingkat, checkpoint dari AI dengan konfirmasi titik kasir, F1 satu kolom dengan unggah menu)
 **Tanggal:** 14 November 2026
 **Status:** Acuan pembangunan hackathon
 
@@ -18,6 +18,17 @@
 10. **VLM hanya menerima video, data form tidak dikirim ke VLM** (pengecualian: satu kalimat jenis usaha di prompt VLM, F3).
 11. **Keputusan dulu, katalog kemudian.** Agen memutuskan tanpa melihat katalog hipotesis. Setelah keputusannya terkunci, pesan kedua di percakapan yang sama meminta agen menilai hipotesis dari katalog yang sudah disaring sesuai bagian jalur yang ia lewati (F5).
 12. **Satu run dasar, tanpa evaluasi noise antar-run.** Demi biaya, simulasi dijalankan sekali per analisis. Hasil dibaca sebagai hipotesis yang diuji lewat tally manual, bukan sebagai angka yang sudah teruji kestabilannya.
+13. **Bisnis -> analisis.** Akun punya beberapa bisnis; tiap bisnis punya beberapa analisis. Konteks usaha **disalin (snapshot)** ke tiap analisis saat dibuat, bukan dirujuk ke bisnis, agar hasil lama tetap bisa diaudit. Bisnis menyimpan `primary_analysis_id` yang dibuka dari daftar bisnis (4.1).
+14. **Proyeksi dua tingkat.** Mencentang perbaikan langsung memberi `perkiraan_cepat` (estimator, tanpa LLM). Hasil `terverifikasi_simulasi` hanya dari run ablasi berpasangan (F6-D), dicache, dan dijalankan atas permintaan (4.4.4).
+15. **Checkpoint dipilih AI, pemilik hanya mengonfirmasi titik kasir.** Pemilik tidak mengetuk checkpoint saat merekam. VLM menandai checkpoint jalur (terlihat dari jalan, pintu atau tangga, penanda atau papan, menu dan harga, titik pesan) beserta stempel waktunya saat menyusun transkrip; pemilik hanya mengisi atau mengonfirmasi menit titik pesan/kasir, yang menjadi akhir jalur (4.3).
+
+**Perubahan 1.4 terhadap 1.3:**
+- Model data bertingkat akun -> bisnis -> analisis, dengan konteks snapshot per analisis dan `primary_analysis_id` di bisnis (4.1).
+- Tabel 4.4 diganti kontrak API lengkap: rute bisnis, analisis dan wizard, hasil, jelajah agen, proyeksi, mode demo, status dan `next_action`, serta aturan lintas endpoint (202 + job, `Idempotency-Key`, galat 409 berkode, versi di setiap respons, paginasi kursor, kuota, kepemilikan) (4.2, 4.4).
+- Checkpoint tidak lagi diketuk pemilik: VLM menandai checkpoint dari video, pemilik hanya mengonfirmasi titik kasir; zona dari checkpoint AI (F2, F3, 4.3, F7).
+- F1 menjadi satu container satu kolom; menu lewat unggah Excel atau foto menu (VLM); isian tetangga terdekat dan opsi "lainnya" dihapus.
+- Proyeksi what-if di dasbor dipisah menjadi perkiraan cepat dan hasil terverifikasi simulasi yang dicache (F6-D, 4.4.4).
+- Halaman 10 menjadi Daftar bisnis dan riwayat analisis per bisnis (5.2, 5.3).
 
 **Perubahan 1.3 terhadap 1.2:**
 - Pelabelan faktor oleh LLM terpisah diganti **atribusi oleh agen sendiri** lewat pesan kedua: pertanyaan disesuaikan dengan stance (lewat, berhenti lalu pergi, masuk tanpa memesan, memesan), katalog disaring menurut sudut pandang (`vantage`) yang sudah dilewati agen, skala 0 sampai 3, kutipan wajib diverifikasi kode (F5, F6-C).
@@ -122,7 +133,7 @@ Pemilik atau pengelola tempat makan kecil (warung, kedai, kafe, resto ruko) yang
         v
 [Worker ingesti di browser]
   - peringatan gerak (giroskop/akselerometer)
-  - stempel waktu tiap checkpoint (dasar zona, 4.3)
+  - konfirmasi stempel waktu titik kasir (akhir jalur, 4.3)
   - blur wajah dan plat (MediaPipe)
   - buang frame buram (variansi Laplacian)
         |
@@ -192,54 +203,184 @@ Prinsip arsitektur:
 - **Visual Twin hanya menampilkan hasil dan tidak menahan simulasi.** Ia tidak ikut menentukan keputusan agen dan baru digabung di agregasi. Jika 3D belum siap atau gagal, dasbor tetap tampil dengan tampilan cadangan, lalu Visual Twin menyusul.
 - **`transforms.json` adalah batas antar tahap 3D.** Tahap pose (COLMAP atau VGGT) bisa diganti tanpa mengubah tahap sesudahnya.
 
-### 4.1 Penyimpanan dan model data
+### 4.1 Hierarki dan model data
+
+```
+akun
+ └─ bisnis (profil tetap: jenis, lokasi, menu bawaan)        primary_analysis_id
+     └─ analisis (satu siklus: konteks + video + transkrip + hasil)
+         ├─ konteks (snapshot saat analisis dibuat)
+         ├─ video (terburam), transkrip (segmen berversi), persona (PersonaSpec berversi)
+         ├─ run (baseline | ablasi) -> keputusan agen
+         ├─ dasbor (agregasi run dasar yang valid)
+         ├─ rekomendasi, proyeksi (perkiraan cepat | terverifikasi simulasi)
+         ├─ twin (aset 3D)
+         └─ rencana pengukuran
+```
+
+Dua keputusan struktural:
+
+- **Konteks disalin (snapshot) ke tiap analisis**, bukan dirujuk ke bisnis. Harga menu bulan ini bisa berbeda dari bulan lalu, dan hasil lama harus tetap bisa diaudit. Profil bisnis hanya mengisi nilai awal saat analisis baru dibuat.
+- **`primary_analysis_id` di bisnis** menunjuk analisis yang dibuka dari daftar bisnis. Bawaannya analisis `siap` terbaru; pemilik boleh menyematkan yang lain.
 
 | Data | Tempat | Catatan |
 | --- | --- | --- |
-| Analisis (status wizard, flag kedaluwarsa) | Postgres | satu baris per video |
-| Konteks usaha, menu | Postgres | F1; perubahan menandai persona dan hasil kedaluwarsa |
+| Akun | Postgres | pemilik semua bisnis; batas kuota (4.4.6) |
+| Bisnis | Postgres | profil tetap (jenis, lokasi, menu bawaan), `primary_analysis_id` |
+| Analisis | Postgres | status wizard, `stale` + alasan, `is_demo`, nomor versi transkrip dan persona |
+| Konteks usaha (snapshot), menu | Postgres | F1; disalin dari bisnis saat analisis dibuat; perubahan menandai persona dan hasil kedaluwarsa |
 | Fitur input kategorikal F1 | Postgres | hasil ekstraksi/kategorisasi fitur F1 |
 | Versi $W$ dan versi tabel segmen | Postgres | parameter model diskret yang digunakan |
 | Seed per analisis | Postgres | seed tetap untuk sampling persona terstratifikasi |
-| PersonaSpec (500 per analisis) | Postgres | skema JSON lengkap per agen, dipakai ulang di semua run dan ablasi |
+| PersonaSpec (500 per analisis, 20 pada demo) | Postgres | dipakai ulang di semua run; `persona_version` naik saat konteks atau slider berubah |
 | Frame bukti terburam | object storage | dirujuk lewat `frame_keys` |
-| Segmen transkrip + jejak audit edit | Postgres | F3, F4; perubahan pemilik bertanda dan berversi |
-| Run (dasar dan ablasi), versi model dan prompt | Postgres | nomor run, status, biaya |
-| Keputusan agen | Postgres | satu baris per agen per run (skema 4 tahap, tanpa `will_return`) |
-| Hasil agregasi dan ablasi | Postgres | dihitung ulang dari keputusan, bisa dicache |
+| Segmen transkrip + jejak audit edit | Postgres | F3, F4; `transcript_version` naik di setiap perubahan pemilik |
+| Stempel waktu kasir | Postgres | satu nilai per video (F2), dasar akhir jalur (4.3) |
+| Run (baseline, ablasi), versi model dan prompt | Postgres | status, biaya, `catalog_version`, `model_version`, `prompt_version` |
+| Keputusan dan atribusi agen | Postgres | satu baris per agen per run (pesan 1 dan pesan 2, F5) |
+| Hasil agregasi dan rekomendasi | Postgres | dihitung ulang dari keputusan, bisa dicache |
+| Proyeksi | Postgres | label, basis versi, `spec_hash`, hasil; kunci cache di 4.4.4 |
 | Aset 3D (PLY, splat, `camera_path.json`, metadata `up` dan kualitas) | object storage | dibangun sekali per video |
 | Log panggilan model dan template prompt | Langfuse | auditabilitas |
 
-Video mentah tidak disimpan. Mengubah transkrip atau data konteks F1 menandai persona dan hasil run lama kedaluwarsa, tetapi aset 3D tetap dipakai.
+Video mentah tidak disimpan. Mengubah transkrip atau konteks F1 menaikkan versi dan menandai persona serta hasil run lama `stale`, tetapi aset 3D tetap dipakai. Menghapus bisnis menghapus semua analisis dan asetnya (frame, 3D, keputusan agen).
 
 ### 4.2 Orkestrasi job
 
-- Setiap pekerjaan berat (transkrip, 3D, run agen, ablasi) adalah job di antrean dengan status `antre`, `berjalan`, `selesai`, `gagal`, dan progres.
+- Setiap pekerjaan berat (transkrip, 3D, run agen, ablasi/proyeksi terverifikasi) adalah job di antrean dengan status `antre`, `berjalan`, `selesai`, `gagal`, dan progres.
+- Endpoint yang memicu job membalas **`202 Accepted`** dengan `job_id` dan header `Location` ke sumber dayanya.
+- **Idempoten** lewat header `Idempotency-Key`: kunci yang sama tidak menjalankan job kedua. Secara isi, transkrip yang sama tidak memicu ulang 3D; video yang sama tidak memicu ulang transkrip kecuali diminta.
 - Job 3D berjalan di antrean terpisah (GPU atau mode lokal), job LLM di antrean dengan konkurensi terbatas dan retry per batch.
-- Job idempoten per masukan: transkrip yang sama tidak memicu ulang 3D; video yang sama tidak memicu ulang transkrip kecuali diminta.
-- UI membaca status lewat polling atau server-sent events. Halaman 4 dan 6 hanya menampilkan status job.
+- UI membaca progres lewat **SSE** (`GET /analyses/{aid}/events`) dengan polling `GET /analyses/{aid}/jobs` sebagai cadangan. Halaman 4 dan 6 hanya menampilkan status job.
 
 ### 4.3 Kunci penggabung: zona dan segmen berbasis waktu
 
-- Saat merekam, setiap ketukan checkpoint (F2) menyimpan **stempel waktu**. Zona adalah rentang waktu antar-checkpoint (misal Dasar tangga = detik 18 sampai 26), bukan posisi 3D.
+- **Checkpoint ditandai AI.** Saat menyusun transkrip (F3), VLM menandai checkpoint jalur beserta stempel waktunya: terlihat dari jalan, pintu atau tangga, penanda atau papan, menu dan harga, dan titik pesan. Checkpoint yang tidak ditemukan dibiarkan kosong, bukan ditebak.
+- **Pemilik hanya mengonfirmasi titik kasir** (F2): satu stempel waktu, bawaannya akhir video. Bila berbeda dengan titik pesan pilihan VLM, nilai pemilik yang dipakai. Titik ini menetapkan akhir jalur dan tahap Memesan.
+- **Zona** adalah rentang waktu antar-checkpoint (misal Pintu atau tangga = detik 18 sampai 26), bukan posisi 3D. Zona terakhir berakhir di titik kasir.
 - Segmen transkrip punya `timestamp_start` dan `timestamp_end`; jalur kamera 3D punya posisi per stempel waktu frame.
 - Penggabungan di agregasi cukup mencari pose kamera pada stempel waktu segmen. Dengan begitu transkrip, simulasi, dan 3D bisa berjalan tanpa saling menunggu, dan menambah atau menghapus segmen tidak perlu membangun ulang 3D.
 
-### 4.4 Kontrak API (ringkas)
+### 4.4 Kontrak API
+
+Prinsip: **bisnis -> analisis -> (run, proyeksi, agen)** sebagai sumber daya bertingkat, dan pekerjaan berat selalu berupa job asinkron (4.2). Setelah dibuat, analisis diakses lewat rute datar `/analyses/{aid}/...` (bukan `/businesses/{bid}/analyses/{aid}/...`) agar URL pendek. Setiap permintaan tetap memeriksa rantai kepemilikan akun -> bisnis -> analisis.
+
+#### 4.4.1 Bisnis
 
 | Metode dan jalur | Fungsi |
 | --- | --- |
-| `POST /analyses` | membuat analisis |
-| `PUT /analyses/{id}/context` | menyimpan konteks usaha (F1), menghasilkan fitur kategorikal dan 500 PersonaSpec |
-| `POST /analyses/{id}/video` | unggah video terburam + stempel waktu checkpoint, memicu job transkrip dan 3D |
-| `GET /analyses/{id}/jobs` | status semua job |
-| `GET`, `PATCH`, `POST /analyses/{id}/transcript/...` | membaca dan mengedit segmen (F4) |
-| `POST /analyses/{id}/runs` | menjalankan simulasi (ditolak jika antrean tidak pasti belum kosong) |
-| `GET /analyses/{id}/agents` | daftar agen dengan filter (halaman 8) |
-| `GET /analyses/{id}/dashboard` | hasil agregasi, sudah lolos verifier |
-| `GET /analyses/{id}/twin` | aset 3D, mode tampilan, kualitas |
-| `POST /analyses/{id}/measurement-plan` | rencana pengukuran (F6-G) |
-| `GET /analyses` | daftar analisis untuk halaman Riwayat |
+| `GET /businesses` | daftar bisnis akun, dengan `primary_analysis` dan `next_action` ringkas |
+| `POST /businesses` | buat bisnis |
+| `GET`, `PATCH`, `DELETE /businesses/{bid}` | baca, ubah (termasuk menyematkan `primary_analysis_id`), hapus |
+| `GET /businesses/{bid}/analyses` | riwayat analisis bisnis (status, label kualitas 3D, ringkasan temuan) |
+| `POST /businesses/{bid}/analyses` | buat analisis baru, menyalin konteks dari profil bisnis |
+
+#### 4.4.2 Analisis dan wizard
+
+| Metode dan jalur | Fungsi |
+| --- | --- |
+| `GET /analyses/{aid}` | status, versi, `stale`, dan `next_action` |
+| `PUT /analyses/{aid}/context` | simpan konteks (F1); menghasilkan fitur kategorikal dan PersonaSpec |
+| `POST /analyses/{aid}/menu` | unggah file menu (Excel/CSV) atau foto menu; foto dibaca VLM menjadi daftar yang bisa dikoreksi |
+| `POST /analyses/{aid}/video` | minta URL unggah untuk video terburam |
+| `POST /analyses/{aid}/video/complete` | kirim `cashier_at_s` (stempel waktu kasir), memicu job transkrip dan 3D |
+| `GET /analyses/{aid}/jobs` | status semua job |
+| `GET /analyses/{aid}/events` | SSE untuk progres (polling sebagai cadangan) |
+| `GET /analyses/{aid}/transcript` | baca segmen |
+| `PATCH`, `POST`, `DELETE /analyses/{aid}/transcript/segments/{sid}` | edit, tambah, hapus segmen |
+| `POST /analyses/{aid}/transcript/confirm` | tandai verifikasi selesai |
+| `GET /analyses/{aid}/persona` | ringkasan sebaran persona (untuk layar konfirmasi) |
+| `PUT /analyses/{aid}/persona/overrides` | slider sebaran segmen oleh pemilik (opsional, pertanyaan terbuka 14) |
+
+#### 4.4.3 Hasil dan Jelajah Agen
+
+| Metode dan jalur | Fungsi |
+| --- | --- |
+| `POST /analyses/{aid}/runs` | jalankan simulasi dasar (`202`, mengembalikan job) |
+| `GET /analyses/{aid}/runs`, `GET /runs/{rid}` | daftar dan detail run |
+| `GET /analyses/{aid}/dashboard` | agregasi run dasar yang valid, sudah lolos verifier (F6) |
+| `GET /analyses/{aid}/recommendations` | rekomendasi, tindakan dari katalog, perkiraan biaya (F6-D) |
+| `GET /analyses/{aid}/twin` | aset 3D, mode tampilan (putar, jalan, tur), label kualitas (F7) |
+| `POST /analyses/{aid}/measurement-plan` | buat rencana pengukuran (F6-G) |
+| `GET /analyses/{aid}/agents` | daftar agen dengan filter `run`, `decision`, `stage`, `segment`, `hypothesis`, `q`, dan `cursor` |
+| `GET /analyses/{aid}/agents/{agent_id}` | persona, monolog, keputusan, atribusi ke katalog dengan kutipan |
+| `GET /analyses/{aid}/agents/{agent_id}/journey` | pose kamera per langkah untuk diputar di Visual Twin |
+
+#### 4.4.4 Proyeksi (mencentang perbaikan)
+
+| Metode dan jalur | Perilaku | Label |
+| --- | --- | --- |
+| `POST /analyses/{aid}/projections/estimate` | sinkron, milidetik, tanpa LLM | `perkiraan_cepat` |
+| `POST /analyses/{aid}/projections` | cache lebih dulu; jika tidak ada, `202` dan job ablasi berpasangan (F6-D) | `terverifikasi_simulasi` |
+| `GET /projections/{pid}` | status dan hasil | sesuai pembuatnya |
+
+**Estimator `perkiraan_cepat`:** dihitung kode dari atribusi run dasar (F6-C). Agen yang tidak memesan dengan hipotesis `primary` yang ditangani perbaikan terpilih dihitung berpotensi naik satu tahap corong; hasilnya ditampilkan sebagai rentang dengan label jelas *perkiraan*, bukan hasil simulasi.
+
+Badan permintaan sama untuk keduanya:
+
+```json
+{
+  "recommendation_ids": ["rec_1", "rec_2", "rec_3"],
+  "spec_overrides": { "rec_1": { "tinggi_huruf_cm": 6 } }
+}
+```
+
+Contoh respons:
+
+```json
+{
+  "projection_id": "prj_91",
+  "label": "terverifikasi_simulasi",
+  "status": "selesai",
+  "cache_hit": false,
+  "basis": {
+    "baseline_run_id": "run_1",
+    "transcript_version": 7,
+    "persona_version": 2,
+    "catalog_version": 3,
+    "spec_hash": "a91f..."
+  },
+  "funnel": {
+    "sebelum": { "melihat": 20, "berhenti": 6, "masuk": 4, "memesan": 2 },
+    "sesudah": { "melihat": 20, "berhenti": 12, "masuk": 8, "memesan": 5 }
+  },
+  "efek": { "memesan_agen": 3, "agen_berubah_keputusan": ["a_042", "a_108", "a_340"] },
+  "biaya": { "min_rp": 200000, "maks_rp": 350000 }
+}
+```
+
+Sesuai keputusan 12, tidak ada evaluasi noise antar-run: `basis` merujuk satu run dasar, dan `efek` melaporkan jumlah agen yang berubah keputusan apa adanya, tanpa penanda "melewati noise".
+
+**Kunci cache:** `hash(analysis_id, transcript_version, persona_version, sorted(recommendation_ids), spec_hash)`. Kombinasi yang sama langsung dikembalikan tanpa menjalankan agen. Mengubah transkrip atau persona menaikkan versi, sehingga cache lama otomatis tidak terpakai.
+
+#### 4.4.5 Mode demo
+
+- Satu **bisnis demo** milik akun demo dengan analisis `is_demo: true` yang sudah lengkap: run dasar dan proyeksi terverifikasi yang sudah disimpan (bisa dari 500 agen, opsi pre-run di Bagian 9).
+- `projections/estimate` bekerja normal, sehingga centang terasa hidup.
+- `POST /projections` pada analisis demo hanya mengembalikan hasil cache untuk kombinasi yang sudah disiapkan (tiap perbaikan sendiri dan "semua"). Kombinasi lain dijawab `409 verified_unavailable_in_demo` beserta estimasinya, dan UI menampilkan *Perkiraan cepat* saja.
+- Analisis demo bersifat baca-saja (tidak ada `POST /runs`), jadi tidak ada biaya API saat demo.
+
+#### 4.4.6 Status, `next_action`, dan aturan lintas endpoint
+
+`GET /analyses/{aid}` dan item di `GET /businesses/{bid}/analyses` memuat `status` dan `next_action`, supaya klien tidak menebak:
+
+```json
+{
+  "id": "ana_12",
+  "status": "verifikasi",
+  "stale": false,
+  "next_action": { "route": "/analyses/ana_12/verify", "label": "Lanjut verifikasi" }
+}
+```
+
+- **Status:** `draft` -> `konteks` -> `video` -> `memproses` -> `verifikasi` -> `simulasi` -> `siap`. Kedaluwarsa adalah penanda `stale` (dengan alasan `transcript_changed`, `context_changed`, `persona_changed`), bukan status baru; data lama tetap bisa dibaca dan UI menawarkan simulasi ulang.
+- Untuk analisis `siap`, `next_action` menuju dasbor. Klik kartu bisnis memakai `primary_analysis.next_action`.
+- **Prasyarat (`409`):** run ditolak jika antrean segmen tidak pasti belum kosong atau job transkrip belum selesai. Bodi galat memuat kode (`transcript_unconfirmed`, `context_incomplete`, `cashier_missing`), bukan hanya teks.
+- **Versi di setiap respons hasil:** `transcript_version`, `persona_version`, `catalog_version`, `model_version`, dan `prompt_version` (audit, Bagian 7).
+- **Paginasi kursor** untuk daftar agen. Nilai filter `stage`, `segment`, dan `hypothesis` memakai kode tetap, bukan teks tampilan.
+- **Kuota:** batasi `POST /projections` dan `POST /runs` per analisis dan per akun (misal 10 proyeksi terverifikasi per analisis per hari) untuk mencegah loop atau penyalahgunaan.
+- **Kepemilikan:** ID opak (bukan urut). Setiap rute `/analyses/{aid}` memeriksa rantai akun -> bisnis -> analisis; `/runs/{rid}` dan `/projections/{pid}` memeriksa lewat analisis induknya.
+- **Penghapusan:** menghapus bisnis menghapus analisis dan asetnya. Video mentah memang tidak pernah disimpan.
 
 ---
 
@@ -252,7 +393,7 @@ Konteks + video -> Cek kualitas & privasi -> Transkrip (+ Visual Twin, paralel)
   -> Verifikasi pemilik -> Simulasi 500 agen (atau 20 agen demo) -> Dasbor Analitik -> Rencana pengukuran
 ```
 
-Aplikasi berbentuk wizard satu arah (halaman 1 sampai 7), dengan dua halaman lanjutan dari Dasbor (8 dan 9) dan satu halaman Riwayat (10). Pemilik boleh kembali ke langkah sebelumnya dari penanda langkah. Mengubah transkrip atau isian konteks F1 setelah dasbor jadi menandai persona dan dasbor lama kedaluwarsa serta menawarkan simulasi ulang. Visual Twin tidak dibangun ulang kecuali video diganti.
+Aplikasi berbentuk wizard satu arah (halaman 1 sampai 7), dengan dua halaman lanjutan dari Dasbor (8 dan 9) dan satu halaman Daftar bisnis dan riwayat (10). Pemilik boleh kembali ke langkah sebelumnya dari penanda langkah. Mengubah transkrip atau isian konteks F1 setelah dasbor jadi menandai persona dan dasbor lama kedaluwarsa serta menawarkan simulasi ulang. Visual Twin tidak dibangun ulang kecuali video diganti.
 
 ### 5.2 Daftar halaman
 
@@ -267,15 +408,15 @@ Aplikasi berbentuk wizard satu arah (halaman 1 sampai 7), dengan dua halaman lan
 | 7 | Dasbor Analitik | Temuan, Visual Twin, rekomendasi | F6, F7 |
 | 8 | Jelajah Agen | Membaca monolog, keputusan, dan jalur tiap agen | F5, F6 |
 | 9 | Rencana Pengukuran | Rencana pembuktian lewat tally manual | F6 |
-| 10 | Riwayat | Daftar analisis sebelumnya dan pintu masuk ke dasbornya | - |
+| 10 | Daftar bisnis & riwayat | Daftar bisnis; tiap bisnis membuka analisis utamanya, plus riwayat analisis per bisnis | - |
 
 ### 5.3 Ringkasan per halaman
 
 **1. Beranda.** Satu kalimat nilai, tombol Mulai Analisis, tautan ke Riwayat.
 
-**2. Konteks Usaha.** Tampilan dua kolom (mobile satu kolom) dengan target selesai di bawah 3 menit. Kolom kiri: Kartu 1 (Informasi Dasar: jenis usaha, lokasi peta/pin, deskripsi letak) lalu Kartu 2 (Pelanggan dan Tujuan, berbasis chip dengan nilai bawaan: tipe sekitar, siapa yang biasa lewat, tujuan, tidak bisa diubah). Kolom kanan: Kartu 3 (Menu, Harga, dan Jam: daftar baris menu dan harga dengan tombol Tambah dan Unggah foto menu yang dibaca otomatis menjadi daftar yang bisa dikoreksi atau manual jika gagal, jam buka, jam ramai, dan tetangga terdekat). Placeholder tampil lebih terang daripada teks terisi. Semua isian mengalir ke konteks agen dan model persona diskret, tidak dikirim ke VLM (kecuali satu kalimat jenis usaha pada prompt VLM).
+**2. Konteks Usaha.** Satu container satu kolom dengan empat bagian bernomor (Informasi dasar, Pelanggan & tujuan, Menu & harga, Jam operasional), target selesai di bawah 3 menit. Menu diisi lewat unggah file Excel atau foto menu yang dibaca otomatis menjadi daftar yang bisa dikoreksi. Label memakai badge Wajib/Opsional; status isian wajib dan tombol lanjut ada di kaki container. Semua isian mengalir ke konteks agen dan model persona diskret, tidak dikirim ke VLM (kecuali satu kalimat jenis usaha pada prompt VLM). Detail di F1.
 
-**3. Rekam Video.** Kamera, pengatur waktu, daftar checkpoint (terlihat dari jalan, pintu atau tangga, penanda atau papan, menu dan harga, titik pesan), satu kalimat panduan, opsi unggah. Indikator gerak: terlalu cepat, atau jangan hanya berputar tapi sambil berjalan. Setelah rekam: cek kualitas dan pratinjau hasil blur. Video terlalu gelap, goyang, atau pendek ditolak dengan pesan jelas. Otomatis berhenti di durasi maksimum.
+**3. Rekam Video.** Rekam atau unggah video, cek kualitas otomatis, dan pratinjau hasil blur. Checkpoint jalur dipilih AI saat transkripsi; pemilik hanya menjawab satu pertanyaan: di menit berapa titik pesan/kasir terlihat (bawaan akhir video). Indikator gerak saat merekam: terlalu cepat, atau jangan hanya berputar tapi sambil berjalan. Video terlalu gelap, goyang, atau pendek ditolak dengan pesan jelas. Otomatis berhenti di durasi maksimum.
 
 **4. Memproses.** Progres bertahap (mengunggah, membaca video, menyusun kejadian, membangun tampilan 3D). Transkrip dan Visual Twin berjalan paralel; halaman 5 terbuka begitu transkrip siap. Jika transkrip gagal, ada tombol Coba lagi tanpa kehilangan video. Jika Visual Twin gagal, alur lanjut dengan tampilan cadangan.
 
@@ -289,7 +430,7 @@ Aplikasi berbentuk wizard satu arah (halaman 1 sampai 7), dengan dua halaman lan
 
 **9. Rencana Pengukuran.** Apa yang dihitung, berapa lama, data minimum, lembar tally yang bisa dicetak, dan tangkapan Visual Twin dengan tanda titik berdiri pemilik (ditentukan dari jam ramai dan lokasi gesekan terbesar). Bagian ini menutup celah bahwa simulasi bersifat hipotesis (lihat F6-G).
 
-**10. Riwayat.** Kartu per analisis: nama, tanggal, status (memproses, siap, kedaluwarsa), label kualitas 3D (F7), dan ringkasan temuan jika sudah ada. Klik kartu membuka dasbornya. Kartu "Analisis baru" menuju halaman 2. Sesuai tab Riwayat di desain Figma.
+**10. Daftar bisnis & riwayat.** Kartu per bisnis (nama, cabang, jenis, status analisis utama). Klik kartu mengikuti `primary_analysis.next_action` (dasbor bila siap, atau langkah wizard berikutnya). Riwayat per bisnis berisi kartu analisis: nama, tanggal, status (memproses, siap, kedaluwarsa), label kualitas 3D (F7), dan ringkasan temuan jika ada; pemilik bisa menyematkan analisis utama. Tambah bisnis lewat modal (nama, cabang, jenis, alamat).
 
 ### 5.4 Komponen bersama dan status galat
 
@@ -340,49 +481,57 @@ Catatan KPI: Hipotesis utama dan porsi dijelaskan diambil dari skor atribusi (F6
 
 ### F1. Konteks Usaha
 
-Form mengumpulkan konteks usaha yang tidak terlihat dari video, dirancang sesuai desain Figma dengan tata letak dua kolom (mobile satu kolom) dan target pengisian di bawah 3 menit. Semua isian mengalir ke konteks agen dan model persona diskret, tidak dikirim ke VLM (kecuali satu kalimat jenis usaha di prompt VLM).
+Form mengumpulkan konteks usaha yang tidak terlihat dari video, dengan target pengisian di bawah 3 menit. Tata letaknya **satu container satu kolom**: empat bagian bernomor dipisah judul bagian, setiap isian selebar penuh, label memakai badge Wajib/Opsional, tanpa petunjuk teks di pojok kanan. Pilihan satu tampil sebagai tombol yang disorot, pilihan banyak sebagai tombol dengan kotak centang; tidak ada opsi "lainnya" dan label tidak memakai pasangan bergaris miring. Semua isian mengalir ke konteks agen dan model persona diskret, tidak dikirim ke VLM (kecuali satu kalimat jenis usaha di prompt VLM). Nilai awal disalin dari profil bisnis (4.1).
 
-#### Kartu 1: Informasi Dasar
-
-| Isian | Tipe | Wajib | Mengalir ke |
-| --- | --- | --- | --- |
-| Jenis usaha | pilihan: warung, kedai, kafe, resto ruko, lainnya | ya | model diskret; satu kalimat di prompt VLM |
-| Lokasi usaha | pencarian peta atau pin | ya | model diskret (fitur lokasi); konteks agen |
-| Deskripsi letak | teks pendek (misal "lantai 2 ruko, sebelah minimarket") | ya | konteks agen (diketahui atau tidak diketahui) |
-
-#### Kartu 2: Pelanggan dan Tujuan (semua chip dengan nilai bawaan)
+#### Bagian 1: Informasi dasar
 
 | Isian | Tipe | Wajib | Mengalir ke |
 | --- | --- | --- | --- |
-| Tipe sekitar | pilihan satu: dekat kampus, perkantoran, permukiman, jalan utama, lainnya | ya | model diskret (fitur utama) |
-| Siapa yang biasa lewat | chip pilih banyak: mahasiswa, pekerja kantor, warga sekitar, keluarga, pengendara | tidak | model diskret (menggeser bobot segmen) |
-| Tujuan | chip pilih satu: lebih banyak pembeli baru, naikkan belanja rata-rata, ramaikan jam sepi | tidak | lapisan rekomendasi (urutan dan penilaian dampak), bukan simulasi |
-| Tidak bisa diubah | chip pilih banyak: lokasi, fasad, menu, harga | tidak | lapisan rekomendasi (menyaring saran yang mustahil dan menyesuaikan penilaian usaha) |
+| Jenis usaha | pilih satu: warung makan, kedai kopi, kafe santai, restoran ruko | ya | model diskret; satu kalimat di prompt VLM |
+| Nama tempat usaha | teks pendek | ya | konteks agen |
+| Lokasi usaha | alamat atau titik di peta | ya | model diskret (fitur lokasi); konteks agen |
+| Deskripsi letak fisik | teks (misal "lantai 2 ruko, sebelah minimarket"), tinggi tetap | ya | konteks agen (diketahui atau tidak diketahui) |
 
-#### Kartu 3: Menu, Harga, dan Jam
+#### Bagian 2: Pelanggan & tujuan (semua pilihan punya nilai bawaan)
 
 | Isian | Tipe | Wajib | Mengalir ke |
 | --- | --- | --- | --- |
-| Menu dan harga | daftar baris (nama, harga) dengan tombol Tambah dan Unggah foto menu | ya | model diskret (level harga); konteks agen; pencocokan dengan transkrip |
-| Jam buka | satu rentang jam | ya | konteks agen (diketahui atau tidak) |
-| Jam ramai | satu atau lebih rentang jam | ya | konteks agen; rencana pengukuran (F6-G) |
-| Tetangga terdekat | teks bebas | tidak | konteks agen; bila diisi, diekstrak LLM teks ke fitur pesaing untuk model diskret |
+| Tipe lingkungan sekitar | pilih satu: dekat kampus, kawasan perkantoran, permukiman warga, jalan utama | ya | model diskret (fitur utama) |
+| Siapa yang biasa melintas | pilih banyak: mahasiswa, pekerja kantor, warga sekitar, keluarga, pengendara lewat | tidak | model diskret (menggeser bobot segmen) |
+| Tujuan utama | pilih satu: lebih banyak pembeli baru, naikkan belanja rata-rata, ramaikan jam-jam sepi | tidak | lapisan rekomendasi (urutan dan penilaian dampak), bukan simulasi |
+| Hal yang tidak bisa diubah | pilih banyak: lokasi toko, fasad bangunan, konsep menu inti, standar harga pokok | tidak | lapisan rekomendasi (menyaring saran mustahil dan menyesuaikan penilaian usaha) |
 
-Level harga dihitung kode dari harga menu (misal rata-rata atau median per porsi) dan dikategorikan, bukan ditebak model.
+#### Bagian 3: Menu & harga
+
+| Isian | Tipe | Wajib | Mengalir ke |
+| --- | --- | --- | --- |
+| Daftar menu & harga porsi | unggah **file Excel** (.xlsx, .xls, .csv; kolom nama menu dan harga porsi) **atau foto menu** yang dibaca VLM | ya | model diskret (level harga); konteks agen; pencocokan dengan transkrip |
+
+Unggahan dikirim lewat `POST /analyses/{aid}/menu` (4.4.2). File Excel diparse kode; foto menu dibaca VLM menjadi daftar nama dan harga. Hasilnya ditampilkan sebagai daftar yang bisa dikoreksi sebelum dipakai. Level harga dihitung kode dari harga menu (median per porsi) dan dikategorikan, bukan ditebak model, sehingga baru tersedia setelah menu terbaca.
+
+#### Bagian 4: Jam operasional
+
+| Isian | Tipe | Wajib | Mengalir ke |
+| --- | --- | --- | --- |
+| Jam operasional | rentang jam buka sampai tutup | ya | konteks agen (diketahui atau tidak) |
+| Jam paling ramai | rentang jam | ya | konteks agen; rencana pengukuran (F6-G) |
+
+Isian "tetangga terdekat" dihapus; keberadaan pesaing tidak lagi menjadi fitur model diskret.
 
 #### Perilaku
 
-- Foto menu dibaca otomatis menjadi daftar yang bisa dikoreksi. Jika tidak terbaca, beralih ke isian manual (sesuai catatan di footer halaman).
-- Placeholder harus tampil lebih terang daripada teks yang sudah diisi.
-- Validasi: jam buka harus mendahului jam tutup; jam ramai harus berada dalam jam buka; harga bilangan bulat positif.
-- Isian disimpan otomatis per analisis. Mengubah isian setelah simulasi menandai persona dan hasil lama kedaluwarsa serta menawarkan simulasi ulang.
+- Foto menu yang tidak terbaca memberi pilihan unggah ulang atau beralih ke file Excel.
+- Placeholder harus tampil lebih terang daripada teks yang sudah diisi; textarea tidak bisa diubah ukurannya.
+- Validasi: jam buka harus mendahului jam tutup; jam ramai harus berada dalam jam buka; harga hasil bacaan berupa bilangan bulat positif.
+- Status "x dari 7 isian wajib terisi" tampil di atas form; tombol lanjut aktif setelah ketujuh isian wajib terpenuhi.
+- Isian disimpan per analisis (`PUT /analyses/{aid}/context`). Mengubah isian setelah simulasi menandai persona dan hasil lama `stale` serta menawarkan simulasi ulang.
 
 #### Aturan pengetahuan agen (kriteria penerimaan)
 
 - Setiap isian punya penanda `diketahui_agen`: `selalu`, `jika_terlihat`, atau `tidak`.
 - Menu dan harga: `jika_terlihat`. Agen hanya tahu harga jika menu terbaca di transkrip.
 - Jam buka: `jika_terlihat`. Agen hanya tahu jika ada papan atau tanda buka di transkrip.
-- Deskripsi letak, tetangga: `jika_terlihat`.
+- Deskripsi letak: `jika_terlihat`.
 - Jam ramai, tujuan, hal yang tidak bisa diubah: `tidak`. Hanya dipakai kode (jam ramai untuk rencana pengukuran F6-G; tujuan dan hal yang tidak bisa diubah untuk lapisan rekomendasi Pareto).
 - Tipe sekitar dan siapa yang biasa lewat: `tidak` (tidak masuk sebagai pengetahuan agen, tetapi membentuk persona lewat model diskret).
 - Pencocokan menu: setelah transkrip jadi, kode membandingkan menu form dengan harga yang terbaca di transkrip dan menandai "menu terisi tetapi tidak terbaca dari jalan" sebagai temuan awal.
@@ -393,7 +542,7 @@ Level harga dihitung kode dari harga menu (misal rata-rata atau median per porsi
 Pemilik merekam satu video dari sisi jalan, tempat calon pelanggan pertama kali melihat usaha, sampai titik pesan.
 
 - **Berhenti:** saat sampai titik pesan, atau saat durasi maksimum tercapai.
-- **Checkpoint di layar:** terlihat dari jalan, pintu atau tangga, penanda atau papan, menu dan harga, titik pesan. Setiap ketukan checkpoint menyimpan stempel waktu (dasar zona, 4.3). Tombol Selesai aktif setelah minimal checkpoint menu dan harga atau titik pesan terpenuhi.
+- **Checkpoint dan titik kasir:** pemilik tidak mengetuk checkpoint saat merekam; checkpoint jalur dipilih VLM saat transkripsi (F3, 4.3). Pemilik hanya mengisi atau mengonfirmasi menit titik pesan/kasir (bawaan akhir video, format mm:dd, tidak melebihi durasi), dikirim sebagai `cashier_at_s` (4.4.2).
 - **Panduan:** rekam seperti pelanggan baru yang mencari tempat makan, pelan dan tegak, sambil berjalan. Gunakan lensa utama, bukan ultra-wide. Rekam saat terang dan di luar jam ramai.
 - **Sensor gerak:** peringatan real-time jika rotasi kamera terlalu cepat atau jika hanya berputar di tempat. Rekonstruksi 3D butuh perpindahan posisi dan gambar yang tidak buram.
 - **Privasi:** wajah dan plat nomor diburamkan di browser sebelum data keluar dari perangkat, dengan pratinjau hasil blur.
@@ -427,7 +576,7 @@ interface TranscriptSegment {
   timestamp_end: number;
   frame_keys: string[];        // satu atau lebih frame bukti terburam
   vantage: 'jalan' | 'pintu' | 'dalam';   // posisi pandang pelanggan
-  zone_id?: string;            // zona dari checkpoint (4.3)
+  zone_id?: string;            // zona dari checkpoint pilihan VLM, berakhir di titik kasir (4.3)
   narrative: string;           // deskripsi bebas, sedetail mungkin
   not_visible: string;         // apa yang TIDAK terlihat atau tidak terbaca di titik ini
   confidence: 'stabil' | 'tidak_pasti';
@@ -436,6 +585,14 @@ interface TranscriptSegment {
     look_vector: [number, number, number];
   };
 }
+
+interface TranscriptCheckpoint {          // dipilih VLM saat transkripsi (4.3)
+  kind: 'terlihat_dari_jalan' | 'pintu_atau_tangga' | 'penanda_atau_papan' | 'menu_dan_harga' | 'titik_pesan';
+  timestamp: number;                       // detik relatif video
+  segment_id: string;                      // segmen tempat checkpoint terlihat
+}
+// titik_pesan dari VLM digantikan nilai cashier_at_s bila pemilik mengisinya (F2).
+
 ```
 
 **Aturan penulisan untuk VLM:**
@@ -471,7 +628,7 @@ Setiap agen adalah persona yang melihat tempat usaha lewat transkrip terverifika
 
 Sifat dan profil 500 agen ditentukan sepenuhnya oleh model diskret berbasis data input F1, bukan ditebak oleh LLM (keputusan 9).
 
-1. **Fitur kategorikal dari F1:** tipe sekitar lokasi, siapa yang biasa lewat, level harga (kategori hasil hitung kode dari median menu), keberadaan pesaing (hasil ekstraksi teks tetangga), dan jam ramai.
+1. **Fitur kategorikal dari F1:** tipe sekitar lokasi, siapa yang biasa lewat, level harga (kategori hasil hitung kode dari median menu), dan jam ramai.
 2. **Segmen pelanggan diskret:** 6 sampai 10 segmen (misal: mahasiswa, pekerja kantor, warga sekitar, keluarga, pengendara/ojol lewat) (usulan).
 3. **Bobot segmen:** dihitung dengan multinomial logit:
    $$P(\text{segmen}) = \text{softmax}(W \cdot \text{fitur})$$
@@ -480,7 +637,7 @@ Sifat dan profil 500 agen ditentukan sepenuhnya oleh model diskret berbasis data
 5. **Penyesuaian marginal (IPF):** bila perlu menyesuaikan proporsi marginal dari input pemilik (chip "siapa yang biasa lewat"), digunakan Iterative Proportional Fitting (IPF) agar struktur korelasi antar-sifat tetap terjaga (usulan).
 6. **Sampling terstratifikasi:** kode menjalankan sampling terstratifikasi dengan seed tetap untuk menghasilkan 500 spesifikasi agen (`PersonaSpec`). Hasilnya disimpan per analisis di Postgres dan dipakai ulang di seluruh run dasar dan ablasi.
 7. **Sumber tabel dan transparansi:** sumber isi tabel dan parameter $W$ dicatat per baris (misal data publik BPS sebagai rujukan kasar plus penilaian tim) dan diberi label tegas sebagai asumsi di sistem dan UI, bukan angka ilmiah.
-8. **Teks bebas:** isian teks bebas (tetangga terdekat) hanya boleh diekstrak oleh LLM teks menjadi fitur kategorikal diskret; LLM tidak menentukan sebaran probabilitas persona.
+8. **Teks bebas:** tidak ada isian teks bebas yang menjadi fitur model diskret; LLM tidak menentukan sebaran probabilitas persona.
 
 #### Skema PersonaSpec
 
@@ -684,7 +841,7 @@ interface RecommendationDraft {        // keluaran langkah 3, divalidasi skema
 
 **VLM tambahan hanya opsional.** Jika di kemudian hari rekomendasi butuh detail fisik yang tidak tertulis di transkrip (misal di mana ada ruang dinding kosong untuk papan), cukup kirim 1 sampai 3 frame bukti dari segmen terkait ke VLM, tanpa membaca ulang video. Tidak dikerjakan untuk demo.
 
-**Ablasi (opsional, atas permintaan, tidak masuk alur standar).** Untuk menguji sebab-akibat satu hipotesis: tulis ulang hanya segmen terkait menjadi versi sudah diperbaiki dengan templat kalimat tetap (misal papan jam buka kini terbaca jelas dari jalan), jalankan ulang persona yang sama satu kali, lalu tampilkan jumlah agen yang berubah menjadi **Memesan** apa adanya, tanpa ambang noise. Hasilnya menandai rekomendasi sebagai "sudah diuji" dan mengisi matriks disebut x terbukti: sering disebut dan berdampak (penyebab utama), sering disebut tapi tidak berdampak (keluhan saja), jarang disebut tapi berdampak (penyebab tersembunyi).
+**Ablasi (opsional, atas permintaan, tidak masuk alur standar; diakses lewat `POST /analyses/{aid}/projections` dengan label `terverifikasi_simulasi` dan cache, 4.4.4).** Untuk menguji sebab-akibat satu hipotesis: tulis ulang hanya segmen terkait menjadi versi sudah diperbaiki dengan templat kalimat tetap (misal papan jam buka kini terbaca jelas dari jalan), jalankan ulang persona yang sama satu kali, lalu tampilkan jumlah agen yang berubah menjadi **Memesan** apa adanya, tanpa ambang noise. Hasilnya menandai rekomendasi sebagai "sudah diuji" dan mengisi matriks disebut x terbukti: sering disebut dan berdampak (penyebab utama), sering disebut tapi tidak berdampak (keluhan saja), jarang disebut tapi berdampak (penyebab tersembunyi).
 
 #### E. Tata Letak Dasbor
 
@@ -699,7 +856,7 @@ Lihat 5.5. Kartu KPI: tahap gesekan terbesar, hipotesis utama (share dan lift), 
 
 #### G. Rencana Pengukuran
 
-Tombol Buat Rencana Pengukuran menghasilkan lembar tally yang bisa dicetak. Titik berdiri pemilik ditentukan dari koordinat kamera di segmen dengan friksi terbesar, mengacu pada isian jam ramai di Kartu 3 F1 (misal berdiri di bawah tangga selama 30 menit saat jam makan siang). Metrik yang dihitung: jumlah orang yang menoleh (Melihat), lalu yang mendekat (Berhenti), lalu yang membatalkan niat sebelum masuk atau memesan.
+Tombol Buat Rencana Pengukuran menghasilkan lembar tally yang bisa dicetak. Titik berdiri pemilik ditentukan dari koordinat kamera di segmen dengan friksi terbesar, mengacu pada isian jam paling ramai di Bagian 4 F1 (misal berdiri di bawah tangga selama 30 menit saat jam makan siang). Metrik yang dihitung: jumlah orang yang menoleh (Melihat), lalu yang mendekat (Berhenti), lalu yang membatalkan niat sebelum masuk atau memesan.
 
 #### H. Catatan Kepercayaan (selalu terlihat)
 
@@ -756,7 +913,7 @@ Penjangkaran pin ke segmen transkrip terjadi saat agregasi (4.3), bukan di pipel
 - **Layer 1:** awan titik PLY terdesimasi (sekitar 250 ribu titik atau kurang), dimuat bertahap lewat worker; ukuran titik mengikuti besar model.
 - **Layer 2:** jalur dari posisi kamera setiap frame dibentuk menjadi kurva Catmull-Rom; tiap segmen kurva diwarnai menurut bobot friksi di zona itu.
 - **Layer 3:** pin interaktif pada stempel waktu tiap segmen transkrip.
-- **Zona:** jalur dibagi menurut rentang waktu checkpoint F2 (jalan depan, pintu atau tangga, area menu, kasir), nama bisa diubah pemilik.
+- **Zona:** jalur dibagi menurut checkpoint pilihan VLM (jalan depan, pintu atau tangga, area menu) dan berakhir di titik kasir yang dikonfirmasi pemilik (4.3); nama bisa diubah pemilik.
 - **Kamera** dibingkai langsung dari ukuran model, tanpa animasi.
 
 **Tampilan cadangan (wajib):** jika rekonstruksi gagal, kualitas rendah, atau perangkat lemah, tampilkan denah jalur 2D dari atas; jika pose kamera juga gagal, tampilkan pita frame berurutan dengan peta panas per zona. Semua interaksi silang tetap berjalan, dan pemilik hanya melihat catatan *Tampilan 3D tidak tersedia untuk video ini*, tanpa pesan galat teknis.
@@ -817,7 +974,7 @@ Basis pengetahuan hanya membantu menjelaskan, tidak menghitung.
 | **Agen hanya tahu yang ditulis VLM**, papan kecil yang terlewat dianggap tidak ada | Kolom `not_visible` wajib diisi; pemilik bisa menambah segmen |
 | **Sudut pandang tidak sama dengan pelanggan** | Rekam dari sisi jalan; segmen dipecah menurut sudut pandang agar agen bisa berhenti lebih awal |
 | **Transkrip panjang sulit diverifikasi** | Tampilan berpasangan dengan frame; hanya segmen tidak pasti yang wajib |
-| **Konteks non-visual hilang** (harga, jam buka, tetangga) | Form konteks usaha F1 disuntikkan ke agen (sesuai aturan `diketahui_agen`) |
+| **Konteks non-visual hilang** (harga, jam buka) | Form konteks usaha F1 disuntikkan ke agen (sesuai aturan `diketahui_agen`) |
 
 ### C. Biaya dan teknis LLM
 
@@ -852,7 +1009,7 @@ Basis pengetahuan hanya membantu menjelaskan, tidak menghitung.
 | Wajah atau plat lolos blur | Pratinjau hasil blur, blur sebelum unggah, uji pada video nyata |
 | Pemilik menganggap simulasi sebagai ramalan omzet | Kalimat tetap, jumlah agen bukan persen presisi, tally sebagai langkah berikutnya |
 | Pemilik malas verifikasi | Hanya segmen tidak pasti yang wajib |
-| Video terlalu panjang atau berhenti sembarang | Checkpoint dan batas durasi otomatis |
+| Video terlalu panjang atau berhenti sembarang | Isian titik kasir dan batas durasi otomatis |
 | Video terkompres (WhatsApp, media sosial) | Cek resolusi sisi terpendek, sarankan file asli dari galeri |
 | Rekomendasi generik atau biaya karangan | Rekomendasi hanya dari hipotesis yang lolos peringkat dan disertai kutipan agen; RAG hanya mengisi cara menjalankan dengan sumber; filter batasan "tidak bisa diubah" dari F1 |
 | 3 sampai 5 video kalibrasi tidak cukup untuk klaim statistik | Klaim dibatasi pada hipotesis titik gesekan dan perbandingan peringkat |
@@ -977,7 +1134,7 @@ video -> ffmpeg (2-3 fps) -> COLMAP resmi, CPU:
 
 Urutan sengaja menempatkan pemodelan persona diskret (M4a) dan uji validitas persona/sensitivitas bobot (M5) tepat setelah ingesti dan transkrip selesai, karena hasilnya menentukan kestabilan simulasi.
 
-- [ ] **M1: Ingesti.** Form konteks F1 dua kolom (Informasi Dasar, Pelanggan & Tujuan, Menu/Harga/Jam), rekam atau unggah video dengan checkpoint berstempel waktu, indikator gerak, blur wajah dan plat di browser, pembuangan frame buram.
+- [ ] **M1: Ingesti.** Form konteks F1 satu kolom (Informasi dasar, Pelanggan & tujuan, Menu & harga lewat unggah Excel atau foto, Jam operasional), rekam atau unggah video dengan isian stempel waktu kasir, indikator gerak, blur wajah dan plat di browser, pembuangan frame buram.
 - [ ] **M2: Transkrip VLM.** Gemini 3.8 Flash menghasilkan `TranscriptSegment[]` tak terstruktur dengan frame bukti dan kolom `not_visible` (prompt VLM hanya menerima satu kalimat jenis usaha, tanpa data form lain).
 - [ ] **M3: Verifikasi.** Sinkron video dan segmen, edit langsung, konfirmasi segmen tidak pasti. Edit via LLM menyusul jika ada waktu.
 - [ ] **M4a: Model persona.** Pembuatan tabel segmen diskret, penulisan tangan matriks $W$, implementasi penyesuaian marginal IPF, generator `PersonaSpec` berbasis seed tetap, pengujian stratifikasi dari input F1.
