@@ -28,9 +28,9 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="grid min-h-screen bg-white lg:grid-cols-2">
-      {/* kiri: form */}
-      <div className="flex min-h-screen flex-col px-6 py-6 sm:px-12 lg:px-16">
+    <div className="grid min-h-screen bg-white lg:h-screen lg:grid-cols-2 lg:overflow-hidden">
+      {/* kiri: form, scroll sendiri agar panel kanan tidak bergeser oleh scrollbar */}
+      <div className="flex min-h-screen flex-col px-6 py-6 sm:px-12 lg:h-screen lg:min-h-0 lg:overflow-y-auto lg:px-16">
         <div className="flex items-center justify-between">
           <Link
             href="/"
