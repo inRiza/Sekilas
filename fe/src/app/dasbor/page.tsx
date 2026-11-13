@@ -10,11 +10,12 @@ export const metadata: Metadata = {
 };
 
 async function WorkbenchFromUrl({ searchParams }: { searchParams: PageProps<"/dasbor">["searchParams"] }) {
-  const { src } = await searchParams;
+  const { src, mode } = await searchParams;
   const initialSrc = typeof src === "string" ? src : undefined;
+  const initialMode = mode === "jalan" || mode === "tur" ? mode : undefined;
   // key: buat ulang dasbor saat src berganti. Tanpa ini, state dasbor sebelumnya
   // (mis. hasil Stegna) dipakai lagi saat membuka hasil lain dari /hasil.
-  return <TwinWorkbench key={initialSrc ?? "demo"} initialSrc={initialSrc} />;
+  return <TwinWorkbench key={`${initialSrc ?? "demo"}-${initialMode ?? ""}`} initialSrc={initialSrc} initialMode={initialMode} />;
 }
 
 export default function DashboardPage({ searchParams }: PageProps<"/dasbor">) {
