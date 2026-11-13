@@ -33,13 +33,12 @@ function AgenExplorerInner() {
     <div className="min-h-screen bg-white flex flex-col justify-between">
       <AppNavbar mode="analysis" analysisId={analysisId} />
 
-      <main className="section flex-1 py-8 sm:py-12">
-        <div className="col space-y-6">
+      <main className="flex-1 py-8 sm:py-10 w-full px-4 sm:px-8 lg:px-12 space-y-6">
         {/* Header Title */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-3 border-b border-hairline">
           <div>
             <h1 className="text-2xl sm:text-[28px] font-normal tracking-[-0.03em] text-ink">
-              Jelajah 500 Monolog & Keputusan Agen
+              Jelajah 20 Monolog & Keputusan Agen (Demo)
             </h1>
             <p className="text-xs sm:text-[13px] text-muted mt-0.5">
               Setiap agen memiliki latar belakang demografi, anggaran uang makan, dan batas waktu istirahat yang realistis.
@@ -47,7 +46,7 @@ function AgenExplorerInner() {
           </div>
           <div className="flex items-center gap-2">
             <span className="font-mono text-xs text-primary-40 bg-primary-10 px-3 py-1 rounded-full font-semibold border border-primary-20">
-              {filteredAgents.length} dari {MOCK_AGENTS.length} Sampel Agen
+              {filteredAgents.length} dari {MOCK_AGENTS.length} Sampel Agen Demo
             </span>
           </div>
         </div>
@@ -216,11 +215,10 @@ function AgenExplorerInner() {
             </Card>
           </div>
         </div>
-        </div>
       </main>
 
       <footer className="border-t border-hairline py-6 text-center text-xs text-subtle">
-        <div className="col">
+        <div className="w-full px-4 sm:px-8">
           Sekilas © 2026 · Simulator Calon Pelanggan untuk UMKM Makanan
         </div>
       </footer>
