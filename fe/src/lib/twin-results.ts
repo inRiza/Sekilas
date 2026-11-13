@@ -4,6 +4,8 @@ import path from "node:path";
 /** Metadata yang ditulis twin/scripts/local_twin.sh ke public/samples/<nama>.json */
 export type TwinResult = {
   name: string;
+  /** Nama tampilan, misal nama file asli yang diunggah. */
+  label?: string;
   video: string;
   frames: number;
   registered: number;
@@ -11,6 +13,7 @@ export type TwinResult = {
   seconds: number;
   created_at: string;
   files: string[];
+  diagnosis?: { summary?: string };
 };
 
 const SAMPLES_DIR = path.join(process.cwd(), "public", "samples");

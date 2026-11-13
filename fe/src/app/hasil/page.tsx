@@ -37,13 +37,16 @@ function ResultCard({ result }: { result: TwinResult }) {
     <article className="flex flex-col rounded-[10px] border border-line bg-white">
       <Link href={href(main)} className="group block flex-1 p-5">
         <div className="flex items-start justify-between gap-3">
-          <h2 className="text-lg tracking-[-0.02em] text-ink group-hover:text-primary-40">{result.name}</h2>
+          <h2 className="min-w-0 truncate text-lg tracking-[-0.02em] text-ink group-hover:text-primary-40">
+            {result.label || result.name}
+          </h2>
           <span className={`shrink-0 rounded-full border px-2 py-0.5 font-mono text-[11px] ${q.tone}`}>
             {q.label}
           </span>
         </div>
         <p className="mt-1 font-mono text-[11px] text-subtle">
-          {result.video} · {formatDate(result.created_at)} · {splat ? "splat + titik" : "awan titik"}
+          {result.label && result.label !== result.name ? `${result.name} · ` : `${result.video} · `}
+          {formatDate(result.created_at)} · {splat ? "splat + titik" : "awan titik"}
         </p>
         <dl className="mt-5 grid grid-cols-3 gap-3 border-t border-hairline pt-4 text-[13px]">
           <div>
@@ -63,8 +66,8 @@ function ResultCard({ result }: { result: TwinResult }) {
         </dl>
         {q.low && (
           <p className="mt-4 rounded-md bg-friction-10 px-3 py-2 text-[12px] leading-5 text-ink-soft">
-            Hanya sebagian kecil video yang terpetakan. Coba rekam ulang: lebih terang, jalan lebih pelan, kamera
-            tegak, dan hindari jam ramai.
+            {result.diagnosis?.summary ??
+              "Hanya sebagian kecil video yang terpetakan. Coba rekam ulang lebih pelan, kamera tegak, dan hindari jam ramai."}
           </p>
         )}
       </Link>
