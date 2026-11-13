@@ -1,216 +1,264 @@
 'use client';
 
-import React, { useState, Suspense } from 'react';
-import Link from 'next/link';
-import { useParams, useRouter } from 'next/navigation';
-import { AppNavbar } from '@/components/layout/app-navbar';
-import { Card } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { CheckIcon, ArrowRightIcon, ArrowLeftIcon, VideoIcon } from '@/components/ui/icons';
+import { Check, ShieldCheck, Upload, Video, X } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import React, { Suspense, useRef, useState } from 'react';
 
-const CHECKPOINTS = [
-  { id: 'cp1', label: '1. Terlihat dari jalan', time: '00:04' },
-  { id: 'cp2', label: '2. Pintu / Tangga ruko', time: '00:18' },
-  { id: 'cp3', label: '3. Penanda / Papan plang', time: '00:26' },
-  { id: 'cp4', label: '4. Area menu & harga', time: '00:35' },
-  { id: 'cp5', label: '5. Titik pesan kasir', time: '00:48' },
+import { Badge } from '@/components/ui/badge';
+import { Input, Label } from '@/components/ui/form';
+import { Button } from '@/components/ui/button';
+import { ArrowLeftIcon, ArrowRightIcon } from '@/components/ui/icons';
+
+const VIDEO_DURATION = '00:48';
+
+/** 'mm:ss' -> detik; null bila format salah. */
+function toSeconds(value: string): number | null {
+  const m = /^(\d{1,2}):([0-5]\d)$/.exec(value.trim());
+  return m ? Number(m[1]) * 60 + Number(m[2]) : null;
+}
+
+/** Hasil cek kualitas otomatis sebelum video diproses. */
+const QUALITY_CHECKS = [
+  { label: 'Resolusi sisi terpendek', value: '1080 px, ideal' },
+  { label: 'Durasi video', value: '48 detik, disarankan 60–120 detik' },
+  { label: 'Kestabilan kamera', value: 'Stabil, putaran di bawah 45°/detik' },
+  { label: 'Pencahayaan & kejernihan', value: 'Terang dan jelas' },
+  { label: 'Privasi wajah & plat nomor', value: '14 wajah dan 6 plat diburamkan' },
 ];
 
+/** Judul bagian di dalam satu container (pemisah antar-bagian), sama dengan halaman Konteks usaha. */
+function SectionTitle({ n, title, description }: { n: number; title: string; description: string }) {
+  return (
+    <div className="mb-6 flex items-start gap-3">
+      <span className="grid size-6 shrink-0 place-items-center rounded-md bg-primary-10 text-[12px] font-semibold text-primary-40">
+        {n}
+      </span>
+      <div>
+        <h2 className="text-[15px] font-semibold text-ink">{title}</h2>
+        <p className="mt-0.5 text-[13px] text-muted">{description}</p>
+      </div>
+    </div>
+  );
+}
+
 function VideoUploadInner() {
-  const params = useParams();
   const router = useRouter();
-  const analysisId = (params?.id as string) || 'selasar-kopi';
+  const inputRef = useRef<HTMLInputElement>(null);
 
-  const [blurMode, setBlurMode] = useState<'blurred' | 'raw'>('blurred');
-  const [videoFile, setVideoFile] = useState<string | null>('video_rekaman_selasar.mp4');
-  const [isRecordingSimulated, setIsRecordingSimulated] = useState(false);
+  // UI saja: video contoh sudah "terunggah"; belum terhubung ke backend.
+  const [videoName, setVideoName] = useState<string | null>('video_rekaman_selasar.mp4');
+  const [dragging, setDragging] = useState(false);
 
-  // Evaluasi Kualitas Video (Checklist per baris)
-  const qualityChecks = [
-    { label: 'Resolusi Sisi Terpendek', val: '1080 px (Ideal)', pass: true },
-    { label: 'Durasi Video', val: '48 detik (Ideal 60–120 dtk)', pass: true },
-    { label: 'Kestabilan Kamera (Sensor Gerak)', val: 'Stabil (< 45°/dtk)', pass: true },
-    { label: 'Pencahayaan & Kejernihan', val: 'Terang dan Jelas', pass: true },
-    { label: 'Privasi: Wajah & Plat Diburamkan', val: '14 Wajah, 6 Plat Terburam', pass: true },
-  ];
+  const [cashierTime, setCashierTime] = useState(VIDEO_DURATION);
 
-  const handleNext = () => {
-    router.push(`/business/analysis/proses`);
+  const hasVideo = videoName !== null;
+  const cashierSec = toSeconds(cashierTime);
+  const cashierValid = cashierSec !== null && cashierSec <= (toSeconds(VIDEO_DURATION) ?? 0);
+  const canContinue = hasVideo && cashierValid;
+
+  const pickFile = (f: File | undefined) => {
+    if (f && f.type.startsWith('video/')) setVideoName(f.name);
   };
 
   return (
-    <div className="min-h-screen bg-white flex flex-col justify-between">
-      <AppNavbar mode="wizard" currentStep={2} analysisId={analysisId} />
-
-      <main className="section flex-1 py-8 sm:py-12">
-        <div className="col space-y-6">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-2 pb-3 border-b border-hairline">
-          <div>
-            <h1 className="text-2xl sm:text-[28px] font-normal tracking-[-0.03em] text-ink">
-              Rekam atau Unggah Video (F2)
-            </h1>
-            <p className="text-xs sm:text-[13px] text-muted mt-1">
-              Rekam satu video menyusuri jalur calon pelanggan: dari seberang jalan, masuk tangga, hingga titik pesan kasir.
-            </p>
+    <div className="flex min-h-full flex-col bg-white">
+      <main className="flex-1 px-4 pb-16 pt-10 sm:px-6">
+        <div className="mx-auto w-full max-w-4xl space-y-8">
+          {/* Judul halaman */}
+          <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
+            <div>
+              <h1 className="text-2xl font-normal tracking-[-0.03em] text-ink sm:text-[28px]">Rekam atau unggah video</h1>
+              <p className="mt-1 text-[13px] text-muted">
+                Satu video menyusuri jalur calon pelanggan: dari seberang jalan, masuk, hingga titik pesan.
+              </p>
+            </div>
+            <Badge variant={hasVideo ? 'impact' : 'primary'} size="md">
+              {hasVideo ? 'Semua syarat terpenuhi' : 'Belum ada video'}
+            </Badge>
           </div>
-          <Badge variant="impact" size="md">Semua Syarat Terpenuhi</Badge>
-        </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-          {/* Kolom Kiri: Video Preview & Checkpoints (7 Kolom) */}
-          <div className="lg:col-span-7 space-y-6">
-            <Card padded={false} className="overflow-hidden">
-              {/* Header Video Box */}
-              <div className="flex items-center justify-between px-5 py-3 border-b border-hairline bg-surface">
-                <div className="flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-impact" />
-                  <span className="text-xs font-semibold text-ink">Pratinjau Video (F2)</span>
-                  <span className="font-mono text-[11px] text-subtle">48 detik · 1080p</span>
-                </div>
-                {/* Toggle Blur Mode */}
-                <div className="flex items-center gap-1 rounded-full bg-bg p-1 text-[11px]">
-                  <button
-                    type="button"
-                    onClick={() => setBlurMode('blurred')}
-                    className={`rounded-full px-3 py-1 font-medium transition ${
-                      blurMode === 'blurred'
-                        ? 'bg-primary-40 text-white shadow-xs'
-                        : 'text-muted hover:text-ink'
-                    }`}
-                  >
-                    Terburam (Default)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setBlurMode('raw')}
-                    className={`rounded-full px-3 py-1 font-medium transition ${
-                      blurMode === 'raw'
-                        ? 'bg-surface text-ink shadow-xs border border-line'
-                        : 'text-muted hover:text-ink'
-                    }`}
-                  >
-                    Asli (Lokal Saja)
-                  </button>
-                </div>
-              </div>
+          <div className="rounded-md border border-line bg-white">
+            <div className="space-y-12 p-6 sm:p-10">
+              {/* 1. Video */}
+              <section>
+                <SectionTitle
+                  n={1}
+                  title="Video jalur pelanggan"
+                  description="Wajah dan plat nomor diburamkan di perangkatmu sebelum video dikirim."
+                />
 
-              {/* Viewport Layar Video Mockup */}
-              <div className="relative w-full h-[360px] bg-panel flex items-center justify-center overflow-hidden border-b border-hairline">
-                <div className="text-center p-6">
-                  <div className="w-14 h-14 rounded-full bg-primary-10 text-primary-40 flex items-center justify-center mx-auto mb-3 shadow-xs">
-                    <VideoIcon size={24} />
+                <input
+                  ref={inputRef}
+                  type="file"
+                  accept="video/*"
+                  className="hidden"
+                  onChange={(e) => pickFile(e.target.files?.[0])}
+                />
+
+                {hasVideo ? (
+                  <div className="space-y-3">
+                    {/* Baris info file + pilihan tampilan */}
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="flex min-w-0 items-center gap-2">
+                        <span className="truncate text-[13px] font-medium text-ink">{videoName}</span>
+                        <Badge>48 detik</Badge>
+                        <Badge>1080p</Badge>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setVideoName(null)}
+                          aria-label="Hapus video"
+                          className="grid size-9 place-items-center rounded-md text-subtle transition-colors hover:bg-friction-10 hover:text-friction"
+                        >
+                          <X size={16} />
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Pratinjau */}
+                    <div className="relative flex h-[360px] w-full items-center justify-center overflow-hidden rounded-md bg-panel">
+                      <div className="px-6 text-center">
+                        <span className="mx-auto mb-3 grid size-12 place-items-center rounded-md bg-primary-10 text-primary-40">
+                          <Video size={22} />
+                        </span>
+                        <p className="text-[14px] font-medium text-ink">
+                          Video terburam, siap dikirim
+                        </p>
+                        <p className="mx-auto mt-1 max-w-sm text-[13px] leading-relaxed text-muted">
+                          Inilah versi yang dibaca AI. Wajah dan plat nomor sudah diburamkan di browser.
+                        </p>
+                        <div className="mt-4 flex justify-center">
+                          <Badge variant="impact" size="md">
+                            <ShieldCheck size={13} />
+                            Privasi aman
+                          </Badge>
+                        </div>
+                      </div>
+
+                      <div className="absolute inset-x-3 bottom-3 flex items-center justify-between rounded-md bg-ink/75 px-4 py-2 text-[12px] text-white backdrop-blur-md">
+                        <span className="tabular-nums">00:35 / {VIDEO_DURATION}</span>
+                        <span className="text-white/80">{cashierValid ? `Kasir di ${cashierTime}` : 'Kasir belum ditandai'}</span>
+                      </div>
+                    </div>
                   </div>
-                  <p className="text-sm font-semibold text-ink">
-                    {blurMode === 'blurred'
-                      ? 'Video Terburam (Wajah & Plat Diburamkan di Browser)'
-                      : 'Video Asli Mentah (Hanya Tersimpan di Perangkat)'}
-                  </p>
-                  <p className="text-xs text-muted max-w-sm mt-1 mx-auto leading-relaxed">
-                    Privasi terjamin: Video yang dikirim ke model VLM telah diburamkan secara lokal di browser sebelum diunggah.
-                  </p>
-                  <div className="mt-4 flex items-center justify-center gap-2">
-                    <span className="font-mono text-xs text-impact bg-impact-10 px-2.5 py-1 rounded-full border border-impact/20">
-                      ✓ Privasi Lolos UU PDP
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => inputRef.current?.click()}
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      setDragging(true);
+                    }}
+                    onDragLeave={() => setDragging(false)}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      setDragging(false);
+                      pickFile(e.dataTransfer.files?.[0]);
+                    }}
+                    className={`flex h-[260px] w-full flex-col items-center justify-center gap-2 rounded-md border border-dashed px-4 text-center transition-colors ${
+                      dragging ? 'border-primary-40 bg-primary-10' : 'border-[#c9ced6] bg-panel hover:bg-hover'
+                    }`}
+                  >
+                    <span className="grid size-10 place-items-center rounded-md bg-white text-primary-40">
+                      <Upload size={18} />
                     </span>
+                    <span className="text-[13px] font-medium text-ink">
+                      Tarik video ke sini atau <span className="text-primary-40">pilih file</span>
+                    </span>
+                    <span className="max-w-md text-[12px] text-muted">
+                      Rekam dengan kamera ponsel sambil berjalan pelan, lalu unggah. Durasi 20 detik sampai 3 menit.
+                    </span>
+                  </button>
+                )}
+              </section>
+
+              {/* 2. Titik pesan / kasir */}
+              <section>
+                <SectionTitle
+                  n={2}
+                  title="Titik pesan/kasir"
+                  description="Satu-satunya titik yang perlu kamu tandai. Ini akhir jalur calon pelanggan."
+                />
+                <Label requiredText="wajib">Di menit berapa kasir atau titik pesan terlihat di video?</Label>
+                <div className="flex items-center gap-3">
+                  <div className="w-36 shrink-0">
+                  <Input
+                    value={cashierTime}
+                    onChange={(e) => setCashierTime(e.target.value)}
+                    placeholder="00:48"
+                    inputMode="numeric"
+                    className="tabular-nums"
+                  />
                   </div>
+                  <span className="whitespace-nowrap text-[13px] text-muted">dari {VIDEO_DURATION}</span>
                 </div>
+                {!cashierValid && (
+                  <p className="mt-2 text-[12px] text-friction">Isi dengan format mm:dd, paling lambat {VIDEO_DURATION}.</p>
+                )}
+              </section>
 
-                {/* Indikator Checkpoint Overlay */}
-                <div className="absolute bottom-3 left-3 right-3 flex items-center justify-between bg-ink/75 backdrop-blur-md px-4 py-2 rounded-xl text-white text-xs">
-                  <span className="font-mono text-[11px] text-white/90">00:35 / 00:48</span>
-                  <span className="text-[11px] text-white/80">Checkpoint 4: Menu & Harga</span>
-                </div>
-              </div>
-
-              {/* Daftar Checkpoint di Layar */}
-              <div className="p-5 bg-surface">
-                <h3 className="text-xs font-semibold text-ink-soft mb-3">
-                  Checkpoint Terpenuhi pada Video Ini:
-                </h3>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                  {CHECKPOINTS.map((cp) => (
-                    <div
-                      key={cp.id}
-                      className="flex items-center justify-between rounded-xl bg-panel border border-hairline px-3 py-2 text-xs"
-                    >
-                      <span className="font-medium text-ink flex items-center gap-1.5">
-                        <CheckIcon size={14} className="text-impact" /> {cp.label}
+              {/* 3. Kualitas */}
+              <section>
+                <SectionTitle
+                  n={3}
+                  title="Pemeriksaan kualitas"
+                  description="Dicek otomatis sebelum video diproses menjadi transkrip dan Visual Twin."
+                />
+                <ul className="space-y-2">
+                  {QUALITY_CHECKS.map((qc) => (
+                    <li key={qc.label} className="flex items-center gap-3 rounded-md border border-line px-4 py-3">
+                      <span className="grid size-6 shrink-0 place-items-center rounded-md bg-impact-10 text-impact">
+                        <Check size={14} strokeWidth={2.5} />
                       </span>
-                      <span className="font-mono text-[11px] text-subtle">{cp.time}</span>
-                    </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-[13px] font-medium text-ink">{qc.label}</p>
+                        <p className="mt-0.5 text-[12px] text-muted">{qc.value}</p>
+                      </div>
+                      <Badge variant="impact">Lolos</Badge>
+                    </li>
                   ))}
+                </ul>
+
+                <div className="mt-4 flex items-start gap-3 rounded-md bg-primary-10 p-4">
+                  <ShieldCheck size={16} className="mt-0.5 shrink-0 text-primary-40" />
+                  <p className="text-[13px] leading-relaxed text-ink-soft">
+                    Wajah dan plat nomor kendaraan diburamkan otomatis, sehingga tidak muncul di transkrip maupun model 3D.
+                  </p>
                 </div>
-              </div>
-            </Card>
-          </div>
+              </section>
+            </div>
 
-          {/* Kolom Kanan: Evaluasi Checklist Kualitas (5 Kolom) */}
-          <div className="lg:col-span-5 space-y-6">
-            <Card>
-              <div className="border-b border-hairline pb-3 mb-4">
-                <h2 className="text-base font-semibold text-ink">Checklist Kualitas Rekaman</h2>
-                <p className="text-xs text-muted">Dievaluasi otomatis sebelum data diproses.</p>
-              </div>
-
-              <div className="space-y-3">
-                {qualityChecks.map((qc, i) => (
-                  <div
-                    key={i}
-                    className="flex items-start justify-between rounded-xl bg-panel border border-hairline p-3 text-xs"
-                  >
-                    <div>
-                      <p className="font-medium text-ink flex items-center gap-1.5">
-                        <span className="w-1.5 h-1.5 rounded-full bg-impact" />
-                        {qc.label}
-                      </p>
-                      <p className="text-muted mt-0.5">{qc.val}</p>
-                    </div>
-                    <span className="font-mono text-[11px] font-semibold text-impact bg-impact-10 px-2 py-0.5 rounded-full border border-impact/20 shrink-0">
-                      LOLOS
-                    </span>
-                  </div>
-                ))}
-              </div>
-
-              <div className="mt-5 rounded-xl bg-primary-10 p-3.5 border border-primary-20 text-xs text-ink-soft leading-relaxed">
-                <strong>Catatan Privasi (PRD Bagian 7):</strong> Wajah manusia dan plat nomor kendaraan otomatis di-masking sehingga tidak akan muncul di model 3D maupun transkrip visual.
-              </div>
-            </Card>
-
-            {/* Aksi Navigasi */}
-            <Card className="flex flex-col gap-3">
+            {/* Kaki container: kembali & lanjut */}
+            <div className="flex flex-col-reverse gap-3 rounded-b-md bg-panel px-6 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-10">
+              <Button
+                variant="secondary"
+                size="lg"
+                onClick={() => router.push('/business/analysis/konteks')}
+                className="justify-center !rounded-md"
+              >
+                <ArrowLeftIcon size={16} /> Kembali ke konteks usaha
+              </Button>
               <Button
                 variant="primary"
                 size="lg"
-                onClick={handleNext}
-                className="w-full justify-center"
+                disabled={!canContinue}
+                onClick={() => canContinue && router.push('/business/analysis/proses')}
+                className="justify-center !rounded-md"
               >
-                Lanjut ke Pemrosesan VLM & 3D <ArrowRightIcon size={16} />
+                Lanjut ke pemrosesan <ArrowRightIcon size={16} />
               </Button>
-              <Link href={`/analisis/${analysisId}/konteks`} className="w-full">
-                <Button variant="secondary" size="md" className="w-full justify-center">
-                  <ArrowLeftIcon size={14} /> Kembali ke Form Konteks
-                </Button>
-              </Link>
-            </Card>
+            </div>
           </div>
         </div>
-        </div>
       </main>
-
-      <footer className="border-t border-hairline py-6 text-center text-xs text-subtle">
-        <div className="col">
-          Sekilas © 2026 · Simulator Calon Pelanggan untuk UMKM Makanan
-        </div>
-      </footer>
     </div>
   );
 }
 
 export default function VideoUploadPage() {
   return (
-    <Suspense fallback={<div className="min-h-screen bg-white" />}>
+    <Suspense fallback={<div className="min-h-full bg-white" />}>
       <VideoUploadInner />
     </Suspense>
   );
