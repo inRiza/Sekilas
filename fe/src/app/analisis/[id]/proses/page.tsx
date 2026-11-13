@@ -45,7 +45,7 @@ function ProsesInner() {
       <main className="section flex-1 py-10 sm:py-16">
         <div className="col max-w-xl mx-auto">
           <div className="text-center mb-8 flex flex-col items-center">
-            <SekilasMascot size={72} pose="default" className="mb-3" />
+            <SekilasMascot size={72} className="mb-3" />
             <span className="font-mono text-[11px] uppercase tracking-wider text-primary-40 bg-primary-10 px-2.5 py-0.5 rounded-full font-semibold mb-2">
               Status: Memproses Paralel
             </span>
