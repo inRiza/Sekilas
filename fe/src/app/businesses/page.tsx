@@ -1,11 +1,22 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import Link from 'next/link';
 import { MOCK_BUSINESSES } from '@/lib/mock/business';
 import { MOCK_ANALYSES } from '@/lib/mock/analyses';
 import { Business, BusinessType } from '@/types/api';
+import { Button } from '@/components/ui/button';
+import { Dialog } from '@/components/ui/dialog';
+import { Input, Label } from '@/components/ui/form';
+import { Select, type SelectOption } from '@/components/ui/select';
 import { StoreIcon, PlusIcon, FileTextIcon, SettingsIcon, ArrowRightIcon } from '@/components/ui/icons';
+
+const CATEGORY_OPTIONS: SelectOption<BusinessType>[] = [
+  { value: 'warung', label: 'Warung makan' },
+  { value: 'kedai', label: 'Kedai kopi' },
+  { value: 'kafe', label: 'Kafe santai' },
+  { value: 'resto_ruko', label: 'Restoran ruko' },
+];
 
 export default function BusinessesPage() {
   const [businesses, setBusinesses] = useState<Business[]>(MOCK_BUSINESSES);
@@ -14,6 +25,14 @@ export default function BusinessesPage() {
   const [newBranchName, setNewBranchName] = useState('');
   const [newAddress, setNewAddress] = useState('');
   const [newCategory, setNewCategory] = useState<BusinessType>('kedai');
+
+  const closeAddModal = useCallback(() => {
+    setShowAddModal(false);
+    setNewBizName('');
+    setNewBranchName('');
+    setNewAddress('');
+    setNewCategory('kedai');
+  }, []);
 
   const handleAddBusiness = (e: React.FormEvent) => {
     e.preventDefault();
@@ -45,10 +64,7 @@ export default function BusinessesPage() {
     };
 
     setBusinesses([...businesses, newBiz]);
-    setShowAddModal(false);
-    setNewBizName('');
-    setNewBranchName('');
-    setNewAddress('');
+    closeAddModal();
   };
 
   return (
@@ -111,7 +127,7 @@ export default function BusinessesPage() {
                     </p>
 
                     <div className="mt-4 pt-3 flex items-center justify-between text-xs">
-                      <span className="text-muted">Konteks Usaha (F1):</span>
+                      <span className="text-muted">Konteks Usaha</span>
                       <span className="font-mono text-[11px] font-medium text-impact">
                         Lengkap (7/7 terisi)
                       </span>
@@ -155,88 +171,41 @@ export default function BusinessesPage() {
       </main>
 
       {/* Modal Tambah Bisnis Baru */}
-      {showAddModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div
-            onClick={() => setShowAddModal(false)}
-            className="fixed inset-0 bg-black/40 backdrop-blur-xs"
-          />
-          <div className="relative z-10 w-full max-w-md rounded-xl border border-line bg-white p-6 shadow-xl animate-in zoom-in-95 duration-150">
-            <h3 className="text-lg font-semibold text-ink">Tambah Tempat Usaha Baru</h3>
-            <p className="text-xs text-muted mt-1 leading-relaxed">
-              Daftarkan unit usaha atau cabang fisik baru untuk dianalisis simulasinya.
-            </p>
-
-            <form onSubmit={handleAddBusiness} className="mt-5 space-y-4 text-xs">
-              <div>
-                <label className="block font-medium text-ink mb-1">Nama Tempat Usaha</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="Contoh: Kopi Toko Djawa"
-                  value={newBizName}
-                  onChange={(e) => setNewBizName(e.target.value)}
-                  className="w-full rounded-md border border-line px-3 py-2 text-ink placeholder:text-subtle focus:border-primary-40 focus:outline-none"
-                />
-              </div>
-
-              <div>
-                <label className="block font-medium text-ink mb-1">Nama Cabang</label>
-                <input
-                  type="text"
-                  placeholder="Contoh: Braga / Dago / Pusat"
-                  value={newBranchName}
-                  onChange={(e) => setNewBranchName(e.target.value)}
-                  className="w-full rounded-md border border-line px-3 py-2 text-ink placeholder:text-subtle focus:border-primary-40 focus:outline-none"
-                />
-              </div>
-
-              <div>
-                <label className="block font-medium text-ink mb-1">Kategori Usaha</label>
-                <select
-                  value={newCategory}
-                  onChange={(e) => setNewCategory(e.target.value as BusinessType)}
-                  className="w-full rounded-md border border-line bg-white px-3 py-2 text-ink focus:border-primary-40 focus:outline-none"
-                >
-                  <option value="kedai">Kedai Kopi / Teh</option>
-                  <option value="kafe">Kafe / Bakery</option>
-                  <option value="warung">Warung Makan / Kelontong</option>
-                  <option value="resto_ruko">Restoran Ruko</option>
-                  <option value="lainnya">Lainnya</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block font-medium text-ink mb-1">Alamat Fisik</label>
-                <input
-                  type="text"
-                  placeholder="Jl. Braga No. 12, Bandung"
-                  value={newAddress}
-                  onChange={(e) => setNewAddress(e.target.value)}
-                  className="w-full rounded-md border border-line px-3 py-2 text-ink placeholder:text-subtle focus:border-primary-40 focus:outline-none"
-                />
-              </div>
-
-              <div className="pt-3 flex items-center justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setShowAddModal(false)}
-                  className="rounded-md border border-line px-3 py-2 font-medium text-ink hover:bg-panel transition"
-                >
-                  Batal
-                </button>
-                <button
-                  type="submit"
-                  className="btn-primary rounded-md px-4 py-2 font-semibold text-white shadow-xs transition"
-                >
-                  Simpan Tempat Usaha
-                </button>
-              </div>
-            </form>
+      <Dialog
+        open={showAddModal}
+        onClose={closeAddModal}
+        title="Tambah tempat usaha"
+        description="Daftarkan usaha atau cabang baru untuk dianalisis."
+        footer={
+          <>
+            <Button type="button" variant="secondary" size="md" className="!rounded-md" onClick={closeAddModal}>
+              Batal
+            </Button>
+            <Button type="submit" form="add-business-form" variant="primary" size="md" className="!rounded-md" disabled={!newBizName.trim()}>
+              Simpan
+            </Button>
+          </>
+        }
+      >
+        <form id="add-business-form" onSubmit={handleAddBusiness} className="space-y-5">
+          <div>
+            <Label requiredText="wajib" htmlFor="biz-name">Nama tempat usaha</Label>
+            <Input id="biz-name" autoFocus placeholder="Contoh: Kopi Toko Djawa" value={newBizName} onChange={(e) => setNewBizName(e.target.value)} />
           </div>
-        </div>
-      )}
-
+          <div>
+            <Label requiredText="opsional" htmlFor="biz-branch">Nama cabang</Label>
+            <Input id="biz-branch" placeholder="Contoh: Braga" value={newBranchName} onChange={(e) => setNewBranchName(e.target.value)} />
+          </div>
+          <div>
+            <Label requiredText="wajib" htmlFor="biz-category">Jenis usaha</Label>
+            <Select id="biz-category" value={newCategory} onChange={setNewCategory} options={CATEGORY_OPTIONS} />
+          </div>
+          <div>
+            <Label requiredText="opsional" htmlFor="biz-address">Alamat</Label>
+            <Input id="biz-address" placeholder="Contoh: Jl. Braga No. 12, Bandung" value={newAddress} onChange={(e) => setNewAddress(e.target.value)} />
+          </div>
+        </form>
+      </Dialog>
     </div>
   );
 }
