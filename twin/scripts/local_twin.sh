@@ -7,7 +7,9 @@
 #
 # Pakai:
 #   ./scripts/local_twin.sh <video.mp4> <nama> [--fps 2] [--splat] [--steps 5000] [--reuse]
-#   --reuse : pakai frame + hasil COLMAP yang sudah ada (lewati langkah 1-2)
+#   --reuse : pakai frame + hasil COLMAP yang sudah ada (lewati langkah 1-2);
+#             tanggal dan label hasil yang sudah terbit dipertahankan
+#   --label "teks" : nama tampilan di halaman Riwayat (misal nama file asli)
 #   --matcher exhaustive : cocokkan semua pasangan frame (lebih lambat, menolong
 #             video gelap/ramai yang jejak kameranya sering putus)
 # Hasil di twin/work/<nama>/out/. Muat twin.ply atau twin.splat lewat tombol
@@ -21,6 +23,7 @@ fps=2
 splat=0
 steps=5000
 reuse=0
+label=""
 matcher=sequential
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -28,6 +31,7 @@ while [[ $# -gt 0 ]]; do
     --splat) splat=1; shift ;;
     --steps) steps="$2"; shift 2 ;;
     --reuse) reuse=1; shift ;;
+    --label) label="$2"; shift 2 ;;
     --matcher) matcher="$2"; shift 2 ;;
     *) echo "opsi tidak dikenal: $1" >&2; exit 2 ;;
   esac
@@ -100,8 +104,7 @@ done
 total=$(ls "$work/images" | wc -l | tr -d ' ')
 echo "      $models model; dipakai $(basename "$model"): $registered/$total frame teregistrasi, $points titik"
 if (( registered * 2 < total )); then
-  echo "      PERINGATAN: kurang dari separuh frame teregistrasi. Video kemungkinan terlalu"
-  echo "      gelap/buram/banyak orang bergerak, atau kamera hanya berputar di tempat."
+  echo "      PERINGATAN: kurang dari separuh frame teregistrasi (lihat diagnosis di langkah 3)."
 fi
 
 step "3/4 Ekspor twin.ply + camera_path.json"
@@ -109,6 +112,9 @@ colmap model_converter --input_path "$model" --output_path "$work/out/twin.ply" 
 mkdir -p "$work/colmap/txt"
 colmap model_converter --input_path "$model" --output_path "$work/colmap/txt" --output_type TXT
 (cd "$root" && uv run --quiet python scripts/colmap_to_twin.py "$work/colmap/txt" "$fps" "$work/out/camera_path.json" "$work/out/up.json")
+# Diagnosis bagian yang tidak terpetakan (gelap / buram / terlalu dekat / terlalu cepat)
+(cd "$root" && uv run --quiet python scripts/diagnose_twin.py "$work" "$fps" "$work/out/diagnosis.json") \
+  | sed 's/^/      Diagnosis: /' || echo "      (diagnosis gagal, dilewati)"
 
 if [[ "$splat" == 1 ]]; then
   [[ -x "$brush" ]] || { echo "Brush belum ada di $brush" >&2; exit 1; }
@@ -129,21 +135,35 @@ fi
 samples="$root/../fe/public/samples"
 mkdir -p "$samples"
 cp "$work/out/twin.ply" "$samples/$name.ply"
+cp "$work/out/camera_path.json" "$samples/$name.path.json"
 files="\"$name.ply\""
 if [[ -f "$work/out/twin.splat" ]]; then
   cp "$work/out/twin.splat" "$samples/$name.splat"
   files="$files, \"$name.splat\""
 fi
-cat > "$samples/$name.json" <<JSON
+# Tanggal: waktu proses asli bila hanya menerbitkan ulang (--reuse), agar urutan di
+# Riwayat tidak teracak. Label: dari --label, atau label yang sudah ada, atau nama.
+meta="$samples/$name.json"
+created="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+prev() { python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get(sys.argv[2]) or '')" "$meta" "$1" 2>/dev/null || true; }
+if [[ -f "$meta" ]]; then
+  [[ "$reuse" == 1 && -n "$(prev created_at)" ]] && created="$(prev created_at)"
+  [[ -z "$label" ]] && label="$(prev label)"
+fi
+label_json=$(python3 -c "import json,sys; print(json.dumps(sys.argv[1]))" "${label:-$name}")
+cat > "$meta" <<JSON
 {
   "name": "$name",
+  "label": $label_json,
   "video": "$(basename "$video")",
   "frames": $(ls "$work/images" | wc -l | tr -d ' '),
   "registered": ${registered:-0},
   "points": ${points:-0},
   "seconds": $(( $(date +%s) - t0 + prev_s )),
   "up": $(cat "$work/out/up.json"),
-  "created_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "camera_path": "$name.path.json",
+  "diagnosis": $(cat "$work/out/diagnosis.json" 2>/dev/null || echo null),
+  "created_at": "$created",
   "files": [$files]
 }
 JSON
