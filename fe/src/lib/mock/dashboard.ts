@@ -81,11 +81,11 @@ export const MOCK_DASHBOARD: DashboardData = {
   kpi: {
     // 1. Jumlah agen yang membeli
     buyers_count: 4,
-    buyers_rate_text: '20% dari 20 agen yang melihat',
+    buyers_rate_text: '20% dari calon pelanggan yang melihat',
     buyers_description: 'Total agen sintetis yang melewati seluruh titik hingga memesan di kasir.',
 
     // 2. Persentase penurunan terbesar (hanya dari tahap X ke tahap Y)
-    drop_off_rate_text: 'v 65,5%',
+    drop_off_rate_text: '65,5%',
     drop_off_from_stage: 'Berhenti',
     drop_off_to_stage: 'Masuk',
     drop_off_location: 'Akses Tangga Lantai 2',
@@ -98,7 +98,7 @@ export const MOCK_DASHBOARD: DashboardData = {
 
     // 4. Potential loss (1 angka pasti tanpa rentang)
     potential_loss_amount: 'Rp 4,8 Jt',
-    potential_loss_basis: 'Estimasi lepas / bln (224 agen)',
+    potential_loss_basis: 'Perkiraan omzet hilang per bulan',
     potential_loss_detail: 'Dihitung dari 224 calon pembeli yang batal dengan rata-rata belanja Rp 21.500 per pengunjung.',
   },
   funnel_stages: [
@@ -168,7 +168,7 @@ export const MOCK_DASHBOARD: DashboardData = {
       description: 'Tampilkan 3 menu favorit beserta harga mulai Rp 15rb persis di depan akses tangga bawah.',
       impact: 'Tinggi',
       effort: 'Rendah',
-      estimated_lift_range: '^ 12% – 16%',
+      estimated_lift_range: '12% – 16%',
       location_zone: 'Kaki Tangga (Detik 00:18)',
     },
     {
@@ -179,7 +179,7 @@ export const MOCK_DASHBOARD: DashboardData = {
       description: 'Ganti lampu tangga dengan temperatur hangat yang lebih terang agar tidak terkesan sepi/tutup.',
       impact: 'Sedang',
       effort: 'Rendah',
-      estimated_lift_range: '^ 4% – 7%',
+      estimated_lift_range: '4% – 7%',
       location_zone: 'Lorong Tangga (Detik 00:24)',
     },
     {
@@ -190,7 +190,7 @@ export const MOCK_DASHBOARD: DashboardData = {
       description: 'Warna plang abu-abu saat ini cenderung menyatu dengan tembok ruko tetangga saat siang terik.',
       impact: 'Rendah',
       effort: 'Sedang',
-      estimated_lift_range: '^ 2% – 4%',
+      estimated_lift_range: '2% – 4%',
       location_zone: 'Fasad Depan (Detik 00:04)',
     },
   ],
