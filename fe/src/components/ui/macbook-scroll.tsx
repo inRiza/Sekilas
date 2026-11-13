@@ -1,5 +1,5 @@
 "use client";
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { MotionValue, motion, useScroll, useTransform } from "motion/react";
 import { cn } from "@/lib/utils";
 import { SekilasLogoIcon } from "@/components/brand/logo";
@@ -46,9 +46,11 @@ export const MacbookScroll = ({
   const [isMobile, setIsMobile] = useState(false);
 
   useEffect(() => {
-    if (window && window.innerWidth < 768) {
-      setIsMobile(true);
-    }
+    const mq = window.matchMedia("(max-width: 767px)");
+    const update = () => setIsMobile(mq.matches);
+    update();
+    mq.addEventListener("change", update);
+    return () => mq.removeEventListener("change", update);
   }, []);
 
   const scaleX = useTransform(
@@ -163,6 +165,7 @@ export const Lid = ({
         className="absolute inset-0 h-96 w-[32rem] rounded-2xl bg-[#010101] p-2"
       >
         <div className="absolute inset-0 rounded-lg bg-[#272729]" />
+        {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src={src as string}
           alt="Dasbor analisis Sekilas"

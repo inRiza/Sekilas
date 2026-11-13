@@ -44,16 +44,16 @@ export function AppNavbar({ businessName = 'Selasar Kopi & Roti', breadcrumbs }:
     const business: BreadcrumbCrumb = { label: businessName, href: '/businesses/analyses' };
     const analysis: BreadcrumbCrumb = { label: 'Analisis 13 Nov 2026', href: '/business/analysis' };
 
-    if (pathname === '/businesses' || pathname === '/profil') {
+    if (pathname === '/businesses') {
       return [{ ...root, isCurrent: true }];
     }
-    if (pathname === '/businesses/analyses' || pathname === '/proyek') {
+    if (pathname === '/businesses/analyses') {
       return [root, { ...business, isCurrent: true }];
     }
     if (pathname === '/business/analysis') {
       return [root, business, { ...analysis, isCurrent: true }];
     }
-    if (pathname.endsWith('/agents') || pathname.endsWith('/agen')) {
+    if (pathname.endsWith('/agents')) {
       return [root, business, analysis, { label: 'Jelajah agen', isCurrent: true }];
     }
 

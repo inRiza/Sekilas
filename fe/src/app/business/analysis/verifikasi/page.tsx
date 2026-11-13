@@ -214,7 +214,7 @@ function VerifikasiTranskripInner() {
                   variant="primary"
                   size="lg"
                   disabled={!ready}
-                  onClick={() => ready && router.push('/analisis/selasar-kopi/simulasi')}
+                  onClick={() => ready && router.push('/business/analysis/simulasi')}
                   className="justify-center !rounded-md"
                 >
                   Jalankan simulasi agen <ArrowRightIcon size={16} />
