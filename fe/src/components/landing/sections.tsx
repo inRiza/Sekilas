@@ -6,8 +6,8 @@ import { FunnelCard } from "./funnel-card";
 import { Reveal } from "./reveal";
 import { TwinPreview } from "./twin-preview";
 
-const START_HREF = "/analisis/selasar-kopi/konteks";
-const EXAMPLE_HREF = "/analisis/selasar-kopi";
+const START_HREF = "/business/analysis/konteks";
+const EXAMPLE_HREF = "/business/analysis";
 
 /* ---------- Primitif ---------- */
 
