@@ -42,7 +42,7 @@ export const MOCK_ANALYSES: Analysis[] = [
     branch_name: 'Dipatiukur (Pusat)',
     name: 'Eksperimen Lampu Tangga & Papan Nama Malam',
     business_type: 'kedai',
-    created_at: '2026-11-13T18:00:00Z',
+    created_at: '2026-10-28T18:00:00Z',
     status: 'processing',
     total_agents: 20,
     thumbnail_url: '/samples/warkop-thumb.jpg',

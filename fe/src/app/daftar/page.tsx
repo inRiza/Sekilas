@@ -20,7 +20,7 @@ export default function RegisterPage() {
     if (!agreed) return;
     setIsLoading(true);
     setTimeout(() => {
-      router.push('/proyek?baru=1');
+      router.push('/businesses?baru=1');
     }, 450);
   };
 
