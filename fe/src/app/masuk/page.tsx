@@ -16,7 +16,7 @@ export default function LoginPage() {
     e.preventDefault();
     setIsLoading(true);
     setTimeout(() => {
-      router.push('/proyek');
+      router.push('/businesses');
     }, 400);
   };
 
@@ -94,7 +94,7 @@ export default function LoginPage() {
             {/* Social Login Button */}
             <button
               type="button"
-              onClick={() => router.push('/proyek')}
+              onClick={() => router.push('/businesses')}
               className="w-full h-10 rounded-md border border-line bg-white px-4 text-xs font-medium text-ink hover:bg-panel transition shadow-xs flex items-center justify-center gap-2"
             >
               <svg className="size-4" viewBox="0 0 24 24">

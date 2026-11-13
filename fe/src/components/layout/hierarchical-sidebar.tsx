@@ -17,14 +17,11 @@ import {
   SidebarMenuButton,
   SidebarMenuSub,
   SidebarMenuSubItem,
-  SidebarMenuSubButton,
   SidebarFooter,
 } from '@/components/ui/sidebar';
 import {
   StoreIcon,
   LayoutGridIcon,
-  LayoutDashboardIcon,
-  UsersIcon,
   ChevronRightIcon,
   ChevronDownIcon,
   SettingsIcon,
@@ -65,21 +62,10 @@ export function HierarchicalSidebar({
     biz_selasar_dago: false,
   });
 
-  // State ekspansi level Analisis
-  const [expandedAnalyses, setExpandedAnalyses] = useState<Record<string, boolean>>({
-    'selasar-kopi': true,
-    'selasar-night-run': false,
-    'selasar-dago-eval': true,
-  });
-
   if (!isOpen) return null;
 
   const toggleBiz = (bizId: string) => {
     setExpandedBiz((prev) => ({ ...prev, [bizId]: !prev[bizId] }));
-  };
-
-  const toggleAnalysis = (analysisId: string) => {
-    setExpandedAnalyses((prev) => ({ ...prev, [analysisId]: !prev[analysisId] }));
   };
 
   return (
@@ -94,7 +80,7 @@ export function HierarchicalSidebar({
       <Sidebar>
         {/* Header Drawer */}
         <SidebarHeader>
-          <Link href="/proyek" onClick={onClose} className="hover:opacity-90 transition">
+          <Link href="/businesses" onClick={onClose} className="hover:opacity-90 transition">
             <SekilasLogo size={24} />
           </Link>
           <button
@@ -114,11 +100,11 @@ export function HierarchicalSidebar({
 
             <SidebarMenu>
               {/* ============================================================== */}
-              {/* 1. DAFTAR BISNIS [Pergi ke Halaman Daftar Bisnis]              */}
+              {/* 1. DAFTAR BISNIS [Pergi ke Halaman Daftar Bisnis /businesses] */}
               {/* ============================================================== */}
               <SidebarMenuItem>
-                <Link href="/proyek" onClick={onClose} className="block">
-                  <SidebarMenuButton isActive={pathname === '/proyek'}>
+                <Link href="/businesses" onClick={onClose} className="block">
+                  <SidebarMenuButton isActive={pathname === '/businesses'}>
                     <LayoutGridIcon size={16} className="text-muted group-hover/btn:text-ink" />
                     <span className="font-semibold flex-1">Daftar Bisnis</span>
                     <span className="font-mono text-[10px] text-subtle px-1.5 py-0.5 rounded bg-panel border border-line">
@@ -127,19 +113,18 @@ export function HierarchicalSidebar({
                   </SidebarMenuButton>
                 </Link>
 
-                {/* Sub-tree: a. Bisnis1, b. Bisnis2 ... */}
+                {/* Sub-tree: Bisnis1, Bisnis2 ... (Tanpa prefix "a." atau "b.") */}
                 <SidebarMenuSub className="mt-1">
-                  {MOCK_BUSINESSES.map((biz, bizIdx) => {
+                  {MOCK_BUSINESSES.map((biz) => {
                     const isBizExpanded = !!expandedBiz[biz.id];
                     const bizAnalyses = MOCK_ANALYSES.filter(
                       (a) => a.business_id === biz.id
                     );
-                    const letterIndex = String.fromCharCode(97 + bizIdx); // a, b, c...
 
                     return (
                       <SidebarMenuSubItem key={biz.id} className="pt-0.5">
                         {/* ========================================================== */}
-                        {/* a. BISNIS [Pergi ke Kelola Bisnis, Mengisi Konteks Bisnis] */}
+                        {/* BISNIS [Pergi ke Halaman Daftar Analisis / Kelola Bisnis]  */}
                         {/* ========================================================== */}
                         <div className="flex items-center justify-between rounded-md px-1.5 py-1 text-xs hover:bg-panel group transition">
                           {/* Toggle Expand Icon */}
@@ -156,18 +141,15 @@ export function HierarchicalSidebar({
                             )}
                           </button>
 
-                          {/* Nama Bisnis -> Link ke Halaman Kelola Bisnis / Konteks Usaha */}
+                          {/* Nama Bisnis -> Link ke /businesses/analyses */}
                           <Link
-                            href="/profil"
+                            href="/businesses/analyses"
                             onClick={onClose}
                             className="flex-1 flex items-center gap-1.5 min-w-0 pr-1"
-                            title="Pergi ke halaman kelola bisnis, mengisi konteks bisnis"
+                            title="Pergi ke halaman kelola bisnis & daftar analisis"
                           >
                             <StoreIcon size={14} className="text-muted shrink-0" />
                             <div className="truncate">
-                              <span className="font-mono text-[11px] text-subtle mr-1">
-                                {letterIndex}.
-                              </span>
                               <span className="font-medium text-ink group-hover:text-primary-40 transition">
                                 {biz.name}
                               </span>
@@ -179,127 +161,61 @@ export function HierarchicalSidebar({
 
                           {/* Tombol Cepat Konteks Bisnis (F1) */}
                           <Link
-                            href={`/analisis/${bizAnalyses[0]?.id || activeAnalysisId}/konteks`}
+                            href="/businesses"
                             onClick={onClose}
                             className="opacity-0 group-hover:opacity-100 p-1 text-muted hover:text-ink hover:bg-white rounded border border-line transition shadow-2xs"
-                            title="Isi Konteks Usaha (F1)"
+                            title="Kelola Konteks Usaha (F1)"
                           >
                             <SettingsIcon size={12} />
                           </Link>
                         </div>
 
-                        {/* Hierarki Level i. Analisis DD-MM-YYYY */}
+                        {/* Hierarki Level Analisis-Analisis (Tanpa "i.", "ii." & Tanpa submenu dasbor/agen) */}
                         {isBizExpanded && (
-                          <ul className="ml-4 pl-2.5 border-l border-hairline space-y-1.5 my-1 list-none">
-                            {bizAnalyses.map((analysis, aIdx) => {
-                              const isAnalysisExpanded = !!expandedAnalyses[analysis.id];
-                              const romanIndex =
-                                aIdx === 0 ? 'i' : aIdx === 1 ? 'ii' : aIdx === 2 ? 'iii' : 'iv';
+                          <ul className="ml-4 pl-2.5 border-l border-hairline space-y-1 my-1 list-none">
+                            {bizAnalyses.map((analysis) => {
                               const formattedDate = formatToDDMMYYYY(analysis.created_at);
-                              const isAnalysisActive = pathname.includes(analysis.id);
+                              const isAnalysisActive =
+                                pathname.startsWith('/business/analysis') ||
+                                pathname.includes(analysis.id);
 
                               return (
                                 <li key={analysis.id} className="list-none">
-                                  {/* ==================================================== */}
-                                  {/* i. ANALISIS DD-MM-YYYY [Pergi ke Dasbor]             */}
-                                  {/* ==================================================== */}
-                                  <div
-                                    className={`flex items-center justify-between rounded-md px-1.5 py-1 text-xs transition ${
-                                      isAnalysisActive && !pathname.includes('/agen')
-                                        ? 'bg-primary-10/70 border border-primary-20'
-                                        : 'hover:bg-panel'
+                                  {/* ANALISIS DD-MM-YYYY [Pergi Langsung ke Dasbor /business/analysis] */}
+                                  <Link
+                                    href="/business/analysis"
+                                    onClick={onClose}
+                                    className={`flex items-center gap-2 rounded-md px-2 py-1.5 text-xs transition ${
+                                      isAnalysisActive
+                                        ? 'bg-primary-10 text-primary-40 font-semibold border border-primary-20'
+                                        : 'hover:bg-panel text-ink'
                                     }`}
+                                    title="Buka Dasbor Analisis"
                                   >
-                                    <button
-                                      type="button"
-                                      onClick={() => toggleAnalysis(analysis.id)}
-                                      className="p-1 text-subtle hover:text-ink rounded transition"
-                                      aria-label={`Toggle Analisis ${formattedDate}`}
-                                    >
-                                      {isAnalysisExpanded ? (
-                                        <ChevronDownIcon size={12} />
-                                      ) : (
-                                        <ChevronRightIcon size={12} />
-                                      )}
-                                    </button>
-
-                                    <Link
-                                      href={`/analisis/${analysis.id}`}
-                                      onClick={onClose}
-                                      className="flex-1 flex items-center gap-1.5 min-w-0"
-                                      title="Pergi ke dasbor"
-                                    >
-                                      <FileTextIcon
-                                        size={13}
-                                        className={
-                                          isAnalysisActive ? 'text-primary-40' : 'text-muted'
-                                        }
-                                      />
-                                      <div className="truncate">
-                                        <span className="font-mono text-[10px] text-subtle mr-1">
-                                          {romanIndex}.
-                                        </span>
-                                        <span
-                                          className={`text-[11px] ${
-                                            isAnalysisActive
-                                              ? 'font-semibold text-primary-40'
-                                              : 'font-medium text-ink'
-                                          }`}
-                                        >
-                                          Analisis {formattedDate}
-                                        </span>
-                                      </div>
-                                    </Link>
-                                  </div>
-
-                                  {/* Sub-menu: 1. Dasbor, 2. Jelajah Agen */}
-                                  {isAnalysisExpanded && (
-                                    <ul className="ml-4 pl-2.5 border-l border-hairline space-y-0.5 my-1 list-none">
-                                      {/* 1. DASBOR [Pergi ke Dasbor] */}
-                                      <li className="list-none">
-                                        <Link
-                                          href={`/analisis/${analysis.id}`}
-                                          onClick={onClose}
-                                          className="block"
-                                        >
-                                          <SidebarMenuSubButton
-                                            isActive={pathname === `/analisis/${analysis.id}`}
-                                          >
-                                            <span className="font-mono text-[10px] text-subtle w-3.5">
-                                              1.
-                                            </span>
-                                            <LayoutDashboardIcon size={13} />
-                                            <span>Dasbor</span>
-                                          </SidebarMenuSubButton>
-                                        </Link>
-                                      </li>
-
-                                      {/* 2. JELAJAH AGEN [Pergi ke Halaman Jelajah Agen] */}
-                                      <li className="list-none">
-                                        <Link
-                                          href={`/analisis/${analysis.id}/agen`}
-                                          onClick={onClose}
-                                          className="block"
-                                        >
-                                          <SidebarMenuSubButton
-                                            isActive={pathname === `/analisis/${analysis.id}/agen`}
-                                          >
-                                            <span className="font-mono text-[10px] text-subtle w-3.5">
-                                              2.
-                                            </span>
-                                            <UsersIcon size={13} />
-                                            <span>Jelajah Agen</span>
-                                            <span className="ml-auto font-mono text-[9px] text-subtle">
-                                              20 Demo
-                                            </span>
-                                          </SidebarMenuSubButton>
-                                        </Link>
-                                      </li>
-                                    </ul>
-                                  )}
+                                    <FileTextIcon
+                                      size={14}
+                                      className={
+                                        isAnalysisActive ? 'text-primary-40' : 'text-muted'
+                                      }
+                                    />
+                                    <span className="truncate">Analisis {formattedDate}</span>
+                                  </Link>
                                 </li>
                               );
                             })}
+
+                            {/* Tombol "Buat Analisis Baru" Selevel dengan Analisis-Analisis */}
+                            <li className="list-none pt-0.5">
+                              <Link
+                                href="/business/analysis/video"
+                                onClick={onClose}
+                                className="flex items-center gap-2 rounded-md px-2 py-1.5 text-xs font-medium text-primary-40 hover:bg-primary-10 transition border border-dashed border-primary-20/60"
+                                title="Mulai pipeline analisis upload video baru"
+                              >
+                                <PlusIcon size={13} />
+                                <span>Buat Analisis Baru</span>
+                              </Link>
+                            </li>
                           </ul>
                         )}
                       </SidebarMenuSubItem>
@@ -310,15 +226,15 @@ export function HierarchicalSidebar({
             </SidebarMenu>
           </SidebarGroup>
 
-          {/* Quick Action: Tambah Cabang / Bisnis Baru */}
+          {/* Quick Action: Tambah Cabang / Bisnis Baru di Halaman Daftar Bisnis */}
           <div className="pt-2 border-t border-hairline">
             <Link
-              href="/proyek?tambah_cabang=1"
+              href="/businesses?tambah=1"
               onClick={onClose}
-              className="flex items-center gap-2 rounded-md px-2.5 py-2 text-xs font-medium text-primary-40 hover:bg-primary-10 transition border border-dashed border-primary-20/60"
+              className="flex items-center gap-2 rounded-md px-2.5 py-2 text-xs font-medium text-muted hover:text-ink hover:bg-panel transition"
             >
               <PlusIcon size={14} />
-              <span>Tambah Tempat Usaha / Cabang</span>
+              <span>Tambah Tempat Usaha Baru</span>
             </Link>
           </div>
         </SidebarContent>
