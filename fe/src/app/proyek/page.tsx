@@ -187,7 +187,7 @@ export default function ProyekPage() {
                 href="/analisis/selasar-kopi/konteks"
                 className="rounded-[10px] border border-dashed border-line bg-panel/40 p-5 flex flex-col items-center justify-center text-center hover:bg-panel hover:border-subtle transition min-h-[220px]"
               >
-                <SekilasMascot size={52} pose="default" className="opacity-75 mb-2" />
+                <SekilasMascot size={52} className="opacity-75 mb-2" />
                 <p className="text-xs font-semibold text-ink">Rekam Video Tempat Usaha Baru</p>
                 <p className="text-[11px] text-muted max-w-[200px] mt-1">
                   Ambil 48 detik video untuk melihat titik ragu pembelimu.
