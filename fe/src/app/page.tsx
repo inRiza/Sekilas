@@ -1,6 +1,6 @@
 import {
   CtaBand,
-  DashboardShowcase,
+  ExampleAnalysis,
   Footer,
   Hero,
   HowItWorks,
@@ -18,8 +18,8 @@ export default function Home() {
         <Hero />
         <Statement />
         <HowItWorks />
-        <DashboardShowcase />
         <Recommendations />
+        <ExampleAnalysis />
         <Trust />
         <CtaBand />
       </main>
