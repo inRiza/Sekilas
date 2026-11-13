@@ -48,7 +48,7 @@ body {
 .col {
   position: relative;
   margin-inline: auto;
-  width: min(1160px, calc(100% - 28px));
+  width: min(1360px, calc(100% - 28px));
   border-inline: 1px solid var(--color-hairline);
   padding-inline: 20px;
 }
