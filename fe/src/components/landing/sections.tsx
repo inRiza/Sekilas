@@ -120,7 +120,7 @@ export function Navbar() {
 const PIPELINE = [
   { label: "1 video", dot: "bg-primary-40" },
   { label: "Transkrip kejadian" },
-  { label: "500 agen" },
+  { label: "20 agen demo" },
   { label: "Dasbor + Visual Twin" },
 ];
 
@@ -131,7 +131,7 @@ export function Hero() {
         <span className="inline-flex items-center gap-2 rounded-full border border-line px-3 py-1 text-[13px] text-muted">
           Untuk UMKM makanan
           <span className="h-3 w-px bg-line" />
-          <span className="text-ink">Simulasi 500 agen</span>
+          <span className="text-ink">Simulasi 20 agen demo</span>
         </span>
         <h1 className="mt-6 max-w-[15ch] text-[44px] leading-[1.02] font-normal tracking-[-0.045em] text-ink sm:text-[72px]">
           Tahu di mana pelanggan ragu, dari satu video.
@@ -200,7 +200,7 @@ const STEPS = [
   },
   {
     title: "Dapatkan insight",
-    body: "500 agen sintetis mengunjungi tempatmu. Hasilnya dasbor titik gesekan dan saran perbaikan.",
+    body: "20 agen demo sintetis mengunjungi tempatmu. Hasilnya dasbor titik gesekan dan saran perbaikan.",
   },
 ];
 
@@ -242,9 +242,10 @@ const FINDINGS = [
 ];
 
 const KPIS = [
-  { label: "Tahap gesekan terbesar", value: "Naik tangga", tone: "text-friction" },
-  { label: "Faktor utama", value: "Jam buka tak terlihat", tone: "text-ink" },
-  { label: "Peluang naik jika diperbaiki", value: "+25–39%", tone: "text-impact" },
+  { label: "Agen Membeli", value: "4 agen", sub: "20% dari 20 agen demo", tone: "text-impact" },
+  { label: "Penurunan Terbesar", value: "v 65,5%", sub: "Dari Berhenti ke Masuk", tone: "text-friction" },
+  { label: "Penyebab Utama Batal", value: "Menu & Harga", sub: "Peringkat #1 Isyarat", tone: "text-friction" },
+  { label: "Potensi Omzet Lepas", value: "Rp 4,8 Jt", sub: "Estimasi lepas / bln", tone: "text-friction" },
 ];
 
 export function DashboardShowcase() {
@@ -258,22 +259,21 @@ export function DashboardShowcase() {
         </p>
       </Reveal>
 
-      <Reveal delay={120} className="mt-14 overflow-hidden rounded-[10px] border border-line bg-white">
+      <Reveal delay={120} className="mt-14 overflow-hidden rounded-[10px] border border-line bg-white shadow-xs">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-hairline px-4 py-3 sm:px-5">
-          <p className="text-sm font-medium text-ink">Laporan analisis</p>
+          <p className="text-sm font-medium text-ink">Ringkasan Dasbor Analisis</p>
           <div className="flex items-center gap-2 text-[13px]">
             <span className="hidden text-muted sm:inline">Skenario</span>
-            <Chip dot="bg-primary-40">Normal</Chip>
-            <span className="text-subtle">Jam ramai</span>
-            <span className="text-subtle">Hujan</span>
+            <Chip dot="bg-primary-40">Normal (20 Agen)</Chip>
           </div>
         </div>
 
-        <dl className="grid grid-cols-1 divide-y divide-hairline border-b border-hairline sm:grid-cols-3 sm:divide-x sm:divide-y-0">
+        <dl className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 divide-y sm:divide-y-0 sm:divide-x divide-hairline border-b border-hairline">
           {KPIS.map((k) => (
-            <div key={k.label} className="px-5 py-4">
-              <dt className="font-mono text-[11px] uppercase tracking-[0.06em] text-subtle">{k.label}</dt>
-              <dd className={`mt-1.5 text-lg tracking-[-0.02em] ${k.tone}`}>{k.value}</dd>
+            <div key={k.label} className="p-4 sm:p-4.5 flex flex-col justify-between">
+              <dt className="font-mono text-[11px] uppercase tracking-[0.06em] text-muted font-medium">{k.label}</dt>
+              <dd className={`mt-1.5 text-xl sm:text-2xl font-bold font-mono tracking-tight ${k.tone}`}>{k.value}</dd>
+              <p className="font-mono text-[11px] text-muted mt-1">{k.sub}</p>
             </div>
           ))}
         </dl>
@@ -304,7 +304,7 @@ export function DashboardShowcase() {
           <span className="font-mono text-xs text-primary-40">→</span>
         </Link>
         <p className="font-mono text-[11px] text-subtle">
-          Contoh nyata pemetaan video 48 detik dan simulasi 500 agen
+          Contoh nyata pemetaan video 48 detik dan simulasi 20 agen demo
         </p>
       </div>
     </Section>
@@ -405,9 +405,7 @@ export function Trust() {
         ))}
       </div>
       <Reveal className="mt-14 rounded-[10px] border border-line bg-panel px-5 py-4 text-[14px] leading-6 text-ink-soft">
-        <span className="font-medium text-ink">Catatan.</span> Hasil Sekilas adalah simulasi 500 agen sintetis sebagai
-        hipotesis titik gesekan, bukan prediksi jumlah pelanggan atau omzet. Dasbor juga memberi rencana pengukuran
-        sederhana supaya kamu bisa membuktikannya sendiri.
+        <span className="font-medium text-ink">Catatan.</span> Hasil Sekilas adalah simulasi agen sintetis berbasis probabilitas sebagai hipotesis titik gesekan fisik, bukan janji omzet. Dasbor dilengkapi simulator hipotesis perbaikan tata letak sebelum kamu renovasi toko.
       </Reveal>
     </Section>
   );

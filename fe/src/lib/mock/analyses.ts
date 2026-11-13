@@ -11,11 +11,11 @@ export const MOCK_ANALYSES: Analysis[] = [
     created_at: '2026-11-13T14:30:00Z',
     status: 'ready',
     quality_label: 'Kualitas baik',
-    total_agents: 500,
+    total_agents: 20, // 20 agen untuk ruang lingkup demo (PRD v1.2 Bagian 9 & F5)
     thumbnail_url: '/samples/selasar-thumb.jpg',
     step_progress: {
-      current_step: 6,
-      total_steps: 6,
+      current_step: 4,
+      total_steps: 4,
     },
   },
   {
@@ -28,11 +28,11 @@ export const MOCK_ANALYSES: Analysis[] = [
     created_at: '2026-11-12T09:15:00Z',
     status: 'ready',
     quality_label: 'Kualitas baik',
-    total_agents: 500,
+    total_agents: 20,
     thumbnail_url: '/samples/bakso-thumb.jpg',
     step_progress: {
-      current_step: 6,
-      total_steps: 6,
+      current_step: 4,
+      total_steps: 4,
     },
   },
   {
@@ -44,11 +44,11 @@ export const MOCK_ANALYSES: Analysis[] = [
     business_type: 'kedai',
     created_at: '2026-11-13T18:00:00Z',
     status: 'processing',
-    total_agents: 500,
+    total_agents: 20,
     thumbnail_url: '/samples/warkop-thumb.jpg',
     step_progress: {
       current_step: 3,
-      total_steps: 6,
+      total_steps: 4,
     },
   },
 ];
