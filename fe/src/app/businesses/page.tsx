@@ -2,7 +2,6 @@
 
 import React, { useState } from 'react';
 import Link from 'next/link';
-import { AppNavbar } from '@/components/layout/app-navbar';
 import { MOCK_BUSINESSES } from '@/lib/mock/business';
 import { MOCK_ANALYSES } from '@/lib/mock/analyses';
 import { Business, BusinessType } from '@/types/api';
@@ -53,13 +52,11 @@ export default function BusinessesPage() {
   };
 
   return (
-    <div className="min-h-screen bg-white flex flex-col justify-between">
-      <AppNavbar mode="global" />
-
+    <div className="flex min-h-full flex-col justify-between bg-white">
       <main className="section flex-1 py-8 sm:py-12">
         <div className="col space-y-8">
           {/* Header Title */}
-          <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 pb-4 border-b border-hairline">
+          <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 pb-4">
             <div>
               <span className="font-mono text-[11px] uppercase tracking-wider text-muted font-semibold">
                 Manajemen Bisnis
@@ -90,7 +87,7 @@ export default function BusinessesPage() {
               return (
                 <div
                   key={biz.id}
-                  className="rounded-[10px] border border-line bg-white p-5 sm:p-6 shadow-xs hover:border-subtle transition flex flex-col justify-between"
+                  className="rounded-xl border border-line bg-white p-5 sm:p-6 hover:!border-[#d3d7dd] transition flex flex-col justify-between"
                 >
                   <div>
                     <div className="flex items-center justify-between gap-2 mb-2">
@@ -113,7 +110,7 @@ export default function BusinessesPage() {
                       {biz.address}
                     </p>
 
-                    <div className="mt-4 pt-3 border-t border-hairline flex items-center justify-between text-xs">
+                    <div className="mt-4 pt-3 flex items-center justify-between text-xs">
                       <span className="text-muted">Konteks Usaha (F1):</span>
                       <span className="font-mono text-[11px] font-medium text-impact">
                         Lengkap (7/7 terisi)
@@ -121,10 +118,10 @@ export default function BusinessesPage() {
                     </div>
                   </div>
 
-                  <div className="mt-6 pt-4 border-t border-hairline flex flex-wrap items-center justify-between gap-2">
+                  <div className="mt-6 pt-4 flex flex-wrap items-center justify-between gap-2">
                     <Link
                       href="/businesses/analyses"
-                      className="inline-flex h-8.5 items-center gap-1.5 rounded-md border border-line bg-white px-3.5 text-xs font-medium text-ink hover:bg-panel transition shadow-2xs"
+                      className="inline-flex h-8.5 items-center gap-1.5 rounded-md border border-line bg-white px-3.5 text-xs font-medium text-ink hover:bg-panel transition"
                     >
                       <FileTextIcon size={13} className="text-muted" />
                       <span>Lihat Analisis</span>
@@ -164,7 +161,7 @@ export default function BusinessesPage() {
             onClick={() => setShowAddModal(false)}
             className="fixed inset-0 bg-black/40 backdrop-blur-xs"
           />
-          <div className="relative z-10 w-full max-w-md rounded-[10px] border border-line bg-white p-6 shadow-xl animate-in zoom-in-95 duration-150">
+          <div className="relative z-10 w-full max-w-md rounded-xl border border-line bg-white p-6 shadow-xl animate-in zoom-in-95 duration-150">
             <h3 className="text-lg font-semibold text-ink">Tambah Tempat Usaha Baru</h3>
             <p className="text-xs text-muted mt-1 leading-relaxed">
               Daftarkan unit usaha atau cabang fisik baru untuk dianalisis simulasinya.
@@ -179,7 +176,7 @@ export default function BusinessesPage() {
                   placeholder="Contoh: Kopi Toko Djawa"
                   value={newBizName}
                   onChange={(e) => setNewBizName(e.target.value)}
-                  className="w-full rounded-md border border-line px-3 py-2 text-ink placeholder:text-subtle focus:border-primary-40 focus:outline-none shadow-2xs"
+                  className="w-full rounded-md border border-line px-3 py-2 text-ink placeholder:text-subtle focus:border-primary-40 focus:outline-none"
                 />
               </div>
 
@@ -190,7 +187,7 @@ export default function BusinessesPage() {
                   placeholder="Contoh: Braga / Dago / Pusat"
                   value={newBranchName}
                   onChange={(e) => setNewBranchName(e.target.value)}
-                  className="w-full rounded-md border border-line px-3 py-2 text-ink placeholder:text-subtle focus:border-primary-40 focus:outline-none shadow-2xs"
+                  className="w-full rounded-md border border-line px-3 py-2 text-ink placeholder:text-subtle focus:border-primary-40 focus:outline-none"
                 />
               </div>
 
@@ -199,7 +196,7 @@ export default function BusinessesPage() {
                 <select
                   value={newCategory}
                   onChange={(e) => setNewCategory(e.target.value as BusinessType)}
-                  className="w-full rounded-md border border-line bg-white px-3 py-2 text-ink focus:border-primary-40 focus:outline-none shadow-2xs"
+                  className="w-full rounded-md border border-line bg-white px-3 py-2 text-ink focus:border-primary-40 focus:outline-none"
                 >
                   <option value="kedai">Kedai Kopi / Teh</option>
                   <option value="kafe">Kafe / Bakery</option>
@@ -216,11 +213,11 @@ export default function BusinessesPage() {
                   placeholder="Jl. Braga No. 12, Bandung"
                   value={newAddress}
                   onChange={(e) => setNewAddress(e.target.value)}
-                  className="w-full rounded-md border border-line px-3 py-2 text-ink placeholder:text-subtle focus:border-primary-40 focus:outline-none shadow-2xs"
+                  className="w-full rounded-md border border-line px-3 py-2 text-ink placeholder:text-subtle focus:border-primary-40 focus:outline-none"
                 />
               </div>
 
-              <div className="pt-3 border-t border-hairline flex items-center justify-end gap-2">
+              <div className="pt-3 flex items-center justify-end gap-2">
                 <button
                   type="button"
                   onClick={() => setShowAddModal(false)}
@@ -240,12 +237,6 @@ export default function BusinessesPage() {
         </div>
       )}
 
-      {/* Footer */}
-      <footer className="border-t border-hairline py-6 text-center text-xs text-subtle">
-        <div className="w-full px-4 sm:px-8">
-          Sekilas © 2026 · Simulator Calon Pelanggan untuk UMKM Makanan
-        </div>
-      </footer>
     </div>
   );
 }

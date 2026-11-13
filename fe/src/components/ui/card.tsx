@@ -14,7 +14,7 @@ export function Card({
 }: CardProps) {
   return (
     <div
-      className={`rounded-2xl border border-line bg-surface shadow-[0_4px_20px_rgb(0_0_0/0.03)] transition-all ${
+      className={`app-card rounded-xl border border-line bg-white transition-colors ${
         padded ? 'p-5 sm:p-6' : ''
       } ${className}`}
       {...props}

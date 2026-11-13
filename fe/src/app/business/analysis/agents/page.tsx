@@ -1,243 +1,191 @@
 'use client';
 
-import React, { useState, useMemo, Suspense } from 'react';
-import Link from 'next/link';
-import { useParams } from 'next/navigation';
-import { AppNavbar } from '@/components/layout/app-navbar';
-import { Card } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
+import { ChevronDown, Clock, MapPin, Quote, UserRound, Wallet } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import React, { Suspense, useMemo, useState } from 'react';
+
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Chip } from '@/components/ui/form';
 import { ArrowLeftIcon } from '@/components/ui/icons';
 import { MOCK_AGENTS } from '@/lib/mock/agents';
-import { FinalDecision } from '@/types/api';
+import type { AgentDecision, FinalDecision } from '@/types/api';
 
-function AgenExplorerInner() {
-  const params = useParams();
-  const analysisId = (params?.id as string) || 'selasar-kopi';
+const DECISION: Record<FinalDecision, { label: string; variant: 'impact' | 'friction' | 'neutral' | 'primary' }> = {
+  lewat: { label: 'Lewat', variant: 'neutral' },
+  berhenti_lalu_pergi: { label: 'Berhenti lalu pergi', variant: 'friction' },
+  masuk_tanpa_memesan: { label: 'Masuk tanpa memesan', variant: 'primary' },
+  memesan: { label: 'Memesan', variant: 'impact' },
+};
 
-  const [decisionFilter, setDecisionFilter] = useState<'all' | FinalDecision>('all');
-  const [segmentFilter, setSegmentFilter] = useState<string>('all');
-  const [selectedAgentId, setSelectedAgentId] = useState<number>(MOCK_AGENTS[0].agent_id);
+const DECISION_FILTERS: Array<['all' | FinalDecision, string]> = [
+  ['all', 'Semua'],
+  ['lewat', 'Lewat'],
+  ['berhenti_lalu_pergi', 'Berhenti lalu pergi'],
+  ['masuk_tanpa_memesan', 'Masuk tanpa memesan'],
+  ['memesan', 'Memesan'],
+];
 
-  const filteredAgents = useMemo(() => {
-    return MOCK_AGENTS.filter((ag) => {
-      if (decisionFilter !== 'all' && ag.final_decision !== decisionFilter) return false;
-      if (segmentFilter !== 'all' && ag.persona.segment !== segmentFilter) return false;
-      return true;
-    });
-  }, [decisionFilter, segmentFilter]);
+/** 'pekerja_kantor' -> 'Pekerja kantor' */
+function humanize(value: string) {
+  const t = value.replace(/_/g, ' ');
+  return t.charAt(0).toUpperCase() + t.slice(1);
+}
 
-  const activeAgent = MOCK_AGENTS.find((a) => a.agent_id === selectedAgentId) || MOCK_AGENTS[0];
+/** Satu agen: ringkas saat tertutup, lengkap (monolog, persona, alasan) saat dibuka. */
+function AgentItem({ agent, open, onToggle }: { agent: AgentDecision; open: boolean; onToggle: () => void }) {
+  const d = DECISION[agent.final_decision];
+  const p = agent.persona;
 
   return (
-    <div className="min-h-screen bg-white flex flex-col justify-between">
-      <AppNavbar mode="analysis" analysisId={analysisId} />
-
-      <main className="flex-1 py-8 sm:py-10 w-full px-4 sm:px-8 lg:px-12 space-y-6">
-        {/* Header Title with Back to Dashboard Button */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-3 border-b border-hairline">
-          <div>
-            <div className="mb-2">
-              <Link
-                href="/business/analysis"
-                className="inline-flex items-center gap-1.5 rounded-md border border-line bg-white px-3 py-1.5 text-xs font-semibold text-ink hover:bg-panel transition shadow-2xs"
-              >
-                <ArrowLeftIcon size={14} />
-                <span>Kembali ke Dashboard</span>
-              </Link>
-            </div>
-            <h1 className="text-2xl sm:text-[28px] font-normal tracking-[-0.03em] text-ink">
-              Jelajah 20 Monolog & Keputusan Agen (Demo)
-            </h1>
-            <p className="text-xs sm:text-[13px] text-muted mt-0.5">
-              Setiap agen memiliki latar belakang demografi, anggaran uang makan, dan batas waktu istirahat yang realistis.
-            </p>
+    <li className={`rounded-md border transition-colors ${open ? 'border-primary-40/40' : 'border-line hover:border-[#d3d7dd]'}`}>
+      {/* Ringkasan (klik untuk buka/tutup) */}
+      <button type="button" onClick={onToggle} aria-expanded={open} className="flex w-full items-start gap-3 p-4 text-left sm:p-5">
+        <span className="grid size-8 shrink-0 place-items-center rounded-md bg-soft text-ink-soft">
+          <UserRound size={16} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="mr-1 text-[13px] font-medium text-ink">{humanize(p.segment)}</span>
+            <Badge>{`Anggaran Rp ${p.concrete_facts.meal_budget.toLocaleString('id-ID')}`}</Badge>
+            <span className="flex-1" />
+            <Badge variant={d.variant}>{d.label}</Badge>
           </div>
-          <div className="flex items-center gap-2 shrink-0">
-            <span className="font-mono text-xs text-primary-40 bg-primary-10 px-3 py-1 rounded-full font-semibold border border-primary-20">
-              {filteredAgents.length} dari {MOCK_AGENTS.length} Sampel Agen Demo
-            </span>
+          {!open && <p className="mt-2 line-clamp-1 text-[13px] italic text-muted">“{agent.monologue}”</p>}
+        </div>
+        <ChevronDown size={16} className={`mt-2 shrink-0 text-subtle transition-transform duration-200 ${open ? 'rotate-180' : ''}`} />
+      </button>
+
+      {/* Detail */}
+      {open && (
+        <div className="space-y-5 px-4 pb-5 sm:px-5 sm:pl-[64px]">
+          <div className="flex items-start gap-3 rounded-md bg-primary-10/50 p-4">
+            <Quote size={16} className="mt-0.5 shrink-0 text-primary-40" />
+            <p className="text-[13px] italic leading-relaxed text-ink">{agent.monologue}</p>
+          </div>
+
+          <div>
+            <p className="mb-2 text-[12px] font-medium text-muted">Latar calon pelanggan</p>
+            <div className="flex flex-wrap gap-1.5">
+              <Badge size="md">
+                <Wallet size={12} /> {`Uang makan Rp ${p.concrete_facts.meal_budget.toLocaleString('id-ID')}`}
+              </Badge>
+              <Badge size="md">
+                <Clock size={12} /> {`Istirahat ${p.concrete_facts.break_time_minutes} menit`}
+              </Badge>
+              <Badge size="md">
+                <MapPin size={12} /> {humanize(p.discrete_traits.area_familiarity)}
+              </Badge>
+              <Badge size="md">{humanize(p.discrete_traits.dining_context)}</Badge>
+            </div>
+            <p className="mt-2 text-[13px] leading-relaxed text-ink-soft">{p.context_around}.</p>
+          </div>
+
+          <div>
+            <p className="mb-2 text-[12px] font-medium text-muted">Alasan keputusan</p>
+            <p className="text-[13px] leading-relaxed text-ink">{agent.deciding_factor}</p>
+            <div className="mt-3 flex flex-wrap gap-1.5">
+              <Badge>{`Keraguan ${agent.hesitation_score} dari 5`}</Badge>
+              <Badge variant="primary">
+                {agent.stopped_at_segment_id ? `Berhenti di segmen ${agent.stopped_at_segment_id.replace('seg_', '')}` : 'Sampai kasir'}
+              </Badge>
+            </div>
           </div>
         </div>
+      )}
+    </li>
+  );
+}
 
-        {/* Filter Bar Kapsul */}
-        <Card className="flex flex-wrap items-center justify-between gap-4 py-3">
-          {/* Filter Keputusan */}
-          <div className="flex items-center gap-1.5 flex-wrap">
-            <span className="text-xs text-muted font-medium mr-1">Keputusan:</span>
-            {[
-              ['all', 'Semua'],
-              ['lewat', 'Lewat Saja'],
-              ['berhenti_lalu_pergi', 'Berhenti lalu Pergi'],
-              ['masuk_tanpa_memesan', 'Masuk tanpa Pesan'],
-              ['memesan', 'Memesan'],
-            ].map(([val, label]) => (
-              <button
-                key={val}
-                onClick={() => setDecisionFilter(val as any)}
-                className={`rounded-full px-3 py-1 text-xs font-medium transition cursor-pointer ${
-                  decisionFilter === val
-                    ? 'bg-primary-40 text-white shadow-xs'
-                    : 'bg-bg text-ink-soft hover:bg-hairline'
-                }`}
-              >
-                {label}
-              </button>
-            ))}
+function AgenExplorerInner() {
+  const router = useRouter();
+  const [decisionFilter, setDecisionFilter] = useState<'all' | FinalDecision>('all');
+  const [segmentFilter, setSegmentFilter] = useState<string>('all');
+  const [openId, setOpenId] = useState<number | null>(MOCK_AGENTS[0]?.agent_id ?? null);
+
+  const segments = useMemo(() => Array.from(new Set(MOCK_AGENTS.map((a) => a.persona.segment))), []);
+
+  const agents = useMemo(
+    () =>
+      MOCK_AGENTS.filter(
+        (a) =>
+          (decisionFilter === 'all' || a.final_decision === decisionFilter) &&
+          (segmentFilter === 'all' || a.persona.segment === segmentFilter),
+      ),
+    [decisionFilter, segmentFilter],
+  );
+
+  return (
+    <div className="flex min-h-full flex-col bg-white">
+      <main className="flex-1 px-4 pb-16 pt-10 sm:px-6">
+        <div className="mx-auto w-full max-w-4xl space-y-8">
+          {/* Judul halaman */}
+          <div>
+            <h1 className="text-2xl font-normal tracking-[-0.03em] text-ink sm:text-[28px]">Jelajah agen</h1>
+            <p className="mt-1 text-[13px] text-muted">
+              Baca pikiran tiap calon pelanggan simulasi: siapa dia, apa yang dia lihat, dan kenapa dia memutuskan begitu.
+            </p>
           </div>
 
-          {/* Filter Segmen */}
-          <div className="flex items-center gap-1.5 flex-wrap">
-            <span className="text-xs text-muted font-medium mr-1">Segmen:</span>
-            {['all', 'mahasiswa', 'pekerja_kantor', 'pengendara', 'warga_sekitar'].map((seg) => (
-              <button
-                key={seg}
-                onClick={() => setSegmentFilter(seg)}
-                className={`rounded-full px-3 py-1 text-xs font-medium capitalize transition cursor-pointer ${
-                  segmentFilter === seg
-                    ? 'bg-ink text-white shadow-xs'
-                    : 'bg-bg text-ink-soft hover:bg-hairline'
-                }`}
-              >
-                {seg === 'all' ? 'Semua Segmen' : seg.replace('_', ' ')}
-              </button>
-            ))}
-          </div>
-        </Card>
-
-        {/* Master-Detail Layout */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-          {/* Kolom Kiri: List Kartu Agen (5 Kolom) */}
-          <div className="lg:col-span-5 space-y-3 max-h-[700px] overflow-y-auto pr-1">
-            {filteredAgents.map((ag) => {
-              const isSelected = ag.agent_id === selectedAgentId;
-              const isOrder = ag.final_decision === 'memesan';
-              const isDropTangga = ag.final_decision === 'berhenti_lalu_pergi';
-
-              return (
-                <Card
-                  key={ag.agent_id}
-                  onClick={() => setSelectedAgentId(ag.agent_id)}
-                  className={`cursor-pointer transition-all p-4 ${
-                    isSelected ? 'ring-2 ring-primary-40/30 border-primary-40' : 'hover:border-subtle'
-                  }`}
-                >
-                  <div className="flex items-center justify-between mb-1.5">
-                    <span className="font-mono text-xs font-bold text-ink">
-                      Agen #{ag.agent_id}
-                    </span>
-                    <span
-                      className={`font-mono text-[10px] uppercase font-bold px-2 py-0.5 rounded-full ${
-                        isOrder
-                          ? 'bg-impact-10 text-impact'
-                          : isDropTangga
-                          ? 'bg-friction-10 text-friction'
-                          : 'bg-bg text-muted'
-                      }`}
-                    >
-                      {ag.final_decision.replace(/_/g, ' ')}
-                    </span>
+          <div className="rounded-md border border-line bg-white">
+            <div className="space-y-8 p-6 sm:p-10">
+              {/* Filter */}
+              <div className="space-y-4">
+                <div>
+                  <p className="mb-2 text-[13px] font-medium text-ink">Keputusan</p>
+                  <div className="flex flex-wrap gap-2">
+                    {DECISION_FILTERS.map(([val, label]) => (
+                      <Chip key={val} role="radio" label={label} selected={decisionFilter === val} onClick={() => setDecisionFilter(val)} />
+                    ))}
                   </div>
-                  <p className="text-xs font-medium text-ink-soft capitalize">
-                    {ag.persona.segment.replace('_', ' ')} · Anggaran Rp {ag.persona.concrete_facts.meal_budget.toLocaleString('id-ID')}
-                  </p>
-                  <p className="text-[11px] text-muted mt-2 line-clamp-2 leading-relaxed italic">
-                    "{ag.monologue}"
-                  </p>
-                </Card>
-              );
-            })}
-          </div>
-
-          {/* Kolom Kanan: Detail PersonaSpec & Monolog Penuh (7 Kolom) */}
-          <div className="lg:col-span-7 space-y-5">
-            <Card>
-              <div className="flex items-center justify-between border-b border-hairline pb-3 mb-4">
-                <div>
-                  <h2 className="text-base font-semibold text-ink">
-                    Detail Spesifikasi Agen #{activeAgent.agent_id}
-                  </h2>
-                  <p className="text-xs text-muted">
-                    Dihasilkan deterministik oleh Model Persona Diskret (Seed: {activeAgent.persona.seed})
-                  </p>
-                </div>
-                <Badge
-                  variant={activeAgent.final_decision === 'memesan' ? 'impact' : 'friction'}
-                  size="md"
-                >
-                  {activeAgent.final_decision.replace(/_/g, ' ')}
-                </Badge>
-              </div>
-
-              {/* Data Konkret Persona */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 rounded-xl bg-panel p-3.5 border border-hairline text-xs mb-5">
-                <div>
-                  <span className="text-[10px] font-mono uppercase text-subtle block">Segmen</span>
-                  <span className="font-semibold text-ink capitalize mt-0.5 block">
-                    {activeAgent.persona.segment.replace('_', ' ')}
-                  </span>
                 </div>
                 <div>
-                  <span className="text-[10px] font-mono uppercase text-subtle block">Uang Makan</span>
-                  <span className="font-semibold text-ink font-mono mt-0.5 block">
-                    Rp {activeAgent.persona.concrete_facts.meal_budget.toLocaleString('id-ID')}
-                  </span>
-                </div>
-                <div>
-                  <span className="text-[10px] font-mono uppercase text-subtle block">Waktu Istirahat</span>
-                  <span className="font-semibold text-ink font-mono mt-0.5 block">
-                    {activeAgent.persona.concrete_facts.break_time_minutes} Menit
-                  </span>
-                </div>
-                <div>
-                  <span className="text-[10px] font-mono uppercase text-subtle block">Familiaritas</span>
-                  <span className="font-semibold text-ink capitalize mt-0.5 block">
-                    {activeAgent.persona.discrete_traits.area_familiarity.replace('_', ' ')}
-                  </span>
+                  <p className="mb-2 text-[13px] font-medium text-ink">Segmen</p>
+                  <div className="flex flex-wrap gap-2">
+                    <Chip role="radio" label="Semua" selected={segmentFilter === 'all'} onClick={() => setSegmentFilter('all')} />
+                    {segments.map((seg) => (
+                      <Chip key={seg} role="radio" label={humanize(seg)} selected={segmentFilter === seg} onClick={() => setSegmentFilter(seg)} />
+                    ))}
+                  </div>
                 </div>
               </div>
 
-              {/* Monolog Lengkap */}
-              <div>
-                <h3 className="text-xs font-semibold text-ink-soft uppercase font-mono tracking-wider mb-2">
-                  Monolog Internal Saat Melihat Toko:
-                </h3>
-                <div className="rounded-xl border border-primary-20 bg-primary-10/40 p-4 text-xs text-ink leading-relaxed italic">
-                  "{activeAgent.monologue}"
+              {/* Daftar agen */}
+              {agents.length === 0 ? (
+                <div className="rounded-md border border-dashed border-[#c9ced6] bg-panel px-6 py-10 text-center">
+                  <p className="text-[13px] font-medium text-ink">Tidak ada agen dengan kombinasi filter ini</p>
+                  <p className="mt-1 text-[13px] text-muted">Coba ubah pilihan keputusan atau segmen.</p>
                 </div>
-              </div>
+              ) : (
+                <ul className="space-y-3">
+                  {agents.map((a) => (
+                    <AgentItem
+                      key={a.agent_id}
+                      agent={a}
+                      open={openId === a.agent_id}
+                      onToggle={() => setOpenId((id) => (id === a.agent_id ? null : a.agent_id))}
+                    />
+                  ))}
+                </ul>
+              )}
+            </div>
 
-              {/* Alasan Utama Mengambil Keputusan */}
-              <div className="mt-5 pt-4 border-t border-hairline">
-                <h3 className="text-xs font-semibold text-ink-soft uppercase font-mono tracking-wider mb-1">
-                  Faktor Penentu ({activeAgent.final_decision.replace(/_/g, ' ')}):
-                </h3>
-                <p className="text-xs text-ink leading-relaxed">
-                  {activeAgent.deciding_factor}
-                </p>
-                <div className="mt-3 flex items-center gap-3 font-mono text-[11px] text-subtle">
-                  <span>Skor Keraguan: <strong className="text-ink">{activeAgent.hesitation_score} / 5</strong></span>
-                  <span>·</span>
-                  <span>Segmen Berhenti: <strong className="text-primary-40">{activeAgent.stopped_at_segment_id ?? 'Sampai Kasir'}</strong></span>
-                </div>
-              </div>
-            </Card>
+            {/* Kaki container */}
+            <div className="flex items-center rounded-b-md bg-panel px-6 py-5 sm:px-10">
+              <Button variant="secondary" size="lg" onClick={() => router.push('/business/analysis')} className="!rounded-md">
+                <ArrowLeftIcon size={16} /> Kembali ke dasbor
+              </Button>
+            </div>
           </div>
         </div>
       </main>
-
-      <footer className="border-t border-hairline py-6 text-center text-xs text-subtle">
-        <div className="w-full px-4 sm:px-8">
-          Sekilas © 2026 · Simulator Calon Pelanggan untuk UMKM Makanan
-        </div>
-      </footer>
     </div>
   );
 }
 
 export default function AgenExplorerPage() {
   return (
-    <Suspense fallback={<div className="min-h-screen bg-white" />}>
+    <Suspense fallback={<div className="min-h-full bg-white" />}>
       <AgenExplorerInner />
     </Suspense>
   );
