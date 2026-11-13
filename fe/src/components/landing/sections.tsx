@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import type { ReactNode } from "react";
-import { Basket, Drawer, Loupe, Padlock } from "@lucasmarkes/hairline/react";
+import { Drawer, Loupe, Padlock } from "@lucasmarkes/hairline/react";
+import { HairlineStall } from "./hairline-stall";
 
 import { SekilasLogo } from "@/components/brand/logo";
 import { MacbookScroll } from "@/components/ui/macbook-scroll";
@@ -145,8 +146,8 @@ export function Statement() {
             <span className="text-muted">Padahal di situlah peluang omzet sebenarnya.</span>
           </p>
         </Reveal>
-        <Reveal delay={120} className="hairline-sekilas mx-auto w-full max-w-sm">
-          <Basket play intensity={0.6} label="Keranjang belanja kosong, pelanggan pergi tanpa membeli" />
+        <Reveal delay={120} className="hairline-sekilas mx-auto w-full max-w-md">
+          <HairlineStall label="Lapak dengan tas belanja yang berpindah dari penjual ke pembeli" />
         </Reveal>
       </div>
     </Section>
