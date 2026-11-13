@@ -1,135 +1,252 @@
 'use client';
 
-import React, { useState, useEffect, Suspense } from 'react';
-import Link from 'next/link';
-import { useParams, useRouter } from 'next/navigation';
-import { AppNavbar } from '@/components/layout/app-navbar';
+import { Box, Check, Eye, EyeOff, FileText, LoaderCircle, ShieldCheck, type LucideIcon } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import React, { Suspense, useEffect, useMemo, useRef, useState } from 'react';
+
 import { SekilasMascot } from '@/components/brand/mascot';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { ArrowLeftIcon, ArrowRightIcon } from '@/components/ui/icons';
+import { MOCK_TRANSCRIPT } from '@/lib/mock/transcript';
+import type { TranscriptSegment } from '@/types/api';
+
+/** Jeda antar-baris log pembacaan (UI simulasi; nanti diganti stream dari backend). */
+const LINE_INTERVAL_MS = 900;
+
+type LogLine = { time: string; kind: 'segment' | 'seen' | 'missing' | 'zone'; text: string };
+
+const VANTAGE_LABEL: Record<TranscriptSegment['vantage'], string> = {
+  jalan: 'dari jalan',
+  pintu: 'di pintu / tangga',
+  dalam: 'di dalam',
+};
+
+function mmss(seconds: number) {
+  return `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(Math.round(seconds % 60)).padStart(2, '0')}`;
+}
+
+/** Ubah transkrip menjadi log "apa yang sedang dibaca AI", baris per baris. */
+function buildLog(segments: TranscriptSegment[]): LogLine[] {
+  return segments.flatMap((seg) => {
+    const time = `${mmss(seg.timestamp_start)}–${mmss(seg.timestamp_end)}`;
+    const firstSentence = seg.narrative.split(/(?<=\.)\s/)[0] ?? seg.narrative;
+    const lines: LogLine[] = [
+      { time, kind: 'segment', text: `Membaca segmen ${VANTAGE_LABEL[seg.vantage]}` },
+      { time, kind: 'seen', text: firstSentence },
+    ];
+    if (seg.not_visible) lines.push({ time, kind: 'missing', text: seg.not_visible });
+    if (seg.confidence === 'tidak_pasti')
+      lines.push({ time, kind: 'zone', text: 'Kurang yakin di bagian ini, akan ditandai untuk kamu cek.' });
+    return lines;
+  });
+}
+
+const LINE_STYLE: Record<LogLine['kind'], { icon: LucideIcon; tone: string; label: string }> = {
+  segment: { icon: FileText, tone: 'bg-primary-10 text-primary-40', label: 'Segmen' },
+  seen: { icon: Eye, tone: 'bg-impact-10 text-impact', label: 'Terlihat' },
+  missing: { icon: EyeOff, tone: 'bg-soft text-ink-soft', label: 'Tidak terlihat' },
+  zone: { icon: ShieldCheck, tone: 'bg-friction-10 text-friction', label: 'Perlu dicek' },
+};
+
+type StageStatus = 'done' | 'running' | 'waiting';
+
+function StageRow({
+  icon: Icon,
+  title,
+  description,
+  status,
+}: {
+  icon: LucideIcon;
+  title: string;
+  description: string;
+  status: StageStatus;
+}) {
+  return (
+    <li className="flex items-center gap-3 rounded-md border border-line px-4 py-3">
+      <span
+        className={`grid size-8 shrink-0 place-items-center rounded-md ${
+          status === 'done' ? 'bg-impact-10 text-impact' : status === 'running' ? 'bg-primary-10 text-primary-40' : 'bg-soft text-subtle'
+        }`}
+      >
+        {status === 'done' ? <Check size={16} strokeWidth={2.5} /> : status === 'running' ? <LoaderCircle size={16} className="animate-spin" /> : <Icon size={16} />}
+      </span>
+      <div className="min-w-0 flex-1">
+        <p className="text-[13px] font-medium text-ink">{title}</p>
+        <p className="mt-0.5 text-[12px] text-muted">{description}</p>
+      </div>
+      <Badge variant={status === 'done' ? 'impact' : status === 'running' ? 'primary' : 'neutral'}>
+        {status === 'done' ? 'Selesai' : status === 'running' ? 'Berjalan' : 'Menunggu'}
+      </Badge>
+    </li>
+  );
+}
+
+/** Judul bagian di dalam satu container, sama dengan halaman alur lain. */
+function SectionTitle({ n, title, description }: { n: number; title: string; description: string }) {
+  return (
+    <div className="mb-6 flex items-start gap-3">
+      <span className="grid size-6 shrink-0 place-items-center rounded-md bg-primary-10 text-[12px] font-semibold text-primary-40">
+        {n}
+      </span>
+      <div>
+        <h2 className="text-[15px] font-semibold text-ink">{title}</h2>
+        <p className="mt-0.5 text-[13px] text-muted">{description}</p>
+      </div>
+    </div>
+  );
+}
 
 function ProsesInner() {
-  const params = useParams();
   const router = useRouter();
-  const analysisId = (params?.id as string) || 'selasar-kopi';
+  const log = useMemo(() => buildLog(MOCK_TRANSCRIPT), []);
+  const [shown, setShown] = useState(0);
+  const logBoxRef = useRef<HTMLDivElement>(null);
 
-  const [progress, setProgress] = useState(85);
-
+  // Tampilkan log satu per satu, seolah-olah AI sedang membaca video.
   useEffect(() => {
-    const timer = setTimeout(() => {
-      setProgress(100);
-    }, 1200);
-    return () => clearTimeout(timer);
-  }, []);
+    if (shown >= log.length) return;
+    const t = setTimeout(() => setShown((n) => n + 1), LINE_INTERVAL_MS);
+    return () => clearTimeout(t);
+  }, [shown, log.length]);
 
-  const stages = [
-    {
-      title: '1. Ingesti & Blur Privasi Browser',
-      desc: 'Wajah dan plat nomor berhasil diburamkan secara lokal.',
-      status: 'done',
-    },
-    {
-      title: '2. Gemini 3.8 Flash Menyusun Transkrip Kejadian',
-      desc: 'Membaca deretan visual video menjadi 4 segmen kronologis dengan frame bukti.',
-      status: 'done',
-    },
-    {
-      title: '3. Rekonstruksi Jalur Kamera Visual Twin 3D',
-      desc: 'Berjalan paralel di antrean server (tidak menahan alur verifikasi transkrip).',
-      status: progress >= 100 ? 'done' : 'running',
-    },
-  ];
+  // Gulir kotak log saja (bukan seluruh halaman) ke baris terbaru.
+  useEffect(() => {
+    const box = logBoxRef.current;
+    if (box) box.scrollTo({ top: box.scrollHeight, behavior: 'smooth' });
+  }, [shown]);
+
+  const transcriptDone = shown >= log.length;
+  const progress = Math.round((shown / log.length) * 100);
+  const segmentsRead = log.slice(0, shown).filter((l) => l.kind === 'segment').length;
 
   return (
-    <div className="min-h-screen bg-white flex flex-col justify-between">
-      <AppNavbar mode="wizard" currentStep={3} analysisId={analysisId} />
-
-      <main className="section flex-1 py-10 sm:py-16">
-        <div className="col max-w-xl mx-auto">
-          <div className="text-center mb-8 flex flex-col items-center">
-            <SekilasMascot size={72} pose="default" className="mb-3" />
-            <span className="font-mono text-[11px] uppercase tracking-wider text-primary-40 bg-primary-10 px-2.5 py-0.5 rounded-full font-semibold mb-2">
-              Status: Memproses Paralel
-            </span>
-            <h1 className="text-2xl sm:text-[28px] font-normal tracking-[-0.03em] text-ink">
-              Mengekstrak Transkrip & Visual Twin
-            </h1>
-            <p className="text-xs sm:text-[13px] text-muted max-w-md mx-auto mt-1 leading-relaxed">
-              Gemini 3.8 Flash sedang membaca video tempat usahamu untuk membuat catatan visual per segmen yang akan dilihat oleh 500 agen.
-            </p>
+    <div className="flex min-h-full flex-col bg-white">
+      <main className="flex-1 px-4 pb-16 pt-10 sm:px-6">
+        <div className="mx-auto w-full max-w-4xl space-y-8">
+          {/* Judul halaman */}
+          <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
+            <div>
+              <h1 className="text-2xl font-normal tracking-[-0.03em] text-ink sm:text-[28px]">Memproses video</h1>
+              <p className="mt-1 text-[13px] text-muted">
+                AI membaca videomu menjadi catatan per segmen. Visual Twin 3D dibangun bersamaan di latar belakang.
+              </p>
+            </div>
+            <Badge variant={transcriptDone ? 'impact' : 'primary'} size="md">
+              {transcriptDone ? 'Transkrip siap dicek' : 'Sedang membaca video'}
+            </Badge>
           </div>
 
-          {/* Progress Bar Container */}
-          <div className="rounded-[10px] border border-line bg-white p-6 shadow-xs mb-6">
-            <div className="flex items-center justify-between text-xs font-medium mb-2">
-              <span className="text-ink">Progres Ekstraksi Transkrip</span>
-              <span className="font-mono text-primary-40 font-semibold">{progress}%</span>
-            </div>
-            <div className="h-2 w-full rounded-full bg-hairline overflow-hidden">
-              <div
-                className="h-full rounded-full bg-primary-40 transition-all duration-700 ease-out"
-                style={{ width: `${progress}%` }}
-              />
-            </div>
-            <p className="text-[11px] font-mono text-subtle mt-2 text-right">
-              {progress >= 100 ? 'Transkrip siap diverifikasi' : 'Perkiraan sisa waktu: ~5 detik'}
-            </p>
+          <div className="rounded-md border border-line bg-white">
+            <div className="space-y-12 p-6 sm:p-10">
+              {/* 1. Tahapan */}
+              <section>
+                <SectionTitle n={1} title="Tahapan" description="Transkrip dan Visual Twin berjalan paralel; kamu tidak perlu menunggu 3D selesai." />
+                <ul className="space-y-2">
+                  <StageRow icon={ShieldCheck} title="Blur privasi" description="Wajah dan plat nomor diburamkan di perangkatmu." status="done" />
+                  <StageRow
+                    icon={FileText}
+                    title="Transkrip video"
+                    description={`${segmentsRead} dari ${MOCK_TRANSCRIPT.length} segmen dibaca, lengkap dengan frame bukti.`}
+                    status={transcriptDone ? 'done' : 'running'}
+                  />
+                  <StageRow
+                    icon={Box}
+                    title="Visual Twin 3D"
+                    description="Membangun peta 3D dari jalur kamera. Hasilnya menyusul di dasbor."
+                    status="running"
+                  />
+                </ul>
+              </section>
 
-            {/* Stepper Vertikal Tahap Pemrosesan */}
-            <div className="mt-6 pt-5 border-t border-hairline space-y-4">
-              {stages.map((st, i) => (
-                <div key={i} className="flex items-start gap-3 text-xs">
-                  <div
-                    className={`size-5 rounded-full flex items-center justify-center font-mono text-[10px] shrink-0 mt-0.5 ${
-                      st.status === 'done'
-                        ? 'bg-impact text-white font-bold'
-                        : 'bg-primary-10 text-primary-40 border border-primary-20 animate-pulse'
-                    }`}
-                  >
-                    {st.status === 'done' ? '✓' : i + 1}
+              {/* 2. Log pembacaan */}
+              <section>
+                <SectionTitle n={2} title="Yang sedang dibaca AI" description="Catatan muncul per segmen video, dari jalan sampai titik pesan." />
+
+                <div className="mb-4">
+                  <div className="mb-2 flex items-center justify-between text-[13px]">
+                    <span className="flex items-center gap-2 font-medium text-ink">
+                      <SekilasMascot size={22} />
+                      {transcriptDone ? 'Selesai membaca video' : 'Membaca video…'}
+                    </span>
+                    <span className="tabular-nums text-muted">{progress}%</span>
                   </div>
-                  <div className="flex-1">
-                    <h3 className="font-semibold text-ink leading-snug">{st.title}</h3>
-                    <p className="text-[11px] text-muted mt-0.5">{st.desc}</p>
+                  <div className="h-1.5 w-full overflow-hidden rounded-full bg-soft">
+                    <div className="h-full rounded-full bg-primary-40 transition-[width] duration-700 ease-out" style={{ width: `${progress}%` }} />
                   </div>
-                  <span
-                    className={`font-mono text-[10px] uppercase font-semibold px-2 py-0.5 rounded-full ${
-                      st.status === 'done'
-                        ? 'bg-impact/10 text-impact'
-                        : 'bg-primary-10 text-primary-40'
-                    }`}
-                  >
-                    {st.status === 'done' ? 'Selesai' : 'Berjalan'}
-                  </span>
                 </div>
-              ))}
-            </div>
-          </div>
 
-          {/* Action Button */}
-          <div className="flex justify-center">
-            <button
-              type="button"
-              disabled={progress < 100}
-              onClick={() => router.push(`/business/analysis/verifikasi`)}
-              className="btn-primary w-full sm:w-auto min-w-[280px] h-10 rounded-md text-xs font-medium text-white shadow-xs flex items-center justify-center transition disabled:opacity-50"
-            >
-              Lanjut ke Verifikasi Transkrip (F4) →
-            </button>
+                <div ref={logBoxRef} className="max-h-[420px] overflow-y-auto rounded-md border border-line bg-panel p-2">
+                  <ol className="space-y-1">
+                    {log.slice(0, shown).map((line, i) => {
+                      const style = LINE_STYLE[line.kind];
+                      const Icon = style.icon;
+                      const isSegment = line.kind === 'segment';
+                      return (
+                        <li
+                          key={i}
+                          className={`flex animate-[fadeIn_300ms_ease-out] items-start gap-3 rounded-md px-3 py-2.5 ${isSegment ? 'mt-2 bg-white first:mt-0' : ''}`}
+                        >
+                          <span className={`mt-0.5 grid size-6 shrink-0 place-items-center rounded-md ${style.tone}`}>
+                            <Icon size={13} />
+                          </span>
+                          <div className="min-w-0 flex-1">
+                            {isSegment ? (
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="text-[13px] font-medium text-ink">{line.text}</span>
+                                <Badge>{line.time}</Badge>
+                              </div>
+                            ) : (
+                              <p className="text-[13px] leading-relaxed text-ink-soft">
+                                <span className="font-medium text-ink">{style.label}: </span>
+                                {line.text}
+                              </p>
+                            )}
+                          </div>
+                        </li>
+                      );
+                    })}
+                    {!transcriptDone && (
+                      <li className="flex items-center gap-3 px-3 py-2.5 text-[13px] text-muted">
+                        <LoaderCircle size={14} className="animate-spin text-primary-40" />
+                        Membaca frame berikutnya…
+                      </li>
+                    )}
+                  </ol>
+                </div>
+              </section>
+            </div>
+
+            {/* Kaki container */}
+            <div className="flex flex-col-reverse gap-3 rounded-b-md bg-panel px-6 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-10">
+              <Button
+                variant="secondary"
+                size="lg"
+                onClick={() => router.push('/business/analysis/video')}
+                className="justify-center !rounded-md"
+              >
+                <ArrowLeftIcon size={16} /> Kembali ke rekam video
+              </Button>
+              <Button
+                variant="primary"
+                size="lg"
+                disabled={!transcriptDone}
+                onClick={() => transcriptDone && router.push('/business/analysis/verifikasi')}
+                className="justify-center !rounded-md"
+              >
+                Cek transkrip <ArrowRightIcon size={16} />
+              </Button>
+            </div>
           </div>
         </div>
       </main>
-
-      <footer className="border-t border-hairline py-6 text-center text-xs text-subtle">
-        <div className="col">
-          Sekilas © 2026 · Simulator Calon Pelanggan untuk UMKM Makanan
-        </div>
-      </footer>
     </div>
   );
 }
 
 export default function ProsesPage() {
   return (
-    <Suspense fallback={<div className="min-h-screen bg-white" />}>
+    <Suspense fallback={<div className="min-h-full bg-white" />}>
       <ProsesInner />
     </Suspense>
   );
