@@ -1,28 +1,168 @@
 'use client';
 
-import React, { useState, useMemo, Suspense } from 'react';
-import Link from 'next/link';
-import { useParams, useRouter } from 'next/navigation';
-import { AppNavbar } from '@/components/layout/app-navbar';
-import { Card } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Input, Label, Textarea, Chip } from '@/components/ui/form';
+import { FileSpreadsheet, ImageIcon, Upload, X } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import React, { Suspense, useMemo, useRef, useState } from 'react';
+
 import { Badge } from '@/components/ui/badge';
-import { PlusIcon, ArrowRightIcon } from '@/components/ui/icons';
+import { Button } from '@/components/ui/button';
+import { Chip, Input, Label, Textarea } from '@/components/ui/form';
+import { ArrowRightIcon } from '@/components/ui/icons';
 import { MOCK_CONTEXT } from '@/lib/mock/context';
-import {
-  BusinessType,
-  SurroundingsType,
-  PasserbyType,
-  BusinessGoal,
-  FixedConstraint,
-  MenuItem,
-} from '@/types/api';
+import { BusinessGoal, BusinessType, FixedConstraint, PasserbyType, SurroundingsType } from '@/types/api';
+
+type MenuSource = 'excel' | 'foto';
+type MenuFile = { name: string; size: number; previewUrl?: string };
+
+const MENU_SOURCES: Record<MenuSource, { label: string; accept: string; hint: string }> = {
+  excel: {
+    label: 'File Excel / CSV',
+    accept: '.xlsx,.xls,.csv',
+    hint: 'Kolom: nama menu, harga porsi. Format .xlsx, .xls, atau .csv.',
+  },
+  foto: {
+    label: 'Foto menu',
+    accept: 'image/*',
+    hint: 'Foto papan atau buku menu yang jelas. Nama dan harga dibaca otomatis oleh AI.',
+  },
+};
+
+function formatSize(bytes: number) {
+  return bytes >= 1_000_000 ? `${(bytes / 1_000_000).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1000))} KB`;
+}
+
+/** Unggah daftar menu: file Excel/CSV atau foto menu (dibaca VLM). Hanya UI, belum terhubung ke backend. */
+function MenuUpload({ file, onChange }: { file: MenuFile | null; onChange: (file: MenuFile | null) => void }) {
+  const [source, setSource] = useState<MenuSource>('excel');
+  const [dragging, setDragging] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const config = MENU_SOURCES[source];
+
+  const accept = (f: File | undefined) => {
+    if (!f) return;
+    onChange({
+      name: f.name,
+      size: f.size,
+      previewUrl: f.type.startsWith('image/') ? URL.createObjectURL(f) : undefined,
+    });
+  };
+
+  const clear = () => {
+    if (file?.previewUrl) URL.revokeObjectURL(file.previewUrl);
+    onChange(null);
+    if (inputRef.current) inputRef.current.value = '';
+  };
+
+  return (
+    <div className="space-y-3">
+      {/* Pilihan sumber */}
+      <div className="inline-flex rounded-md bg-soft p-1">
+        {(Object.keys(MENU_SOURCES) as MenuSource[]).map((key) => {
+          const Icon = key === 'excel' ? FileSpreadsheet : ImageIcon;
+          const active = source === key;
+          return (
+            <button
+              key={key}
+              type="button"
+              onClick={() => {
+                if (key !== source) clear();
+                setSource(key);
+              }}
+              className={`inline-flex h-8 items-center gap-2 rounded-[5px] px-3 text-[13px] transition-colors ${
+                active ? 'bg-white font-medium text-ink shadow-[0_1px_2px_rgba(16,24,40,0.08)]' : 'text-muted hover:text-ink'
+              }`}
+            >
+              <Icon size={14} />
+              {MENU_SOURCES[key].label}
+            </button>
+          );
+        })}
+      </div>
+
+      <input
+        ref={inputRef}
+        type="file"
+        accept={config.accept}
+        className="hidden"
+        onChange={(e) => accept(e.target.files?.[0])}
+      />
+
+      {file ? (
+        <div className="flex items-center gap-3 rounded-md border border-line bg-white p-3">
+          {file.previewUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element -- pratinjau lokal dari blob URL
+            <img src={file.previewUrl} alt="" className="size-12 shrink-0 rounded-md object-cover" />
+          ) : (
+            <span className="grid size-12 shrink-0 place-items-center rounded-md bg-impact-10 text-impact">
+              <FileSpreadsheet size={20} />
+            </span>
+          )}
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-[13px] font-medium text-ink">{file.name}</p>
+            <div className="mt-1 flex flex-wrap items-center gap-1.5">
+              <Badge>{formatSize(file.size)}</Badge>
+              <Badge variant="primary">
+                {source === 'foto' ? 'Dibaca AI saat analisis dimulai' : 'Siap dibaca saat analisis dimulai'}
+              </Badge>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={clear}
+            aria-label="Hapus file"
+            className="grid size-8 shrink-0 place-items-center rounded-md text-subtle transition-colors hover:bg-friction-10 hover:text-friction"
+          >
+            <X size={16} />
+          </button>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => inputRef.current?.click()}
+          onDragOver={(e) => {
+            e.preventDefault();
+            setDragging(true);
+          }}
+          onDragLeave={() => setDragging(false)}
+          onDrop={(e) => {
+            e.preventDefault();
+            setDragging(false);
+            accept(e.dataTransfer.files?.[0]);
+          }}
+          className={`flex w-full flex-col items-center justify-center gap-2 rounded-md border border-dashed px-4 py-8 text-center transition-colors ${
+            dragging ? 'border-primary-40 bg-primary-10' : 'border-[#c9ced6] bg-panel hover:bg-hover'
+          }`}
+        >
+          <span className="grid size-10 place-items-center rounded-md bg-white text-primary-40">
+            <Upload size={18} />
+          </span>
+          <span className="text-[13px] font-medium text-ink">
+            Tarik file ke sini atau <span className="text-primary-40">pilih file</span>
+          </span>
+          <span className="max-w-md text-[12px] text-muted">{config.hint}</span>
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** Judul bagian di dalam satu container formulir (pemisah antar-bagian). */
+function SectionTitle({ n, title, description }: { n: number; title: string; description: string }) {
+  return (
+    <div className="mb-6 flex items-start gap-3">
+      <span className="grid size-6 shrink-0 place-items-center rounded-md bg-primary-10 text-[12px] font-semibold text-primary-40">
+        {n}
+      </span>
+      <div>
+        <h2 className="text-[15px] font-semibold text-ink">{title}</h2>
+        <p className="mt-0.5 text-[13px] text-muted">{description}</p>
+      </div>
+    </div>
+  );
+}
 
 function KonteksUsahaInner() {
-  const params = useParams();
   const router = useRouter();
-  const analysisId = (params?.id as string) || 'selasar-kopi';
 
   // State Form F1
   const [businessType, setBusinessType] = useState<BusinessType>(MOCK_CONTEXT.business_type);
@@ -35,438 +175,235 @@ function KonteksUsahaInner() {
   const [businessGoal, setBusinessGoal] = useState<BusinessGoal>(MOCK_CONTEXT.business_goal);
   const [fixedConstraints, setFixedConstraints] = useState<FixedConstraint[]>(MOCK_CONTEXT.fixed_constraints);
 
-  const [menuItems, setMenuItems] = useState<MenuItem[]>(MOCK_CONTEXT.menu_items);
-  const [newMenuName, setNewMenuName] = useState('');
-  const [newMenuPrice, setNewMenuPrice] = useState('');
+  const [menuFile, setMenuFile] = useState<MenuFile | null>(null);
 
   const [openHour, setOpenHour] = useState(MOCK_CONTEXT.opening_hours.open);
   const [closeHour, setCloseHour] = useState(MOCK_CONTEXT.opening_hours.close);
   const [rushStart, setRushStart] = useState(MOCK_CONTEXT.rush_hours[0]?.start || '12:00');
   const [rushEnd, setRushEnd] = useState(MOCK_CONTEXT.rush_hours[0]?.end || '14:00');
-  const [nearbyCompetitors, setNearbyCompetitors] = useState(MOCK_CONTEXT.nearby_competitors || '');
 
-  // Hitung Level Harga Otomatis dari Median Menu
-  const priceLevel = useMemo(() => {
-    if (menuItems.length === 0) return 'hemat';
-    const sorted = [...menuItems].map((m) => m.price).sort((a, b) => a - b);
-    const mid = Math.floor(sorted.length / 2);
-    const median = sorted.length % 2 !== 0 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
-    if (median < 20000) return 'hemat';
-    if (median <= 40000) return 'sedang';
-    return 'premium';
-  }, [menuItems]);
-
-  // Validasi 7 Isian Wajib PRD v1.2:
-  // 1. Jenis Usaha, 2. Lokasi Usaha, 3. Deskripsi Letak, 4. Tipe Sekitar, 5. Menu Items (>0), 6. Jam Buka, 7. Jam Ramai
-  const validChecklist = useMemo(() => {
-    return [
+  // 7 isian wajib (PRD F1): jenis usaha, lokasi, deskripsi letak, tipe sekitar, menu, jam buka, jam ramai
+  const validChecklist = useMemo(
+    () => [
       Boolean(businessType),
       Boolean(locationName.trim()),
       Boolean(locationDescription.trim()),
       Boolean(surroundingsType),
-      menuItems.length > 0,
+      menuFile !== null,
       Boolean(openHour && closeHour && openHour < closeHour),
       Boolean(rushStart && rushEnd && rushStart >= openHour && rushEnd <= closeHour),
-    ];
-  }, [businessType, locationName, locationDescription, surroundingsType, menuItems, openHour, closeHour, rushStart, rushEnd]);
+    ],
+    [businessType, locationName, locationDescription, surroundingsType, menuFile, openHour, closeHour, rushStart, rushEnd],
+  );
 
   const filledRequiredCount = validChecklist.filter(Boolean).length;
   const isAllValid = filledRequiredCount === 7;
 
-  // Toggle Helpers
-  const togglePasserby = (val: PasserbyType) => {
-    setPassersby((prev) =>
-      prev.includes(val) ? prev.filter((p) => p !== val) : [...prev, val]
-    );
-  };
-
-  const toggleConstraint = (val: FixedConstraint) => {
-    setFixedConstraints((prev) =>
-      prev.includes(val) ? prev.filter((c) => c !== val) : [...prev, val]
-    );
-  };
-
-  const handleAddMenuItem = () => {
-    const priceNum = parseInt(newMenuPrice.replace(/\D/g, ''), 10);
-    if (!newMenuName.trim() || isNaN(priceNum) || priceNum <= 0) return;
-    setMenuItems((prev) => [
-      ...prev,
-      { id: `m_${Date.now()}`, name: newMenuName.trim(), price: priceNum },
-    ]);
-    setNewMenuName('');
-    setNewMenuPrice('');
-  };
-
-  const handleRemoveMenuItem = (id: string) => {
-    setMenuItems((prev) => prev.filter((m) => m.id !== id));
-  };
-
-  const handleNext = () => {
-    if (!isAllValid) return;
-    router.push(`/business/analysis/video`);
-  };
+  const toggle = <T,>(list: T[], val: T) => (list.includes(val) ? list.filter((v) => v !== val) : [...list, val]);
 
   return (
-    <div className="min-h-screen bg-white flex flex-col justify-between">
-      <AppNavbar mode="wizard" currentStep={1} analysisId={analysisId} businessName={businessName} />
-
-      <main className="section flex-1 py-8 sm:py-12">
-        <div className="col space-y-6">
-        {/* Title & Progress Banner */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-2 pb-3 border-b border-hairline">
-          <div>
-            <h1 className="text-2xl sm:text-[28px] font-normal tracking-[-0.03em] text-ink">
-              Konteks Usaha (F1)
-            </h1>
-            <p className="text-xs sm:text-[13px] text-muted mt-1">
-              Data ini membantu model diskret membentuk 500 persona agen yang relevan dengan lokasimu.
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <span
-              className={`font-mono text-xs font-semibold px-3 py-1 rounded-full ${
-                isAllValid
-                  ? 'bg-impact/10 text-impact border border-impact/20'
-                  : 'bg-primary-10 text-primary-40 border border-primary-20'
-              }`}
-            >
-              {filledRequiredCount} dari 7 isian wajib terisi
-            </span>
-          </div>
-        </div>
-
-        {/* Layout 2 Kolom (Desktop) / 1 Kolom (Mobile) */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-          {/* Kolom Kiri: Kartu 1 & Kartu 2 (7 Kolom) */}
-          <div className="lg:col-span-7 space-y-6">
-            {/* Kartu 1: Informasi Dasar */}
-            <Card>
-              <div className="flex items-center justify-between border-b border-hairline pb-3 mb-4">
-                <h2 className="text-base font-semibold text-ink">Kartu 1: Informasi Dasar</h2>
-                <Badge variant="primary" size="sm">Wajib</Badge>
-              </div>
-
-              <div className="space-y-4">
-                {/* Jenis Usaha */}
-                <div>
-                  <Label requiredText="wajib">Jenis Usaha</Label>
-                  <div className="flex flex-wrap gap-2">
-                    {(
-                      [
-                        ['warung', 'Warung Makan'],
-                        ['kedai', 'Kedai / Coffee Shop'],
-                        ['kafe', 'Kafe Santai'],
-                        ['resto_ruko', 'Restoran Ruko'],
-                        ['lainnya', 'Lainnya'],
-                      ] as const
-                    ).map(([val, label]) => (
-                      <Chip
-                        key={val}
-                        label={label}
-                        role="radio"
-                        selected={businessType === val}
-                        onClick={() => setBusinessType(val)}
-                      />
-                    ))}
-                  </div>
-                </div>
-
-                {/* Nama Tempat Usaha */}
-                <div>
-                  <Label requiredText="wajib">Nama Tempat Usaha</Label>
-                  <Input
-                    value={businessName}
-                    onChange={(e) => setBusinessName(e.target.value)}
-                    placeholder="Contoh: Kedai Selasar Kopi"
-                  />
-                </div>
-
-                {/* Lokasi Usaha (Peta / Pin) */}
-                <div>
-                  <Label requiredText="wajib" hint="Pencarian Peta / Pin">
-                    Lokasi Usaha
-                  </Label>
-                  <Input
-                    value={locationName}
-                    onChange={(e) => setLocationName(e.target.value)}
-                    placeholder="Contoh: Jl. Kaliurang KM 5, Sleman"
-                  />
-                </div>
-
-                {/* Deskripsi Letak */}
-                <div>
-                  <Label requiredText="wajib" hint="Terlihat atau tersembunyi?">
-                    Deskripsi Letak Fisik
-                  </Label>
-                  <Textarea
-                    value={locationDescription}
-                    onChange={(e) => setLocationDescription(e.target.value)}
-                    placeholder="Contoh: Berada di lantai 2 ruko warna abu-abu, tangga naik berada persis di samping minimarket."
-                  />
-                </div>
-              </div>
-            </Card>
-
-            {/* Kartu 2: Pelanggan dan Tujuan */}
-            <Card>
-              <div className="flex items-center justify-between border-b border-hairline pb-3 mb-4">
-                <div>
-                  <h2 className="text-base font-semibold text-ink">Kartu 2: Pelanggan & Tujuan</h2>
-                  <p className="text-xs text-muted">Semua chip memiliki nilai bawaan yang dapat kamu sesuaikan.</p>
-                </div>
-              </div>
-
-              <div className="space-y-5">
-                {/* Tipe Sekitar */}
-                <div>
-                  <Label requiredText="wajib">Tipe Lingkungan Sekitar Toko</Label>
-                  <div className="flex flex-wrap gap-2">
-                    {(
-                      [
-                        ['dekat_kampus', 'Dekat Kampus'],
-                        ['perkantoran', 'Kawasan Perkantoran'],
-                        ['permukiman', 'Permukiman Warga'],
-                        ['jalan_utama', 'Jalan Utama / Protokol'],
-                        ['lainnya', 'Lainnya'],
-                      ] as const
-                    ).map(([val, label]) => (
-                      <Chip
-                        key={val}
-                        label={label}
-                        role="radio"
-                        selected={surroundingsType === val}
-                        onClick={() => setSurroundingsType(val)}
-                      />
-                    ))}
-                  </div>
-                </div>
-
-                {/* Siapa yang biasa lewat */}
-                <div>
-                  <Label requiredText="opsional" hint="Pilih semua yang sesuai">
-                    Siapa yang Biasa Melintas di Depan Toko?
-                  </Label>
-                  <div className="flex flex-wrap gap-2">
-                    {(
-                      [
-                        ['mahasiswa', 'Mahasiswa'],
-                        ['pekerja_kantor', 'Pekerja Kantor'],
-                        ['warga_sekitar', 'Warga Sekitar'],
-                        ['keluarga', 'Keluarga'],
-                        ['pengendara', 'Pengendara / Ojol Lewat'],
-                      ] as const
-                    ).map(([val, label]) => (
-                      <Chip
-                        key={val}
-                        label={label}
-                        role="checkbox"
-                        selected={passersby.includes(val)}
-                        onClick={() => togglePasserby(val)}
-                      />
-                    ))}
-                  </div>
-                </div>
-
-                {/* Tujuan Bisnis */}
-                <div>
-                  <Label requiredText="opsional" hint="Membantu urutan rekomendasi">
-                    Tujuan Utama Saat Ini
-                  </Label>
-                  <div className="flex flex-wrap gap-2">
-                    {(
-                      [
-                        ['lebih_banyak_pembeli_baru', 'Lebih banyak pembeli baru'],
-                        ['naikkan_belanja_rata_rata', 'Naikkan belanja rata-rata'],
-                        ['ramaikan_jam_sepi', 'Ramaikan jam-jam sepi'],
-                      ] as const
-                    ).map(([val, label]) => (
-                      <Chip
-                        key={val}
-                        label={label}
-                        role="radio"
-                        selected={businessGoal === val}
-                        onClick={() => setBusinessGoal(val)}
-                      />
-                    ))}
-                  </div>
-                </div>
-
-                {/* Hal yang Tidak Bisa Diubah */}
-                <div>
-                  <Label requiredText="opsional" hint="Menyaring saran yang mustahil">
-                    Hal yang Tidak Bisa Diubah (Batasan)
-                  </Label>
-                  <div className="flex flex-wrap gap-2">
-                    {(
-                      [
-                        ['lokasi', 'Lokasi Toko'],
-                        ['fasad', 'Struktur Fasad / Bangunan'],
-                        ['menu', 'Konsep Menu Inti'],
-                        ['harga', 'Standar Harga Pokok'],
-                      ] as const
-                    ).map(([val, label]) => (
-                      <Chip
-                        key={val}
-                        label={label}
-                        role="checkbox"
-                        selected={fixedConstraints.includes(val)}
-                        onClick={() => toggleConstraint(val)}
-                      />
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </Card>
+    <div className="flex min-h-full flex-col bg-white">
+      <main className="flex-1 px-4 pb-16 pt-10 sm:px-6">
+        <div className="mx-auto w-full max-w-4xl space-y-8">
+          {/* Judul halaman */}
+          <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
+            <div>
+              <h1 className="text-2xl font-normal tracking-[-0.03em] text-ink sm:text-[28px]">Konteks usaha</h1>
+              <p className="mt-1 text-[13px] text-muted">
+                Data ini membantu model membentuk persona calon pelanggan yang relevan dengan lokasimu.
+              </p>
+            </div>
+            <Badge variant={isAllValid ? 'impact' : 'primary'} size="md">
+              {`${filledRequiredCount} dari 7 isian wajib terisi`}
+            </Badge>
           </div>
 
-          {/* Kolom Kanan: Kartu 3 (Menu, Harga, Jam) (5 Kolom) */}
-          <div className="lg:col-span-5 space-y-6">
-            <Card>
-              <div className="flex items-center justify-between border-b border-hairline pb-3 mb-4">
-                <div>
-                  <h2 className="text-base font-semibold text-ink">Kartu 3: Menu, Harga & Jam</h2>
-                  <p className="text-xs text-muted">Agen mencocokkan harga ini dengan daya belinya.</p>
-                </div>
-                <Badge variant={priceLevel === 'hemat' ? 'impact' : 'primary'} size="sm">
-                  Level {priceLevel}
-                </Badge>
-              </div>
-
-              {/* Daftar Menu & Harga */}
-              <div className="space-y-3">
-                <Label requiredText="wajib" hint="Minimal 1 menu terdaftar">
-                  Daftar Menu & Harga Porsi
-                </Label>
-
-                <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
-                  {menuItems.map((item) => (
-                    <div
-                      key={item.id}
-                      className="flex items-center justify-between rounded-xl bg-panel border border-hairline px-3 py-2 text-xs"
-                    >
-                      <span className="font-medium text-ink truncate max-w-[200px]">{item.name}</span>
-                      <div className="flex items-center gap-3">
-                        <span className="font-mono text-ink">Rp {item.price.toLocaleString('id-ID')}</span>
-                        <button
-                          type="button"
-                          onClick={() => handleRemoveMenuItem(item.id)}
-                          className="text-subtle hover:text-friction font-bold px-1"
-                        >
-                          ×
-                        </button>
-                      </div>
+          {/* Satu container formulir; bagian dipisah oleh judul */}
+          <div className="rounded-md border border-line bg-white">
+            <div className="space-y-12 p-6 sm:p-10">
+              {/* 1. Informasi dasar */}
+              <section>
+                <SectionTitle n={1} title="Informasi dasar" description="Identitas dan letak fisik tempat usaha." />
+                <div className="space-y-7">
+                  <div>
+                    <Label requiredText="wajib">Jenis usaha</Label>
+                    <div className="flex flex-wrap gap-2">
+                      {(
+                        [
+                          ['warung', 'Warung makan'],
+                          ['kedai', 'Kedai / coffee shop'],
+                          ['kafe', 'Kafe santai'],
+                          ['resto_ruko', 'Restoran ruko'],
+                          ['lainnya', 'Lainnya'],
+                        ] as const
+                      ).map(([val, label]) => (
+                        <Chip key={val} label={label} role="radio" selected={businessType === val} onClick={() => setBusinessType(val)} />
+                      ))}
                     </div>
-                  ))}
-                </div>
-
-                {/* Tambah Menu Input */}
-                <div className="flex gap-2 pt-2">
-                  <Input
-                    placeholder="Nama menu..."
-                    value={newMenuName}
-                    onChange={(e) => setNewMenuName(e.target.value)}
-                    className="flex-1"
-                  />
-                  <Input
-                    placeholder="Harga (Rp)..."
-                    value={newMenuPrice}
-                    onChange={(e) => setNewMenuPrice(e.target.value)}
-                    className="w-28 font-mono"
-                  />
-                  <Button variant="secondary" size="md" onClick={handleAddMenuItem} className="shrink-0">
-                    <PlusIcon size={14} /> Tambah
-                  </Button>
-                </div>
-              </div>
-
-              {/* Jam Buka & Jam Ramai */}
-              <div className="mt-6 pt-5 border-t border-hairline space-y-4">
-                <div>
-                  <Label requiredText="wajib">Jam Operasional (Buka – Tutup)</Label>
-                  <div className="grid grid-cols-2 gap-3">
-                    <Input
-                      type="time"
-                      value={openHour}
-                      onChange={(e) => setOpenHour(e.target.value)}
-                      className="font-mono"
-                    />
-                    <Input
-                      type="time"
-                      value={closeHour}
-                      onChange={(e) => setCloseHour(e.target.value)}
-                      className="font-mono"
+                  </div>
+                  <div>
+                    <Label requiredText="wajib">Nama tempat usaha</Label>
+                    <Input value={businessName} onChange={(e) => setBusinessName(e.target.value)} placeholder="Contoh: Kedai Selasar Kopi" />
+                  </div>
+                  <div>
+                    <Label requiredText="wajib">Lokasi usaha</Label>
+                    <Input value={locationName} onChange={(e) => setLocationName(e.target.value)} placeholder="Contoh: Jl. Kaliurang KM 5, Sleman" />
+                  </div>
+                  <div>
+                    <Label requiredText="wajib">Deskripsi letak fisik</Label>
+                    <Textarea
+                      value={locationDescription}
+                      onChange={(e) => setLocationDescription(e.target.value)}
+                      placeholder="Contoh: Lantai 2 ruko warna abu-abu, tangga naik persis di samping minimarket."
                     />
                   </div>
                 </div>
+              </section>
 
-                <div>
-                  <Label requiredText="wajib" hint="Untuk jadwal rencana tally F6-G">
-                    Jam Paling Ramai
-                  </Label>
-                  <div className="grid grid-cols-2 gap-3">
-                    <Input
-                      type="time"
-                      value={rushStart}
-                      onChange={(e) => setRushStart(e.target.value)}
-                      className="font-mono"
-                    />
-                    <Input
-                      type="time"
-                      value={rushEnd}
-                      onChange={(e) => setRushEnd(e.target.value)}
-                      className="font-mono"
-                    />
+              {/* 2. Pelanggan & tujuan */}
+              <section>
+                <SectionTitle
+                  n={2}
+                  title="Pelanggan & tujuan"
+                  description="Siapa yang lewat di depan toko dan apa yang ingin kamu capai."
+                />
+                <div className="space-y-7">
+                  <div>
+                    <Label requiredText="wajib">Tipe lingkungan sekitar toko</Label>
+                    <div className="flex flex-wrap gap-2">
+                      {(
+                        [
+                          ['dekat_kampus', 'Dekat kampus'],
+                          ['perkantoran', 'Kawasan perkantoran'],
+                          ['permukiman', 'Permukiman warga'],
+                          ['jalan_utama', 'Jalan utama / protokol'],
+                          ['lainnya', 'Lainnya'],
+                        ] as const
+                      ).map(([val, label]) => (
+                        <Chip key={val} label={label} role="radio" selected={surroundingsType === val} onClick={() => setSurroundingsType(val)} />
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <Label requiredText="opsional">Siapa yang biasa melintas di depan toko?</Label>
+                    <div className="flex flex-wrap gap-2">
+                      {(
+                        [
+                          ['mahasiswa', 'Mahasiswa'],
+                          ['pekerja_kantor', 'Pekerja kantor'],
+                          ['warga_sekitar', 'Warga sekitar'],
+                          ['keluarga', 'Keluarga'],
+                          ['pengendara', 'Pengendara / ojol lewat'],
+                        ] as const
+                      ).map(([val, label]) => (
+                        <Chip
+                          key={val}
+                          label={label}
+                          role="checkbox"
+                          selected={passersby.includes(val)}
+                          onClick={() => setPassersby((prev) => toggle(prev, val))}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <Label requiredText="opsional">Tujuan utama saat ini</Label>
+                    <div className="flex flex-wrap gap-2">
+                      {(
+                        [
+                          ['lebih_banyak_pembeli_baru', 'Lebih banyak pembeli baru'],
+                          ['naikkan_belanja_rata_rata', 'Naikkan belanja rata-rata'],
+                          ['ramaikan_jam_sepi', 'Ramaikan jam-jam sepi'],
+                        ] as const
+                      ).map(([val, label]) => (
+                        <Chip key={val} label={label} role="radio" selected={businessGoal === val} onClick={() => setBusinessGoal(val)} />
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <Label requiredText="opsional">Hal yang tidak bisa diubah</Label>
+                    <div className="flex flex-wrap gap-2">
+                      {(
+                        [
+                          ['lokasi', 'Lokasi toko'],
+                          ['fasad', 'Struktur fasad / bangunan'],
+                          ['menu', 'Konsep menu inti'],
+                          ['harga', 'Standar harga pokok'],
+                        ] as const
+                      ).map(([val, label]) => (
+                        <Chip
+                          key={val}
+                          label={label}
+                          role="checkbox"
+                          selected={fixedConstraints.includes(val)}
+                          onClick={() => setFixedConstraints((prev) => toggle(prev, val))}
+                        />
+                      ))}
+                    </div>
                   </div>
                 </div>
+              </section>
 
-                {/* Tetangga Terdekat */}
-                <div>
-                  <Label requiredText="opsional">Pesaing / Tetangga Terdekat</Label>
-                  <Textarea
-                    value={nearbyCompetitors}
-                    onChange={(e) => setNearbyCompetitors(e.target.value)}
-                    placeholder="Contoh: Sebelah kiri minimarket ramai, seberang ada kafe kopi susu besar."
-                    className="min-h-[72px]"
-                  />
+              {/* 3. Menu & harga */}
+              <section>
+                <SectionTitle
+                  n={3}
+                  title="Menu & harga"
+                  description="Agen mencocokkan harga menu dengan daya belinya. Unggah file atau foto menu."
+                />
+                <Label requiredText="wajib">Daftar menu & harga porsi</Label>
+                <MenuUpload file={menuFile} onChange={setMenuFile} />
+              </section>
+
+              {/* 4. Jam & sekitar */}
+              <section>
+                <SectionTitle n={4} title="Jam operasional" description="Kapan toko buka dan kapan paling ramai." />
+                <div className="space-y-7">
+                  <div>
+                    <Label requiredText="wajib">Jam operasional</Label>
+                    <div className="flex items-center gap-3">
+                      <Input type="time" aria-label="Jam buka" value={openHour} onChange={(e) => setOpenHour(e.target.value)} />
+                      <span className="shrink-0 text-[13px] text-muted">-</span>
+                      <Input type="time" aria-label="Jam tutup" value={closeHour} onChange={(e) => setCloseHour(e.target.value)} />
+                    </div>
+                  </div>
+                  <div>
+                    <Label requiredText="wajib">Jam paling ramai</Label>
+                    <div className="flex items-center gap-3">
+                      <Input type="time" aria-label="Mulai ramai" value={rushStart} onChange={(e) => setRushStart(e.target.value)} />
+                      <span className="shrink-0 text-[13px] text-muted">-</span>
+                      <Input type="time" aria-label="Selesai ramai" value={rushEnd} onChange={(e) => setRushEnd(e.target.value)} />
+                    </div>
+                  </div>
                 </div>
-              </div>
-            </Card>
+              </section>
+            </div>
 
-            {/* Bottom Navigation Box */}
-            <Card className="flex flex-col gap-3">
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-muted">Status formulir:</span>
-                <span className={`font-medium ${isAllValid ? 'text-impact' : 'text-friction'}`}>
-                  {isAllValid ? 'Semua isian wajib lengkap' : `${7 - filledRequiredCount} isian wajib belum terisi`}
-                </span>
-              </div>
+            {/* Kaki container: status & lanjut */}
+            <div className="flex flex-col gap-3 rounded-b-md bg-panel px-6 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-10">
+              <span className={`text-[13px] ${isAllValid ? 'text-impact' : 'text-muted'}`}>
+                {isAllValid ? 'Semua isian wajib lengkap' : `${7 - filledRequiredCount} isian wajib belum terisi`}
+              </span>
               <Button
                 variant="primary"
                 size="lg"
                 disabled={!isAllValid}
-                onClick={handleNext}
-                className="w-full justify-center"
+                onClick={() => isAllValid && router.push('/business/analysis/video')}
+                className="justify-center !rounded-md"
               >
-                Lanjut ke Rekam Video (F2) <ArrowRightIcon size={16} />
+                Lanjut ke rekam video <ArrowRightIcon size={16} />
               </Button>
-            </Card>
+            </div>
           </div>
         </div>
-        </div>
       </main>
-
-      <footer className="border-t border-hairline py-6 text-center text-xs text-subtle">
-        <div className="col">
-          Sekilas © 2026 · Simulator Calon Pelanggan untuk UMKM Makanan
-        </div>
-      </footer>
     </div>
   );
 }
 
 export default function KonteksUsahaPage() {
   return (
-    <Suspense fallback={<div className="min-h-screen bg-white" />}>
+    <Suspense fallback={<div className="min-h-full bg-white" />}>
       <KonteksUsahaInner />
     </Suspense>
   );
