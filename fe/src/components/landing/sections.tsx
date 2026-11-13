@@ -1,14 +1,15 @@
 import Link from "next/link";
+import { ArrowRight } from "lucide-react";
 import type { ReactNode } from "react";
-import { Drawer, Loupe, Padlock, Slow } from "@lucasmarkes/hairline/react";
+import { Basket, Drawer, Loupe, Padlock } from "@lucasmarkes/hairline/react";
 
 import { SekilasLogo } from "@/components/brand/logo";
+import { MacbookScroll } from "@/components/ui/macbook-scroll";
 import { FunnelCard } from "./funnel-card";
 import { Reveal } from "./reveal";
-import { TwinPreview } from "./twin-preview";
 
-const START_HREF = "/analisis/selasar-kopi/konteks";
-const EXAMPLE_HREF = "/analisis/selasar-kopi";
+const START_HREF = "/masuk";
+const EXAMPLE_HREF = "#contoh";
 
 /* ---------- Primitif ---------- */
 
@@ -24,9 +25,10 @@ function PrimaryButton({ href, children }: { href: string; children: ReactNode }
   return (
     <Link
       href={href}
-      className="btn-primary inline-flex h-11 min-w-40 items-center justify-center rounded-md px-6 text-[15px] font-medium text-white transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-40"
+      className="btn-primary group inline-flex h-11 min-w-40 items-center justify-center gap-2 rounded-md px-6 text-[15px] font-medium text-white transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-40"
     >
       {children}
+      <ArrowRight className="size-4 transition-transform group-hover:translate-x-0.5" />
     </Link>
   );
 }
@@ -56,20 +58,10 @@ function Heading({ children, className = "" }: { children: ReactNode; className?
   );
 }
 
-function Chip({ children, dot }: { children: ReactNode; dot?: string }) {
-  return (
-    <span className="inline-flex items-center gap-1.5 rounded-full border border-line bg-white px-2.5 py-1 text-[13px] text-ink">
-      {dot && <span className={`size-1.5 rounded-full ${dot}`} />}
-      {children}
-    </span>
-  );
-}
-
 /* ---------- Navbar ---------- */
 
 const NAV = [
   { href: "#cara-kerja", label: "Cara kerja" },
-  { href: "#dasbor", label: "Dasbor" },
   { href: "#rekomendasi", label: "Rekomendasi" },
   { href: EXAMPLE_HREF, label: "Contoh Analisis" },
 ];
@@ -96,20 +88,13 @@ export function Navbar() {
             </li>
           ))}
         </ul>
-        <div className="flex items-center gap-3">
-          <Link
-            href="/masuk"
-            className="text-sm font-medium text-ink-soft hover:text-ink px-2 py-1 transition hidden sm:inline-block"
-          >
-            Masuk
-          </Link>
-          <Link
-            href={START_HREF}
-            className="btn-primary inline-flex h-9 items-center rounded-md px-4 text-sm font-medium text-white shadow-xs"
-          >
-            Mulai Analisis
-          </Link>
-        </div>
+        <Link
+          href={START_HREF}
+          className="btn-primary group inline-flex h-9 items-center gap-1.5 rounded-md px-4 text-sm font-medium text-white shadow-xs"
+        >
+          Mulai Analisis
+          <ArrowRight className="size-3.5 transition-transform group-hover:translate-x-0.5" />
+        </Link>
       </nav>
     </header>
   );
@@ -117,45 +102,30 @@ export function Navbar() {
 
 /* ---------- Hero ---------- */
 
-const PIPELINE = [
-  { label: "1 video", dot: "bg-primary-40" },
-  { label: "Transkrip kejadian" },
-  { label: "20 agen demo" },
-  { label: "Dasbor + Visual Twin" },
-];
-
 export function Hero() {
   return (
-    <Section className="pb-16 pt-12 sm:pb-20 sm:pt-16">
-      <Reveal className="flex flex-col items-center text-center">
-        <span className="inline-flex items-center gap-2 rounded-full border border-line px-3 py-1 text-[13px] text-muted">
-          Untuk UMKM makanan
-          <span className="h-3 w-px bg-line" />
-          <span className="text-ink">Simulasi 20 agen demo</span>
-        </span>
-        <h1 className="mt-6 max-w-[15ch] text-[44px] leading-[1.02] font-normal tracking-[-0.045em] text-ink sm:text-[72px]">
-          Tahu di mana pelanggan ragu, dari satu video.
-        </h1>
-        <p className="mt-6 max-w-xl text-[17px] leading-7 text-muted sm:text-xl">
-          Rekam sekali dari depan tempatmu. Sekilas menunjukkan titik gesekan dan perbaikan paling berdampak.
-        </p>
-        <div className="mt-9 flex w-full flex-col justify-center gap-3 sm:w-auto sm:flex-row">
-          <PrimaryButton href={START_HREF}>Mulai Analisis</PrimaryButton>
-          <SecondaryButton href={EXAMPLE_HREF}>Lihat Contoh Analisis</SecondaryButton>
-        </div>
-      </Reveal>
-
-      <Reveal delay={150} className="mt-16 overflow-hidden rounded-[10px] border border-line bg-white">
-        <div className="flex flex-wrap items-center justify-center gap-2 border-b border-hairline px-4 py-3">
-          {PIPELINE.map((step, i) => (
-            <span key={step.label} className="flex items-center gap-2">
-              {i > 0 && <span className="font-mono text-[12px] text-subtle">→</span>}
-              <Chip dot={step.dot}>{step.label}</Chip>
+    <Section className="overflow-clip">
+      <MacbookScroll
+        src="/landing/hero-dashboard.png"
+        title={
+          <div className="flex flex-col items-center">
+            <span className="inline-flex items-center rounded-full border border-line bg-white px-3 py-1 text-[13px] text-muted">
+              Insight untuk usahamu
             </span>
-          ))}
-        </div>
-        <TwinPreview uid="hero" className="px-2 py-4 sm:px-6" />
-      </Reveal>
+            <h1 className="mt-6 max-w-5xl text-balance text-[44px] leading-[1.04] font-normal tracking-[-0.045em] sm:text-[60px] xl:text-[72px]">
+              <span className="block text-ink">Tahu di mana pelanggan ragu,</span>
+              <span className="block text-muted">dari satu video.</span>
+            </h1>
+            <p className="mt-6 max-w-md text-[17px] leading-7 text-muted">
+              Rekam tempat usahamu. Sekilas menganalisis, menemukan hambatan, dan menunjukkan potensi perbaikan.
+            </p>
+            <div className="mt-9 flex w-full flex-col gap-3 sm:w-auto sm:flex-row">
+              <PrimaryButton href={START_HREF}>Mulai Analisis</PrimaryButton>
+              <SecondaryButton href={EXAMPLE_HREF}>Lihat Contoh Analisis</SecondaryButton>
+            </div>
+          </div>
+        }
+      />
     </Section>
   );
 }
@@ -170,13 +140,13 @@ export function Statement() {
           <p className="max-w-3xl text-[26px] leading-[1.25] tracking-[-0.03em] text-ink sm:text-[34px]">
             Pemilik hanya melihat pelanggan yang masuk.
             <br />
-            Yang ragu lalu pergi tidak pernah tercatat.
+            Yang tertarik, yang ragu, dan yang pergi.
             <br />
-            <span className="text-muted">Padahal di situlah omzet hilang.</span>
+            <span className="text-muted">Padahal di situlah peluang omzet sebenarnya.</span>
           </p>
         </Reveal>
         <Reveal delay={120} className="hairline-sekilas mx-auto w-full max-w-sm">
-          <Slow play intensity={0.6} label="Calon pembeli lewat di depan warung tanpa masuk" />
+          <Basket play intensity={0.6} label="Keranjang belanja kosong, pelanggan pergi tanpa membeli" />
         </Reveal>
       </div>
     </Section>
@@ -228,84 +198,6 @@ export function HowItWorks() {
         <div className="lg:sticky lg:top-24 lg:mt-2">
           <FunnelCard />
         </div>
-      </div>
-    </Section>
-  );
-}
-
-/* ---------- Dasbor ---------- */
-
-const FINDINGS = [
-  "Keraguan terbesar terjadi di dasar tangga karena plang menu dan jam buka tidak terlihat dari jalan.",
-  "Calon pengunjung mengira lantai 2 bukan untuk umum atau sedang tutup.",
-  "Kepastian kisaran harga sebelum masuk membuat pengunjung lebih yakin naik.",
-];
-
-const KPIS = [
-  { label: "Agen Membeli", value: "4 agen", sub: "20% dari 20 agen demo", tone: "text-impact" },
-  { label: "Penurunan Terbesar", value: "v 65,5%", sub: "Dari Berhenti ke Masuk", tone: "text-friction" },
-  { label: "Penyebab Utama Batal", value: "Menu & Harga", sub: "Peringkat #1 Isyarat", tone: "text-friction" },
-  { label: "Potensi Omzet Lepas", value: "Rp 4,8 Jt", sub: "Estimasi lepas / bln", tone: "text-friction" },
-];
-
-export function DashboardShowcase() {
-  return (
-    <Section id="dasbor" className="py-20 sm:py-24">
-      <Reveal className="mx-auto max-w-2xl text-center">
-        <Heading>Lihat masalahnya tepat di lokasinya.</Heading>
-        <p className="mt-5 text-[17px] leading-7 text-muted">
-          Video diubah menjadi Visual Twin, peta 3D sederhana dari jalur yang kamu rekam. Titik ragu pengunjung tampil di
-          tempat terjadinya.
-        </p>
-      </Reveal>
-
-      <Reveal delay={120} className="mt-14 overflow-hidden rounded-[10px] border border-line bg-white shadow-xs">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-hairline px-4 py-3 sm:px-5">
-          <p className="text-sm font-medium text-ink">Ringkasan Dasbor Analisis</p>
-          <div className="flex items-center gap-2 text-[13px]">
-            <span className="hidden text-muted sm:inline">Skenario</span>
-            <Chip dot="bg-primary-40">Normal (20 Agen)</Chip>
-          </div>
-        </div>
-
-        <dl className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 divide-y sm:divide-y-0 sm:divide-x divide-hairline border-b border-hairline">
-          {KPIS.map((k) => (
-            <div key={k.label} className="p-4 sm:p-4.5 flex flex-col justify-between">
-              <dt className="font-mono text-[11px] uppercase tracking-[0.06em] text-muted font-medium">{k.label}</dt>
-              <dd className={`mt-1.5 text-xl sm:text-2xl font-bold font-mono tracking-tight ${k.tone}`}>{k.value}</dd>
-              <p className="font-mono text-[11px] text-muted mt-1">{k.sub}</p>
-            </div>
-          ))}
-        </dl>
-
-        <div className="grid lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
-          <div className="border-b border-hairline bg-panel/60 p-3 lg:border-b-0 lg:border-r">
-            <TwinPreview uid="dash" />
-          </div>
-          <div className="p-5">
-            <p className="font-mono text-[11px] uppercase tracking-[0.06em] text-subtle">3 temuan utama</p>
-            <ol className="mt-4 divide-y divide-hairline">
-              {FINDINGS.map((f, i) => (
-                <li key={f} className="flex gap-3 py-3.5 first:pt-0">
-                  <span className="font-mono text-[12px] text-primary-40">0{i + 1}</span>
-                  <p className="text-[14px] leading-[1.55] text-ink-soft">{f}</p>
-                </li>
-              ))}
-            </ol>
-          </div>
-        </div>
-      </Reveal>
-      <div className="mt-8 flex flex-col items-center justify-center gap-2">
-        <Link
-          href={EXAMPLE_HREF}
-          className="inline-flex items-center gap-2 rounded-md border border-line bg-white px-5 py-2.5 text-sm font-medium text-ink transition hover:bg-panel shadow-xs"
-        >
-          <span>Buka Contoh Analisis Lengkap (Selasar Kopi)</span>
-          <span className="font-mono text-xs text-primary-40">→</span>
-        </Link>
-        <p className="font-mono text-[11px] text-subtle">
-          Contoh nyata pemetaan video 48 detik dan simulasi 20 agen demo
-        </p>
       </div>
     </Section>
   );
@@ -381,6 +273,25 @@ export function Recommendations() {
   );
 }
 
+/* ---------- Contoh analisis ---------- */
+
+export function ExampleAnalysis() {
+  return (
+    <Section id="contoh" className="py-20 sm:py-24">
+      <Reveal>
+        <Label>Contoh analisis</Label>
+        <Heading className="mt-4">Seperti ini hasilnya.</Heading>
+      </Reveal>
+      <Reveal
+        delay={100}
+        className="mt-10 flex aspect-video items-center justify-center rounded-[10px] border border-dashed border-line bg-panel"
+      >
+        <p className="font-mono text-[11px] uppercase tracking-[0.08em] text-subtle">Gambar contoh analisis</p>
+      </Reveal>
+    </Section>
+  );
+}
+
 /* ---------- Kepercayaan ---------- */
 
 const TRUST = [
@@ -404,9 +315,7 @@ export function Trust() {
           </Reveal>
         ))}
       </div>
-      <Reveal className="mt-14 rounded-[10px] border border-line bg-panel px-5 py-4 text-[14px] leading-6 text-ink-soft">
-        <span className="font-medium text-ink">Catatan.</span> Hasil Sekilas adalah simulasi agen sintetis berbasis probabilitas sebagai hipotesis titik gesekan fisik, bukan janji omzet. Dasbor dilengkapi simulator hipotesis perbaikan tata letak sebelum kamu renovasi toko.
-      </Reveal>
+
     </Section>
   );
 }
