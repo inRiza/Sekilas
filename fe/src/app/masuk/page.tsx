@@ -8,11 +8,11 @@ import React, { useState } from 'react';
 import { SekilasLogo } from '@/components/brand/logo';
 import { SekilasMascot } from '@/components/brand/mascot';
 import {
+  CURRENT_USER,
   setDemoUserSession,
   signInWithEmailPassword,
   signInWithGoogleOAuth,
 } from '@/lib/auth/use-auth';
-import { CURRENT_USER } from '@/lib/mock/business';
 
 const HIGHLIGHTS = [
   'Temukan titik pelanggan ragu dan pergi',

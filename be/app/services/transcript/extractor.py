@@ -8,6 +8,7 @@ from uuid import uuid4
 
 import httpx
 
+from app.core.storage import download_supabase_object, extract_bucket_object_key
 from app.models.entities import Analysis as AnalysisModel
 from app.models.entities import TranscriptCheckpoint, TranscriptSegment
 from app.services.llm.router import KeyframeInput, LLMUnavailableError, get_llm_router
@@ -39,7 +40,7 @@ Aturan ketat penulisan transkrip lengkap & mendetail:
 
 
 def _load_keyframe_bytes(frame_key: str) -> bytes | None:
-    """Ambil bytes JPEG dari data URL atau URL publik Supabase Storage."""
+    """Ambil bytes JPEG dari data URL, Signed URL, atau object key Supabase Storage."""
     if not frame_key:
         return None
     if frame_key.startswith("data:image/"):
@@ -48,7 +49,7 @@ def _load_keyframe_bytes(frame_key: str) -> bytes | None:
             return base64.b64decode(b64)
         except (ValueError, TypeError):
             return None
-    if frame_key.startswith(("http://", "https://")):
+    if frame_key.startswith(("http://", "https://")) and "/storage/v1/object/public/" not in frame_key:
         try:
             with httpx.Client(timeout=15.0) as http:
                 resp = http.get(frame_key)
@@ -56,7 +57,18 @@ def _load_keyframe_bytes(frame_key: str) -> bytes | None:
                     return resp.content
         except (httpx.HTTPError, OSError) as exc:
             logger.debug("Gagal mengunduh keyframe %s: %s", frame_key, exc)
+
+    clean_key = extract_bucket_object_key(frame_key)
+    if clean_key:
+        downloaded = download_supabase_object(clean_key)
+        if downloaded is not None:
+            return downloaded[0]
     return None
+
+
+def _stored_frame_key(raw: str, analysis_id: str) -> str:
+    """Simpan path object bersih di DB bila berasal dari bucket Storage (tanpa URL publik statis)."""
+    return extract_bucket_object_key(raw, analysis_id=analysis_id, default_subdir="frames") or raw
 
 
 def _build_fallback_segments(
@@ -100,7 +112,11 @@ def _build_fallback_segments(
         t_end = round((i + 1) * step, 1)
         tpl_idx = min(len(templates) - 1, int(i * len(templates) / n_events))
         vantage, zone_id, nar, not_vis, conf = templates[tpl_idx]
-        fk = [frame_keys[i]] if i < len(frame_keys) else ([frame_keys[-1]] if frame_keys else [])
+        fk = [
+            _stored_frame_key(frame_keys[i], analysis.id)
+        ] if i < len(frame_keys) else (
+            [_stored_frame_key(frame_keys[-1], analysis.id)] if frame_keys else []
+        )
         seg_id = f"seg_{uuid4().hex[:8]}"
         segments.append(
             TranscriptSegment(
@@ -180,12 +196,17 @@ def extract_transcript_with_gemini(
                         conf = "stabil"
                     indices = raw.get("frame_indices") or [idx + 1]
                     seg_frames = [
-                        valid_frame_keys[fi - 1]
+                        _stored_frame_key(valid_frame_keys[fi - 1], analysis.id)
                         for fi in indices
                         if isinstance(fi, int) and 1 <= fi <= len(valid_frame_keys)
                     ]
                     if not seg_frames:
-                        seg_frames = [valid_frame_keys[min(idx, len(valid_frame_keys) - 1)]]
+                        seg_frames = [
+                            _stored_frame_key(
+                                valid_frame_keys[min(idx, len(valid_frame_keys) - 1)],
+                                analysis.id,
+                            )
+                        ]
                     parsed_segments.append(
                         TranscriptSegment(
                             id=f"seg_{uuid4().hex[:8]}",

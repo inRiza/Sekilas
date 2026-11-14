@@ -70,6 +70,60 @@ def _infer_decision_from_stopped_vantage(stopped_seg: SegmentInput | None) -> st
     return "masuk_tanpa_memesan"
 
 
+_MOCK_CUE_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "H1": ("papan nama", "plang", "tidak terlihat", "tidak dikenali"),
+    "H2": ("jam buka", "jam operasional", "status buka", "tutup"),
+    "H3": ("jenis", "hidangan", "jualan apa", "belum terlihat"),
+    "H4": ("parkir", "berhenti"),
+    "H5": ("tangga", "pintu", "lorong", "akses masuk"),
+    "H6": ("redup", "gelap", "pencahayaan", "kotor", "berantakan"),
+    "H7": ("sepi", "kosong", "penuh", "sesak"),
+    "H8": ("harga", "menu"),
+    "H9": ("mahal", "anggaran", "terjangkau", "paket hemat"),
+    "H10": ("kasir", "antre", "titik pesan"),
+    "H11": ("qris", "non-tunai", "debit", "tunai", "metode bayar"),
+    "H12": ("bungkus", "takeaway", "waktu saji", "estimasi", "waktu tunggu"),
+    "H13": ("kursi", "tempat duduk", "area tunggu", "meja makan"),
+    "H14": ("huruf kecil", "terlalu kecil", "pudar", "silau", "kusam", "pantulan"),
+}
+
+
+def _strip_applied_fix_suffix(text: str) -> str:
+    """Ambil narasi kondisi awal sebelum penanda perbaikan agar mock tidak menandai perbaikan sebagai masalah."""
+    for marker in ("(Setelah perbaikan:", "[Perbaikan diterapkan:"):
+        if marker in text:
+            text = text.split(marker, 1)[0]
+    return text
+
+
+def _score_mock_cue(
+    cue_code: str,
+    passed_text: str,
+    *,
+    budget_tight: bool,
+    lazy: bool,
+    rushed: bool,
+    is_rider: bool,
+) -> int:
+    """Beri skor relevansi 0..3 untuk satu isyarat pada mode mock secara deterministik."""
+    keywords = _MOCK_CUE_KEYWORDS.get(cue_code)
+    if not keywords or not any(kw in passed_text for kw in keywords):
+        return 0
+    if cue_code == "H2":
+        return 3 if rushed else 2
+    if cue_code == "H4":
+        return 2 if is_rider else 1
+    if cue_code == "H5":
+        return 3 if lazy else 1
+    if cue_code == "H8":
+        return 3 if budget_tight else 2
+    if cue_code == "H9":
+        return 3 if budget_tight else 1
+    if cue_code == "H12":
+        return 3 if rushed else 1
+    return 2
+
+
 def _evaluate_batch_mock(
     *,
     personas: list[PersonaSpecOut],
@@ -86,25 +140,36 @@ def _evaluate_batch_mock(
         prefix = list((prefix_traces_by_agent or {}).get(persona.agent_id, []))
         traces: list[dict[str, str]] = list(prefix[:start_idx])
 
+        budget_tight = persona.discrete_traits.get("budget_sensitivity") == "hemat"
+        lazy = persona.discrete_traits.get("physical_laziness") == "malas"
+        rushed = persona.discrete_traits.get("dining_context") == "sendiri_buru_buru"
+        is_rider = persona.segment == "pengendara_lewat"
+
         stopped_seg: SegmentInput | None = None
         for idx in range(start_idx, len(segments)):
             seg = segments[idx]
-            text_low = f"{seg.narrative} {seg.not_visible}".lower()
-            budget_tight = persona.discrete_traits.get("budget_sensitivity") == "hemat"
-            lazy = persona.discrete_traits.get("physical_laziness") == "malas"
-            rushed = persona.discrete_traits.get("dining_context") == "sendiri_buru_buru"
+            full_seg_low = f"{seg.narrative} {seg.not_visible}".lower()
+            raw_seg_low = f"{_strip_applied_fix_suffix(seg.narrative)} {seg.not_visible}".lower()
 
             stop_prob = 0.04
-            if "tidak terbaca" in text_low or "belum terlihat" in text_low or "tidak terlihat" in text_low:
+            if "tidak terbaca" in raw_seg_low or "belum terlihat" in raw_seg_low or "tidak terlihat" in raw_seg_low:
                 stop_prob += 0.14 if not rushed else 0.22
-            if ("gelap" in text_low or "redup" in text_low or "tangga" in text_low) and lazy:
+            if ("gelap" in raw_seg_low or "redup" in raw_seg_low or "tangga" in raw_seg_low) and lazy:
                 stop_prob += 0.20
-            if ("harga" in text_low or "menu" in text_low) and "belum" in text_low and budget_tight:
+            if ("harga" in raw_seg_low or "menu" in raw_seg_low) and "belum" in raw_seg_low and budget_tight:
                 stop_prob += 0.24
-            if "kasir" in text_low and ("bingung" in text_low or "belum terbaca" in text_low):
+            if "kasir" in raw_seg_low and ("bingung" in raw_seg_low or "belum" in raw_seg_low):
                 stop_prob += 0.16
-            if "terbaca jelas" in text_low or "terang" in text_low or "langsung dikenali" in text_low:
+            if ("qris" in raw_seg_low or "non-tunai" in raw_seg_low or "kursi" in raw_seg_low) and (
+                "belum" in raw_seg_low or "tidak" in raw_seg_low
+            ):
+                stop_prob += 0.12
+            if ("bungkus" in raw_seg_low or "waktu saji" in raw_seg_low or "estimasi" in raw_seg_low) and rushed:
+                stop_prob += 0.14
+            if "terbaca jelas" in full_seg_low or "terang" in full_seg_low or "langsung dikenali" in full_seg_low:
                 stop_prob = max(0.02, stop_prob - 0.16)
+            elif "(setelah perbaikan:" in full_seg_low or "[perbaikan diterapkan:" in full_seg_low:
+                stop_prob = max(0.03, stop_prob - 0.08)
 
             if rng.random() < stop_prob:
                 stopped_seg = seg
@@ -124,31 +189,22 @@ def _evaluate_batch_mock(
         primary_id: str | None = None
 
         if decision != "memesan":
-            # Pilih 1-3 isyarat 'menghambat' yang relevan berdasarkan teks segmen yang dilewati
+            # Pilih 1-3 isyarat 'menghambat' yang relevan berdasarkan kondisi awal & titik belum terlihat
             passed_text = " ".join(
-                f"{s.narrative} {s.not_visible}" for s in segments[: len(traces)]
+                f"{_strip_applied_fix_suffix(s.narrative)} {s.not_visible}" for s in segments[: len(traces)]
             ).lower()
             scored_h: list[tuple[CueHypothesis, int, str]] = []
             for h in cat:
                 if h.cue_code == "H0":
                     continue
-                rel = 0
-                if h.cue_code == "H1" and ("papan nama" in passed_text or "tidak terlihat" in passed_text):
-                    rel = 2
-                elif h.cue_code == "H2" and ("jam buka" in passed_text or "jam operasional" in passed_text or "status buka" in passed_text):
-                    rel = 3 if rushed else 2
-                elif h.cue_code == "H3" and ("jenis" in passed_text or "hidangan" in passed_text or "belum terlihat" in passed_text):
-                    rel = 2
-                elif h.cue_code == "H4" and ("parkir" in passed_text):
-                    rel = 2 if persona.segment == "pengendara_lewat" else 1
-                elif h.cue_code == "H5" and ("tangga" in passed_text or "pintu" in passed_text):
-                    rel = 3 if lazy else 1
-                elif h.cue_code == "H6" and ("redup" in passed_text or "gelap" in passed_text or "pencahayaan" in passed_text):
-                    rel = 2
-                elif h.cue_code == "H8" and ("harga" in passed_text or "menu" in passed_text):
-                    rel = 3 if budget_tight else 2
-                elif h.cue_code == "H10" and ("kasir" in passed_text or "pesan" in passed_text):
-                    rel = 2
+                rel = _score_mock_cue(
+                    h.cue_code,
+                    passed_text,
+                    budget_tight=budget_tight,
+                    lazy=lazy,
+                    rushed=rushed,
+                    is_rider=is_rider,
+                )
                 if rel > 0:
                     quote = traces[-1]["monologue"][:90] if traces else full_monologue[:90]
                     scored_h.append((h, rel, quote))

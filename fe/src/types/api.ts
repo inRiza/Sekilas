@@ -203,8 +203,11 @@ export interface ParetoRecommendation {
   description: string;
   impact: 'Tinggi' | 'Sedang' | 'Rendah';
   effort: 'Rendah' | 'Sedang' | 'Tinggi';
-  estimated_lift_range: string; // misal "+12% – +16%"
+  estimated_lift_range: string; // misal "+4 dari 20 agen"
   location_zone: string;
+  cost_rp?: number | null;
+  segment_ids?: string[];
+  affected_agents_count?: number;
 }
 
 export interface VisualTwinMeta {
@@ -239,6 +242,8 @@ export interface WhatIfProjectionData {
     baseline_pct: number;
     projected_pct: number;
     delta_label: string;
+    baseline_count?: number;
+    projected_count?: number;
   }>;
   model_conclusion: string;
   mode?: 'estimasi_cepat' | 'terverifikasi_simulasi';
