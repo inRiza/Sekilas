@@ -674,12 +674,13 @@ export async function uploadKeyframesToStorage(
   const uploadedUrls: string[] = [];
   const supabase = createClient();
 
+  const versionTag = Date.now();
   for (let i = 0; i < dataUrls.length; i += 1) {
     const dataUrl = dataUrls[i]!;
     try {
       const res = await fetch(dataUrl);
       const blob = await res.blob();
-      const key = `${analysisId}/frames/frame_0${i + 1}.jpg`;
+      const key = `${analysisId}/frames/${versionTag}_frame_0${i + 1}.jpg`;
       const { error } = await supabase.storage.from('videos').upload(key, blob, {
         cacheControl: '3600',
         upsert: true,
