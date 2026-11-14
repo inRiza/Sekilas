@@ -4,6 +4,7 @@ import React, { Suspense } from 'react';
 
 import { AppNavbar } from '@/components/layout/app-navbar';
 import { AppSidebar } from '@/components/layout/app-sidebar';
+import { BackendStatusBanner } from '@/components/layout/backend-status-banner';
 import { WizardProgressSection } from '@/components/layout/wizard-progress';
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar';
 
@@ -24,6 +25,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <Suspense fallback={<div className="h-14 shrink-0 border-b border-line" aria-hidden />}>
           <AppNavbar />
         </Suspense>
+        <BackendStatusBanner />
         <Suspense fallback={null}>
           <WizardProgressSection />
         </Suspense>

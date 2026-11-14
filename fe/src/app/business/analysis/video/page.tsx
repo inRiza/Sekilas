@@ -328,9 +328,12 @@ function VideoUploadInner() {
         const uploaded = await uploadVideoToSupabaseStorage(analysisId, redactedFile);
         storageKey = uploaded.storageKey;
 
-        // Salinan untuk job Visual Twin lokal (COLMAP + Brush di server, PRD 11.2).
-        setUploadStage('Mengirim video ke server Visual Twin 3D...');
-        await uploadVideoFileToBackend(analysisId, redactedFile);
+        // Job Visual Twin mengunduh video dari Storage. Bila unggahan ke Storage gagal,
+        // kirim langsung ke server agar 3D tetap bisa dibangun.
+        if (!uploaded.publicUrl) {
+          setUploadStage('Mengirim video ke server Visual Twin 3D...');
+          await uploadVideoFileToBackend(analysisId, redactedFile);
+        }
 
         let framesToUpload = sampledFrames;
         if (framesToUpload.length === 0 && videoElRef.current && videoElRef.current.readyState >= 2) {
