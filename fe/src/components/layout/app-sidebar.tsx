@@ -27,7 +27,6 @@ import {
   subscribeCrudChanges,
 } from '@/lib/api/crud';
 import { signOutUser, useAuthUser } from '@/lib/auth/use-auth';
-import { MOCK_BUSINESSES } from '@/lib/mock/business';
 import type { Analysis, Business } from '@/types/api';
 
 const NEW_ANALYSIS_HREF = '/business/analysis/konteks';
@@ -169,9 +168,8 @@ function AppSidebarInner() {
   const { user: currentUser } = useAuthUser();
   const [businesses, setBusinesses] = useState<Business[]>(() => getLocalBusinesses());
   const [analyses, setAnalyses] = useState<Analysis[]>(() => getLocalAnalyses());
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({
-    [MOCK_BUSINESSES[0]!.id]: true,
-  });
+  // Bisnis dari URL aktif terbuka otomatis (lihat isExpanded); sisanya dibuka manual.
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [openedAnalysisId, setOpenedAnalysisId] = useState<string | null>(null);
 
   useEffect(() => {

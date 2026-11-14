@@ -1,8 +1,3 @@
-import { MOCK_AGENTS } from '@/lib/mock/agents';
-import { MOCK_ANALYSES } from '@/lib/mock/analyses';
-import { MOCK_BUSINESSES } from '@/lib/mock/business';
-import { MOCK_DASHBOARD } from '@/lib/mock/dashboard';
-import { MOCK_TRANSCRIPT } from '@/lib/mock/transcript';
 import { createClient } from '@/lib/supabase/client';
 import type {
   AgentDecision,
@@ -127,17 +122,14 @@ export function createEmptyContext(
 
 /* ---------------- Local Fallback Store ---------------- */
 
+/** Salinan terakhir dari server (cadangan offline). Kosong sampai server pernah menjawab. */
 export function getLocalBusinesses(): Business[] {
-  if (typeof window === 'undefined') return MOCK_BUSINESSES;
+  if (typeof window === 'undefined') return [];
   try {
     const raw = window.localStorage.getItem(STORAGE_BIZ_KEY);
-    if (!raw) {
-      window.localStorage.setItem(STORAGE_BIZ_KEY, JSON.stringify(MOCK_BUSINESSES));
-      return MOCK_BUSINESSES;
-    }
-    return JSON.parse(raw) as Business[];
+    return raw ? (JSON.parse(raw) as Business[]) : [];
   } catch {
-    return MOCK_BUSINESSES;
+    return [];
   }
 }
 
@@ -147,17 +139,14 @@ function setLocalBusinesses(items: Business[]) {
   notifyCrudChanged();
 }
 
+/** Salinan terakhir dari server (cadangan offline). Kosong sampai server pernah menjawab. */
 export function getLocalAnalyses(): Analysis[] {
-  if (typeof window === 'undefined') return MOCK_ANALYSES;
+  if (typeof window === 'undefined') return [];
   try {
     const raw = window.localStorage.getItem(STORAGE_ANL_KEY);
-    if (!raw) {
-      window.localStorage.setItem(STORAGE_ANL_KEY, JSON.stringify(MOCK_ANALYSES));
-      return MOCK_ANALYSES;
-    }
-    return JSON.parse(raw) as Analysis[];
+    return raw ? (JSON.parse(raw) as Analysis[]) : [];
   } catch {
-    return MOCK_ANALYSES;
+    return [];
   }
 }
 
@@ -199,6 +188,31 @@ async function getAuthHeaders(): Promise<Record<string, string>> {
   return {};
 }
 
+/* ---------------- Status koneksi backend ---------------- */
+
+/**
+ * `offline` bila panggilan terakhir ke backend gagal di jaringan atau membalas 5xx. Saat itu
+ * halaman memakai data localStorage/contoh, jadi perubahan belum tersimpan ke database.
+ */
+export type BackendStatus = 'unknown' | 'online' | 'offline';
+let backendStatus: BackendStatus = 'unknown';
+const backendStatusListeners = new Set<() => void>();
+
+function setBackendStatus(next: BackendStatus) {
+  if (backendStatus === next) return;
+  backendStatus = next;
+  backendStatusListeners.forEach((l) => l());
+}
+
+export function getBackendStatus(): BackendStatus {
+  return backendStatus;
+}
+
+export function subscribeBackendStatus(listener: () => void): () => void {
+  backendStatusListeners.add(listener);
+  return () => backendStatusListeners.delete(listener);
+}
+
 async function tryApiFetch<T>(path: string, init?: RequestInit): Promise<T | null> {
   try {
     const authHeader = await getAuthHeaders();
@@ -210,10 +224,12 @@ async function tryApiFetch<T>(path: string, init?: RequestInit): Promise<T | nul
         ...(init?.headers ?? {}),
       },
     });
+    setBackendStatus(res.status >= 500 ? 'offline' : 'online');
     if (!res.ok) return null;
     if (res.status === 204) return undefined as T;
     return (await res.json()) as T;
   } catch {
+    setBackendStatus('offline');
     return null;
   }
 }
@@ -767,7 +783,7 @@ export async function fetchTranscriptSegments(analysisId?: string | null): Promi
   }
   const local = getLocalTranscriptMap()[id];
   if (local && local.length > 0) return local;
-  return id === 'selasar-kopi' ? MOCK_TRANSCRIPT : [];
+  return [];
 }
 
 export async function createTranscriptSegment(
@@ -881,9 +897,6 @@ export async function fetchDashboardData(analysisId?: string | null): Promise<Da
     if (err instanceof SimulationRequiredError) throw err;
   }
 
-  if (id === 'selasar-kopi') {
-    return MOCK_DASHBOARD;
-  }
   throw new Error('Gagal memuat data dasbor dari server.');
 }
 
@@ -929,8 +942,7 @@ export async function runWhatIfProjection(
 export async function fetchAgentDecisions(analysisId?: string | null): Promise<AgentDecision[]> {
   const id = analysisId || 'selasar-kopi';
   const remote = await tryApiFetch<AgentDecision[]>(`/analyses/${id}/simulation/agents`);
-  if (remote !== null) return remote;
-  return id === 'selasar-kopi' ? MOCK_AGENTS : [];
+  return remote ?? [];
 }
 
 export async function triggerSimulationRun(analysisId?: string | null): Promise<void> {
@@ -1013,6 +1025,8 @@ export interface TwinBuildAssets {
   quality_label: string;
   path_duration_seconds: number;
   diagnosis_summary: string | null;
+  /** Zona jalur dari segmen transkrip; nama bisa diubah pemilik (F7). */
+  zones: { id: string; name: string; funnel_stage: string; start_s: number; end_s: number }[];
 }
 
 export interface TwinBuild {
@@ -1042,4 +1056,17 @@ export async function uploadVideoFileToBackend(analysisId: string, file: File): 
   } catch {
     return false;
   }
+}
+/* ---------------- Job transkrip VLM (F3, PRD 4.4.2) ---------------- */
+
+export interface ProcessingJob {
+  status: 'queued' | 'running' | 'done' | 'failed';
+  stage: string | null;
+  progress: number;
+  message: string | null;
+}
+
+/** Status job transkrip terbaru. `null` bila backend tidak terjangkau. */
+export async function fetchProcessingStatus(analysisId: string): Promise<ProcessingJob | null> {
+  return tryApiFetch<ProcessingJob>(`/analyses/${encodeURIComponent(analysisId)}/video/processing`, { cache: 'no-store' });
 }

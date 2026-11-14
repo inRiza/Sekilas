@@ -8,8 +8,7 @@ import { SekilasMascot } from '@/components/brand/mascot';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ArrowLeftIcon, ArrowRightIcon } from '@/components/ui/icons';
-import { fetchTranscriptSegments } from '@/lib/api/crud';
-import { MOCK_TRANSCRIPT } from '@/lib/mock/transcript';
+import { fetchProcessingStatus, fetchTranscriptSegments, type ProcessingJob } from '@/lib/api/crud';
 import { TWIN_STAGES, useTwin } from '@/lib/use-twin';
 import type { TranscriptSegment } from '@/types/api';
 
@@ -116,14 +115,34 @@ function ProsesInner() {
   const twinStatus: StageStatus = twinDone ? 'done' : job && !twinFailed ? 'running' : 'waiting';
   const twinPercent = job ? Math.round(job.progress * 100) : twinDone ? 100 : 0;
 
-  const [segments, setSegments] = useState<TranscriptSegment[]>(
-    analysisId === 'selasar-kopi' ? MOCK_TRANSCRIPT : [],
-  );
+  const [segments, setSegments] = useState<TranscriptSegment[]>([]);
+  // Job transkrip VLM asli: dipoll sampai selesai/gagal, lalu segmennya dimuat.
+  const [transcriptJob, setTranscriptJob] = useState<ProcessingJob | null>(null);
   useEffect(() => {
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const tick = async () => {
+      const job = await fetchProcessingStatus(analysisId);
+      if (cancelled) return;
+      setTranscriptJob(job);
+      if (job && (job.status === 'queued' || job.status === 'running')) timer = setTimeout(tick, 2000);
+    };
+    void tick();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [analysisId]);
+  // Backend tidak terjangkau (null) tetap memuat segmen dari cadangan lokal.
+  const transcriptReady = transcriptJob === null || transcriptJob.status === 'done';
+  const transcriptFailed = transcriptJob?.status === 'failed';
+
+  useEffect(() => {
+    if (!transcriptReady) return;
     void fetchTranscriptSegments(analysisId).then((list) => {
       if (list.length > 0) setSegments(list);
     });
-  }, [analysisId]);
+  }, [analysisId, transcriptReady]);
 
   const log = useMemo(() => buildLog(segments), [segments]);
   const [shown, setShown] = useState(0);
@@ -142,7 +161,7 @@ function ProsesInner() {
     if (box) box.scrollTo({ top: box.scrollHeight, behavior: 'smooth' });
   }, [shown]);
 
-  const transcriptDone = log.length > 0 && shown >= log.length;
+  const transcriptDone = transcriptReady && log.length > 0 && shown >= log.length;
   const progress = log.length > 0 ? Math.round((shown / log.length) * 100) : 100;
   const segmentsRead = log.slice(0, shown).filter((l) => l.kind === 'segment').length;
 
@@ -173,8 +192,14 @@ function ProsesInner() {
                   <StageRow
                     icon={FileText}
                     title="Transkrip video"
-                    description={`${segmentsRead} dari ${segments.length} segmen dibaca, lengkap dengan frame bukti.`}
-                    status={transcriptDone ? 'done' : 'running'}
+                    description={
+                      transcriptFailed
+                        ? transcriptJob?.message ?? 'AI belum bisa membaca video ini. Coba unggah ulang.'
+                        : transcriptReady
+                          ? `${segmentsRead} dari ${segments.length} segmen dibaca, lengkap dengan frame bukti.`
+                          : `${transcriptJob?.stage ?? 'Menunggu antrean'}…`
+                    }
+                    status={transcriptDone ? 'done' : transcriptFailed ? 'waiting' : 'running'}
                   />
                   <StageRow
                     icon={Box}
@@ -291,7 +316,7 @@ function ProsesInner() {
                         </li>
                       );
                     })}
-                    {!transcriptDone && (
+                    {!transcriptDone && !transcriptFailed && (
                       <li className="flex items-center gap-3 px-3 py-2.5 text-[13px] text-muted">
                         <LoaderCircle size={14} className="animate-spin text-primary-40" />
                         Membaca frame berikutnya…

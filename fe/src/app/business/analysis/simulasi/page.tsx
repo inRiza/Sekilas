@@ -9,7 +9,6 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ArrowLeftIcon, ArrowRightIcon } from '@/components/ui/icons';
 import { fetchAgentDecisions, triggerSimulationRun } from '@/lib/api/crud';
-import { MOCK_AGENTS } from '@/lib/mock/agents';
 import type { AgentDecision } from '@/types/api';
 
 /** Jeda antar-langkah animasi (UI simulasi; nanti diganti progres asli dari backend). */
@@ -82,9 +81,7 @@ function SimulasiAgenInner() {
     businessId ? `&businessId=${encodeURIComponent(businessId)}` : ''
   }`;
 
-  const [agents, setAgents] = useState<AgentDecision[]>(
-    analysisId === 'selasar-kopi' ? MOCK_AGENTS : [],
-  );
+  const [agents, setAgents] = useState<AgentDecision[]>([]);
   const [isRunning, setIsRunning] = useState<boolean>(analysisId !== 'selasar-kopi');
   const [simError, setSimError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
