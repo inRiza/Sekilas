@@ -45,21 +45,17 @@ def get_video_metadata(
         return VideoMetadataOut(
             id=f"vid_{analysis.id}",
             analysis_id=analysis.id,
-            original_filename="video_rekaman_selasar.mp4",
-            storage_key=f"videos/{analysis.id}/video_rekaman_selasar.mp4",
-            duration_s=48.0,
-            cashier_at_s=48.0,
-            width=1920,
-            height=1080,
-            accepted=True,
-            quality_checks={
-                "resolution": "1080 px, ideal",
-                "duration": "48 detik, disarankan 60–120 detik",
-                "stability": "Stabil, putaran di bawah 45°/detik",
-                "lighting": "Terang dan jelas",
-            },
-            blurred_faces_count=14,
-            blurred_plates_count=6,
+            original_filename=None,
+            storage_key=None,
+            public_url=None,
+            duration_s=0.0,
+            cashier_at_s=None,
+            width=None,
+            height=None,
+            accepted=False,
+            quality_checks={},
+            blurred_faces_count=0,
+            blurred_plates_count=0,
         )
     return video_model_to_schema(video)
 

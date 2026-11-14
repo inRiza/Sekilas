@@ -1,8 +1,8 @@
 'use client';
 
 import Link from 'next/link';
-import { usePathname, useRouter } from 'next/navigation';
-import React, { useEffect, useState } from 'react';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import React, { Suspense, useEffect, useState } from 'react';
 
 import { SekilasLogo, SekilasLogoIcon } from '@/components/brand/logo';
 import { Badge } from '@/components/ui/badge';
@@ -159,9 +159,13 @@ function BusinessNode({
   );
 }
 
-export function AppSidebar() {
+function AppSidebarInner() {
   const pathname = usePathname();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const analysisIdParam = searchParams.get('analysisId');
+  const businessIdParam = searchParams.get('businessId');
+
   const { user: currentUser } = useAuthUser();
   const [businesses, setBusinesses] = useState<Business[]>(() => getLocalBusinesses());
   const [analyses, setAnalyses] = useState<Analysis[]>(() => getLocalAnalyses());
@@ -176,6 +180,9 @@ export function AppSidebar() {
       if (!active) return;
       setBusinesses(bizList);
       setAnalyses(anlList);
+      if (bizList[0]) {
+        setExpanded((prev) => ({ [bizList[0]!.id]: true, ...prev }));
+      }
     });
     const unsubscribe = subscribeCrudChanges(() => {
       setBusinesses(getLocalBusinesses());
@@ -187,13 +194,21 @@ export function AppSidebar() {
     };
   }, []);
 
-  // Sorot analisis hanya di halaman hasil (dasbor & jelajah agen); halaman alur
-  // (konteks, video, dst.) adalah pembuatan analisis baru, jadi tidak ada yang disorot.
+  // Sorot analisis hanya di halaman hasil (dasbor & jelajah agen) atau saat membuka analisis tertentu
   const onAnalysisPage = pathname === '/business/analysis' || pathname === '/business/analysis/agents';
   const latestReady = analyses
     .filter((a) => a.status === 'ready')
     .sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
-  const activeAnalysisId = onAnalysisPage ? (openedAnalysisId ?? latestReady?.id ?? null) : null;
+  const activeAnalysisId =
+    analysisIdParam ?? (onAnalysisPage ? (openedAnalysisId ?? latestReady?.id ?? null) : null);
+  const activeBizFromUrl =
+    businessIdParam ??
+    (analysisIdParam ? analyses.find((a) => a.id === analysisIdParam)?.business_id : undefined);
+  const newAnalysisTargetHref = businessIdParam
+    ? `${NEW_ANALYSIS_HREF}?businessId=${encodeURIComponent(businessIdParam)}&mode=new`
+    : businesses[0]
+      ? `${NEW_ANALYSIS_HREF}?businessId=${encodeURIComponent(businesses[0].id)}&mode=new`
+      : NEW_ANALYSIS_HREF;
 
   return (
     <Sidebar>
@@ -210,7 +225,7 @@ export function AppSidebar() {
           </span>
         </Link>
         <Link
-          href={NEW_ANALYSIS_HREF}
+          href={newAnalysisTargetHref}
           title="Analisis baru"
           className="btn-primary flex h-9 items-center justify-center gap-2 rounded-lg px-3 text-[13px] font-medium text-white group-data-[collapsible=icon]/sidebar:px-0 [&>span]:group-data-[collapsible=icon]/sidebar:hidden"
         >
@@ -238,13 +253,14 @@ export function AppSidebar() {
               const bizAnalyses = analyses
                 .filter((a) => a.business_id === b.id)
                 .sort((x, y) => y.created_at.localeCompare(x.created_at));
+              const isExpanded = expanded[b.id] ?? b.id === activeBizFromUrl;
               return (
                 <BusinessNode
                   key={b.id}
                   business={b}
                   analyses={bizAnalyses}
-                  expanded={!!expanded[b.id]}
-                  onToggle={() => setExpanded((prev) => ({ ...prev, [b.id]: !prev[b.id] }))}
+                  expanded={Boolean(isExpanded)}
+                  onToggle={() => setExpanded((prev) => ({ ...prev, [b.id]: !isExpanded }))}
                   activeAnalysisId={activeAnalysisId}
                   onOpenAnalysis={setOpenedAnalysisId}
                 />
@@ -281,5 +297,13 @@ export function AppSidebar() {
         </div>
       </SidebarFooter>
     </Sidebar>
+  );
+}
+
+export function AppSidebar() {
+  return (
+    <Suspense fallback={<Sidebar><div /></Sidebar>}>
+      <AppSidebarInner />
+    </Suspense>
   );
 }

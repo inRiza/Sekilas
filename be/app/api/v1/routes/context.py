@@ -50,17 +50,18 @@ def save_context(
 
 
 @router.post("/menu-photo", response_model=list[MenuItem])
+@router.post("/menu-file", response_model=list[MenuItem])
 async def read_menu_photo(
     analysis_id: str,
     file: UploadFile,
-    session: SessionDep,
 ) -> list[MenuItem]:
-    """Foto menu dibaca otomatis, hasilnya dikoreksi pemilik di FE."""
-    analysis = load_analysis_with_relations(session, analysis_id)
-    if analysis is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Analisis tidak ditemukan.")
+    """Foto atau file menu dibaca otomatis, hasilnya dikoreksi pemilik di FE."""
     image_bytes = await file.read()
     try:
-        return read_menu(image_bytes)
-    except NotImplementedError:
+        return read_menu(
+            image_bytes,
+            filename=file.filename or "",
+            content_type=file.content_type or "image/jpeg",
+        )
+    except (ValueError, OSError):
         return []

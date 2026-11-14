@@ -23,6 +23,7 @@ import { ArrowLeftIcon, ArrowRightIcon } from '@/components/ui/icons';
 import {
   completeVideoUpload,
   fetchVideoMetadata,
+  uploadKeyframesToStorage,
   uploadVideoToSupabaseStorage,
 } from '@/lib/api/crud';
 import {
@@ -69,18 +70,20 @@ function VideoUploadInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const analysisId = searchParams.get('analysisId') || 'selasar-kopi';
+  const businessId = searchParams.get('businessId');
   const inputRef = useRef<HTMLInputElement>(null);
   const videoElRef = useRef<HTMLVideoElement>(null);
   const canvasElRef = useRef<HTMLCanvasElement>(null);
 
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [videoName, setVideoName] = useState<string | null>('video_rekaman_selasar.mp4');
+  const [videoName, setVideoName] = useState<string | null>(null);
+  const [sampledFrames, setSampledFrames] = useState<string[]>([]);
   const [durationSec, setDurationSec] = useState<number>(48);
   const [widthPx, setWidthPx] = useState<number>(1920);
   const [heightPx, setHeightPx] = useState<number>(1080);
-  const [blurredFaces, setBlurredFaces] = useState<number>(14);
-  const [blurredPlates, setBlurredPlates] = useState<number>(6);
+  const [blurredFaces, setBlurredFaces] = useState<number>(0);
+  const [blurredPlates, setBlurredPlates] = useState<number>(0);
   const [liveDetectionsCount, setLiveDetectionsCount] = useState<{ faces: number; plates: number }>({
     faces: 0,
     plates: 0,
@@ -100,7 +103,7 @@ function VideoUploadInner() {
   const [dragging, setDragging] = useState(false);
   const [blurPreviewActive, setBlurPreviewActive] = useState(true);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [currentPlaySec, setCurrentPlaySec] = useState<number>(35);
+  const [currentPlaySec, setCurrentPlaySec] = useState<number>(0);
   const [cashierTime, setCashierTime] = useState('00:48');
   const [saving, setSaving] = useState(false);
   const [uploadStage, setUploadStage] = useState<string | null>(null);
@@ -173,13 +176,21 @@ function VideoUploadInner() {
 
   useEffect(() => {
     void fetchVideoMetadata(analysisId).then((meta) => {
+      if (!meta.original_filename) {
+        setVideoName(null);
+        return;
+      }
+
       const dur = meta.duration_s && meta.duration_s > 0 ? meta.duration_s : 48;
       const w = meta.width || 1920;
       const h = meta.height || 1080;
-      const faces = meta.blurred_faces_count ?? 14;
-      const plates = meta.blurred_plates_count ?? 6;
+      const faces = meta.blurred_faces_count ?? 0;
+      const plates = meta.blurred_plates_count ?? 0;
 
-      if (meta.original_filename) setVideoName(meta.original_filename);
+      setVideoName(meta.original_filename);
+      if (meta.public_url) {
+        setPreviewUrl(meta.public_url);
+      }
       setDurationSec(dur);
       setWidthPx(w);
       setHeightPx(h);
@@ -207,7 +218,7 @@ function VideoUploadInner() {
 
   useEffect(() => {
     return () => {
-      if (previewUrl) URL.revokeObjectURL(previewUrl);
+      if (previewUrl && previewUrl.startsWith('blob:')) URL.revokeObjectURL(previewUrl);
     };
   }, [previewUrl]);
 
@@ -219,7 +230,7 @@ function VideoUploadInner() {
 
   const pickFile = async (f: File | undefined) => {
     if (!isSupportedVideoFile(f)) return;
-    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    if (previewUrl && previewUrl.startsWith('blob:')) URL.revokeObjectURL(previewUrl);
 
     const url = URL.createObjectURL(f);
     setSelectedFile(f);
@@ -235,6 +246,7 @@ function VideoUploadInner() {
       setHeightPx(result.height);
       setBlurredFaces(result.blurredFacesCount);
       setBlurredPlates(result.blurredPlatesCount);
+      setSampledFrames(result.sampledFrameDataUrls);
       setChecks(result.checks);
       setAccepted(result.accepted);
       setRejectionReasons(result.rejectionReasons);
@@ -246,10 +258,11 @@ function VideoUploadInner() {
   };
 
   const clearVideo = () => {
-    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    if (previewUrl && previewUrl.startsWith('blob:')) URL.revokeObjectURL(previewUrl);
     setPreviewUrl(null);
     setSelectedFile(null);
     setVideoName(null);
+    setSampledFrames([]);
     setIsPlaying(false);
     setRejectionReasons([]);
     lastBoxesRef.current = [];
@@ -280,13 +293,16 @@ function VideoUploadInner() {
     setCashierTime(toMmSs(clamped));
   };
 
-  const querySuffix = `?analysisId=${encodeURIComponent(analysisId)}`;
+  const querySuffix = `?analysisId=${encodeURIComponent(analysisId)}${
+    businessId ? `&businessId=${encodeURIComponent(businessId)}` : ''
+  }`;
 
   const handleContinue = async () => {
     if (!canContinue || !videoName || cashierSec === null) return;
     setSaving(true);
     try {
       let storageKey: string | undefined;
+      let frameUrls: string[] = [];
       if (selectedFile) {
         setUploadStage('Memburamkan wajah & plat nomor di perangkatmu...');
         const redactedFile = await exportRedactedVideoFile(selectedFile, (ratio) => {
@@ -296,6 +312,11 @@ function VideoUploadInner() {
         setUploadStage('Mengunggah video terburam ke Supabase Storage...');
         const uploaded = await uploadVideoToSupabaseStorage(analysisId, redactedFile);
         storageKey = uploaded.storageKey;
+
+        if (sampledFrames.length > 0) {
+          setUploadStage('Mengunggah frame bukti transkrip...');
+          frameUrls = await uploadKeyframesToStorage(analysisId, sampledFrames);
+        }
       }
 
       setUploadStage('Menjadwalkan job Transkrip VLM & Visual Twin 3D...');
@@ -315,6 +336,7 @@ function VideoUploadInner() {
         quality_checks: qualityMap,
         blurred_faces_count: blurredFaces,
         blurred_plates_count: blurredPlates,
+        frame_keys: frameUrls.length > 0 ? frameUrls : sampledFrames.length > 0 ? sampledFrames : undefined,
       });
       router.push(`/business/analysis/proses${querySuffix}`);
     } finally {

@@ -9,6 +9,7 @@ from app.schemas.simulation import AgentDecisionOut, SimulationRequest
 from app.services.crud import (
     list_agent_decisions_for_analysis,
     load_analysis_with_relations,
+    run_simulation_for_analysis,
 )
 
 router = APIRouter(prefix="/analyses/{analysis_id}/simulation", tags=["simulation"])
@@ -21,15 +22,16 @@ def start_simulation(
     session: SessionDep,
     _user: CurrentUserDep,
 ) -> JobState:
-    """Mulai simulasi agen; memperbarui status analisis menjadi ready dan menghapus flag stale."""
+    """Mulai simulasi agen; membangkitkan persona & keputusan kontekstual lalu menandai analisis ready."""
     analysis = load_analysis_with_relations(session, analysis_id)
     if analysis is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Analisis tidak ditemukan")
-    analysis.status = "ready"
-    analysis.stale = False
-    analysis.stale_reasons = []
-    session.flush()
-    session.commit()
+    run_simulation_for_analysis(
+        session,
+        analysis,
+        n_agents=body.n_agents,
+        seed=body.seed,
+    )
     return JobState(
         job_id=f"job_sim_{analysis.id}",
         status=JobStatus.done,

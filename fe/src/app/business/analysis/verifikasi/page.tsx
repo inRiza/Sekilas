@@ -67,10 +67,21 @@ function SegmentItem({
 
       {/* Isi: frame bukti + narasi */}
       <div className="mt-4 flex flex-col gap-4 sm:flex-row">
-        <div className="flex h-24 w-full shrink-0 flex-col items-center justify-center gap-1 rounded-md bg-panel text-muted sm:w-40">
-          <ImageIcon size={18} />
-          <span className="text-[11px]">Frame bukti</span>
-        </div>
+        {seg.frame_keys &&
+        seg.frame_keys[0] &&
+        (seg.frame_keys[0].startsWith('http') || seg.frame_keys[0].startsWith('data:image/')) ? (
+          // eslint-disable-next-line @next/next/no-img-element -- frame bukti hasil ekstraksi video terburam
+          <img
+            src={seg.frame_keys[0]}
+            alt={`Frame bukti ${mmss(seg.timestamp_start)}`}
+            className="h-24 w-full shrink-0 rounded-md border border-line object-cover sm:w-40"
+          />
+        ) : (
+          <div className="flex h-24 w-full shrink-0 flex-col items-center justify-center gap-1 rounded-md bg-panel text-muted sm:w-40">
+            <ImageIcon size={18} />
+            <span className="text-[11px]">{seg.frame_keys?.[0] ?? 'Frame bukti'}</span>
+          </div>
+        )}
 
         <div className="min-w-0 flex-1">
           {editing ? (
@@ -155,6 +166,7 @@ function VerifikasiTranskripInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const analysisId = searchParams.get('analysisId') || 'selasar-kopi';
+  const businessId = searchParams.get('businessId');
 
   const [segments, setSegments] = useState<TranscriptSegment[]>(MOCK_TRANSCRIPT);
   const [showAddForm, setShowAddForm] = useState(false);
@@ -214,7 +226,9 @@ function VerifikasiTranskripInner() {
   const pending = segments.filter((s) => s.confidence === 'tidak_pasti' && !s.is_confirmed_by_owner).length;
   const verified = segments.length - pending;
   const ready = pending === 0;
-  const querySuffix = `?analysisId=${encodeURIComponent(analysisId)}`;
+  const querySuffix = `?analysisId=${encodeURIComponent(analysisId)}${
+    businessId ? `&businessId=${encodeURIComponent(businessId)}` : ''
+  }`;
 
   return (
     <div className="flex min-h-full flex-col bg-white">

@@ -102,7 +102,10 @@ function AgenExplorerInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const analysisId = searchParams.get('analysisId') || 'selasar-kopi';
-  const querySuffix = `?analysisId=${encodeURIComponent(analysisId)}`;
+  const businessId = searchParams.get('businessId');
+  const querySuffix = `?analysisId=${encodeURIComponent(analysisId)}${
+    businessId ? `&businessId=${encodeURIComponent(businessId)}` : ''
+  }`;
 
   const [allAgents, setAllAgents] = useState<AgentDecision[]>(MOCK_AGENTS);
   const [decisionFilter, setDecisionFilter] = useState<'all' | FinalDecision>('all');
