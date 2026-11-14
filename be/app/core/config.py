@@ -21,6 +21,8 @@ class Settings(BaseSettings):
     anthropic_model: str = "claude-sonnet-5-5"
     gemini_api_key: str = ""
     gemini_model: str = "gemini-3.8-flash"
+    # Dipakai berurutan bila model utama membalas 503/504 (kelebihan beban di sisi Google).
+    gemini_fallback_models: list[str] = ["gemini-3.6-flash", "gemini-3.5-flash"]
     openai_api_key: str = ""
     openai_model: str = "gpt-6-luna"
     vision_provider: str = "gemini"
