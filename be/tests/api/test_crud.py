@@ -464,3 +464,104 @@ def test_dynamic_waypoints_stage_counts_and_measurement_plan_targets(client: Tes
     assert targets[0] >= targets[1] >= targets[2] >= targets[3]
     assert targets[0] == 20
     assert targets[3] == dash["what_if_projection"]["buyers_projected"]
+
+
+def test_p3_signed_urls_processing_default_and_empty_dashboard_guard(
+    client: TestClient, tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from urllib.parse import urlparse
+
+    from app.core.config import get_settings
+    from app.core.storage import build_backend_media_url
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "storage_dir", tmp_path)
+
+    biz = client.post(
+        "/api/v1/businesses",
+        json={
+            "name": "Bakmi P3",
+            "branch_name": "Pusat",
+            "category": "kedai",
+            "address": "Jl. Merdeka 10",
+        },
+    ).json()
+    anl_id = client.post(f"/api/v1/businesses/{biz['id']}/analyses", json={}).json()["id"]
+
+    # 1. Status processing & simulation sebelum ada job / keputusan agen bukan 'done'
+    proc_before = client.get(f"/api/v1/analyses/{anl_id}/video/processing")
+    assert proc_before.status_code == 200
+    assert proc_before.json()["status"] == "queued"
+    assert proc_before.json()["progress"] == 0.0
+
+    sim_before = client.get(f"/api/v1/analyses/{anl_id}/simulation")
+    assert sim_before.status_code == 200
+    assert sim_before.json()["status"] == "queued"
+    assert sim_before.json()["progress"] == 0.0
+
+    # 2. Guard GET /dashboard tanpa require_existing=true saat decisions kosong
+    dash_empty = client.get(f"/api/v1/analyses/{anl_id}/dashboard")
+    assert dash_empty.status_code == 200
+    body_empty = dash_empty.json()
+    assert body_empty["total_agents"] == 0
+    assert body_empty["what_if_projection"] is None
+    assert body_empty["kpi"]["buyers_rate_text"] == "0 dari 0 agen simulasi"
+    assert len(body_empty["funnel_stages"]) == 4
+    assert all(s["count"] == 0 and s["percentage"] == 0.0 and not s["is_highest_friction"] for s in body_empty["funnel_stages"])
+
+    # 3. Signed URL dari upload-url, GET /video, GET /transcript, dan endpoint /video/media
+    url_res = client.post(
+        f"/api/v1/analyses/{anl_id}/video/upload-url",
+        json={"filename": "fasad_uji.mp4", "content_type": "video/mp4"},
+    )
+    assert url_res.status_code == 200
+    url_json = url_res.json()
+    assert "/storage/v1/object/public/" not in url_json["signed_url"]
+    assert "/storage/v1/object/public/" not in url_json["upload_url"]
+    assert "/storage/v1/object/public/" not in (url_json["public_url"] or "")
+    assert "sig=" in url_json["signed_url"] and "expires=" in url_json["signed_url"]
+
+    up_file = client.post(
+        f"/api/v1/analyses/{anl_id}/video/file",
+        files={"file": ("fasad_uji.mp4", b"FAKE-MP4-BYTES-P3", "video/mp4")},
+    )
+    assert up_file.status_code == 200
+    vid_meta = client.get(f"/api/v1/analyses/{anl_id}/video").json()
+    signed_media_url = vid_meta["public_url"]
+    assert signed_media_url and "/storage/v1/object/public/" not in signed_media_url
+
+    parsed = urlparse(signed_media_url)
+    media_ok = client.get(f"{parsed.path}?{parsed.query}")
+    assert media_ok.status_code == 200
+    assert media_ok.content == b"FAKE-MP4-BYTES-P3"
+
+    tampered = client.get(f"{parsed.path}?{parsed.query[:-1]}{'0' if parsed.query[-1] != '0' else '1'}")
+    assert tampered.status_code == 403
+
+    expired_url = build_backend_media_url(anl_id, f"{anl_id}/fasad_uji.mp4", ttl_seconds=-10)
+    # Bypass min clamp by overriding expires directly
+    bad_exp = client.get(
+        f"/api/v1/analyses/{anl_id}/video/media?key={anl_id}/fasad_uji.mp4&expires=1&sig=deadbeef"
+    )
+    assert bad_exp.status_code == 403
+    assert expired_url
+
+    trav = client.get(
+        f"/api/v1/analyses/{anl_id}/video/media?key=../secret.mp4&expires=9999999999&sig=deadbeef"
+    )
+    assert trav.status_code == 400
+
+    # Complete video -> job processing menjadi done & frame_keys bertanda tangan
+    assert (
+        client.post(
+            f"/api/v1/analyses/{anl_id}/video/complete",
+            json={"cashier_at_s": 30.0, "duration_s": 35.0},
+        ).status_code
+        == 202
+    )
+    assert client.get(f"/api/v1/analyses/{anl_id}/video/processing").json()["status"] == "done"
+    segs = client.get(f"/api/v1/analyses/{anl_id}/transcript").json()
+    assert segs
+    for seg in segs:
+        for fk in seg["frame_keys"]:
+            assert "/storage/v1/object/public/" not in fk

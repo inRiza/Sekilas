@@ -14,8 +14,16 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://sekilas:sekilas@localhost:5432/sekilas"
     supabase_url: str = "https://qqfyitqxrcufjskwaldp.supabase.co"
     supabase_publishable_key: str = "sb_publishable_lcbTN_odHD3JCdPqbUFfLw_vkeTdfWq"
+    supabase_secret_key: str = ""
+    supabase_service_role_key: str = ""
+    media_signing_secret: str = ""
+    signed_url_ttl_seconds: int = 3600
     redis_url: str = "redis://localhost:6379/0"
     storage_dir: Path = Path("./storage")
+
+    @property
+    def effective_supabase_secret_key(self) -> str:
+        return (self.supabase_secret_key or self.supabase_service_role_key).strip()
 
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-sonnet-5-5"

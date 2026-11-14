@@ -106,21 +106,34 @@ def find_local_video(analysis_id: str) -> Path | None:
 
 
 def _download_from_storage(analysis_id: str, storage_key: str) -> Path:
-    """Unduh video terburam dari bucket `videos` Supabase ke penyimpanan lokal."""
-    if storage_key.startswith(("http://", "https://")):
-        url = storage_key
-    else:
-        base = get_settings().supabase_url.rstrip("/")
-        url = f"{base}/storage/v1/object/public/videos/{storage_key.removeprefix('videos/')}"
+    """Unduh video terburam dari bucket `videos` Supabase secara terotorisasi ke penyimpanan lokal."""
+    from app.core.storage import (
+        DEFAULT_VIDEO_BUCKET,
+        download_supabase_object,
+        extract_bucket_object_key,
+    )
+
     ext = Path(storage_key).suffix.lower()
     dest = local_video_dir() / f"{analysis_id}{ext if ext in VIDEO_EXTS else '.mp4'}"
     dest.parent.mkdir(parents=True, exist_ok=True)
-    with httpx.stream("GET", url, timeout=120.0, follow_redirects=True) as res:
-        res.raise_for_status()
-        with dest.open("wb") as out:
-            for chunk in res.iter_bytes(1024 * 1024):
-                out.write(chunk)
-    return dest
+
+    clean_key = extract_bucket_object_key(storage_key, analysis_id=analysis_id)
+    if clean_key:
+        downloaded = download_supabase_object(clean_key, bucket=DEFAULT_VIDEO_BUCKET)
+        if downloaded is not None:
+            content, _ = downloaded
+            dest.write_bytes(content)
+            return dest
+
+    if storage_key.startswith(("http://", "https://")):
+        with httpx.stream("GET", storage_key, timeout=120.0, follow_redirects=True) as res:
+            res.raise_for_status()
+            with dest.open("wb") as out:
+                for chunk in res.iter_bytes(1024 * 1024):
+                    out.write(chunk)
+        return dest
+
+    raise FileNotFoundError(f"Gagal mengunduh video dari Storage: {storage_key}")
 
 
 def _update_job(job_id: str, **fields: object) -> None:

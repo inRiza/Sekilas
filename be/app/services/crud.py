@@ -8,7 +8,7 @@ from uuid import uuid4
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
-from app.core.config import get_settings
+from app.core.storage import build_authorized_media_url, extract_bucket_object_key
 from app.models.entities import (
     AgentDecisionRecord,
     AuditLog,
@@ -430,28 +430,40 @@ def count_analyses_by_business(session: Session, business_ids: list[str]) -> dic
 # ============================================================================
 # F2: Video Asset CRUD
 # ============================================================================
-def _resolve_video_public_url(storage_key: str | None) -> str | None:
-    if not storage_key:
+def _resolve_video_public_url(
+    storage_key: str | None,
+    *,
+    analysis_id: str | None = None,
+    bearer_token: str | None = None,
+    base_url: str | None = None,
+) -> str | None:
+    if not storage_key or not analysis_id:
         return None
-    if storage_key.startswith(("http://", "https://")):
-        return storage_key
-    # Legacy seed placeholder keys don't exist as actual files in bucket
-    if storage_key.startswith("videos/selasar-kopi/"):
-        return None
-    base_url = get_settings().supabase_url.rstrip("/")
-    if not base_url:
-        return None
-    clean_key = storage_key.removeprefix("videos/")
-    return f"{base_url}/storage/v1/object/public/videos/{clean_key}"
+    return build_authorized_media_url(
+        analysis_id,
+        storage_key,
+        bearer_token=bearer_token,
+        base_url=base_url,
+    )
 
 
-def video_model_to_schema(video: VideoAsset) -> VideoMetadataOut:
+def video_model_to_schema(
+    video: VideoAsset,
+    *,
+    bearer_token: str | None = None,
+    base_url: str | None = None,
+) -> VideoMetadataOut:
     return VideoMetadataOut(
         id=video.id,
         analysis_id=video.analysis_id,
         original_filename=video.original_filename,
         storage_key=video.storage_key,
-        public_url=_resolve_video_public_url(video.storage_key),
+        public_url=_resolve_video_public_url(
+            video.storage_key,
+            analysis_id=video.analysis_id,
+            bearer_token=bearer_token,
+            base_url=base_url,
+        ),
         duration_s=video.duration_s,
         cashier_at_s=video.cashier_at_s,
         width=video.width,
@@ -468,6 +480,9 @@ def upsert_video_metadata(
     analysis: AnalysisModel,
     payload: VideoMetadataIn,
     actor: str = "owner",
+    *,
+    bearer_token: str | None = None,
+    base_url: str | None = None,
 ) -> VideoMetadataOut:
     stmt = select(VideoAsset).where(VideoAsset.analysis_id == analysis.id)
     video = session.scalars(stmt).first()
@@ -478,13 +493,17 @@ def upsert_video_metadata(
     )
     checks = payload.quality_checks or evaluated_checks
     accepted = payload.accepted and quality.accepted
+    normalized_key = (
+        extract_bucket_object_key(payload.storage_key, analysis_id=analysis.id)
+        or payload.storage_key
+    )
 
     if video is None:
         video = VideoAsset(
             id=f"vid_{uuid4().hex[:12]}",
             analysis_id=analysis.id,
             original_filename=payload.original_filename,
-            storage_key=payload.storage_key or f"{analysis.id}/{payload.original_filename}",
+            storage_key=normalized_key or f"{analysis.id}/{payload.original_filename}",
             duration_s=payload.duration_s,
             cashier_at_s=payload.cashier_at_s if payload.cashier_at_s is not None else payload.duration_s,
             width=payload.width or 1920,
@@ -497,8 +516,8 @@ def upsert_video_metadata(
         session.add(video)
     else:
         video.original_filename = payload.original_filename
-        if payload.storage_key:
-            video.storage_key = payload.storage_key
+        if normalized_key:
+            video.storage_key = normalized_key
         video.duration_s = payload.duration_s
         if payload.cashier_at_s is not None:
             video.cashier_at_s = payload.cashier_at_s
@@ -524,7 +543,7 @@ def upsert_video_metadata(
     )
     session.flush()
     session.commit()
-    return video_model_to_schema(video)
+    return video_model_to_schema(video, bearer_token=bearer_token, base_url=base_url)
 
 
 def _generate_contextual_segments(
@@ -565,9 +584,8 @@ def _generate_contextual_segments(
     t2 = round(end_time * 0.55, 1)
     t3 = round(end_time * 0.80, 1)
 
-    settings = get_settings()
-    base_prefix = f"{settings.supabase_url.rstrip('/')}/storage/v1/object/public/videos/{analysis.id}/frames"
-    fk = list(frame_keys or [])
+    base_prefix = f"{analysis.id}/frames"
+    fk = [extract_bucket_object_key(k, analysis_id=analysis.id, default_subdir="frames") or k for k in (frame_keys or [])]
     f1 = [fk[0]] if len(fk) >= 1 else [f"{base_prefix}/frame_01.jpg"]
     f2 = [fk[1]] if len(fk) >= 2 else (f1 if fk else [f"{base_prefix}/frame_02.jpg"])
     f3 = [fk[2]] if len(fk) >= 3 else (f2 if fk else [f"{base_prefix}/frame_03.jpg"])
@@ -651,6 +669,9 @@ def complete_video_and_enqueue_jobs(
     body: VideoCompleteRequest,
     actor: str = "owner",
     idempotency_key: str | None = None,
+    *,
+    bearer_token: str | None = None,
+    base_url: str | None = None,
 ) -> VideoCompleteResponse:
     """PRD 4.4.2: Kirim cashier_at_s, simpan video, dan antrekan job transkrip + 3D paralel."""
     stmt = select(VideoAsset).where(VideoAsset.analysis_id == analysis.id)
@@ -671,7 +692,14 @@ def complete_video_and_enqueue_jobs(
         if body.blurred_plates_count is not None
         else (existing.blurred_plates_count if existing else 0),
     )
-    video_out = upsert_video_metadata(session, analysis, meta_in, actor=actor)
+    video_out = upsert_video_metadata(
+        session,
+        analysis,
+        meta_in,
+        actor=actor,
+        bearer_token=bearer_token,
+        base_url=base_url,
+    )
 
     transcript_job = JobRecord(
         id=f"job_tr_{uuid4().hex[:10]}",
@@ -728,21 +756,32 @@ def complete_video_and_enqueue_jobs(
 # ============================================================================
 # F3 & F4: Transcript Segment CRUD + AuditLog + Stale Marking
 # ============================================================================
-def resolve_frame_public_url(frame_key: str, analysis_id: str) -> str:
-    """Konversi storage key atau filename relatif menjadi URL publik Supabase Storage."""
+def resolve_frame_public_url(
+    frame_key: str,
+    analysis_id: str,
+    *,
+    bearer_token: str | None = None,
+    base_url: str | None = None,
+) -> str:
+    """Konversi storage key atau filename relatif menjadi Signed URL berotorisasi."""
     if not frame_key:
         return ""
-    if frame_key.startswith(("http://", "https://", "data:image/")):
-        return frame_key
-    settings = get_settings()
-    base = settings.supabase_url.rstrip("/")
-    clean = frame_key.lstrip("/")
-    if "/" in clean:
-        return f"{base}/storage/v1/object/public/videos/{clean}"
-    return f"{base}/storage/v1/object/public/videos/{analysis_id}/frames/{clean}"
+    resolved = build_authorized_media_url(
+        analysis_id,
+        frame_key,
+        bearer_token=bearer_token,
+        base_url=base_url,
+        default_subdir="frames",
+    )
+    return resolved or ""
 
 
-def segment_model_to_schema(seg: TranscriptSegment) -> TranscriptSegmentOut:
+def segment_model_to_schema(
+    seg: TranscriptSegment,
+    *,
+    bearer_token: str | None = None,
+    base_url: str | None = None,
+) -> TranscriptSegmentOut:
     pose = None
     if isinstance(seg.camera_pose, dict):
         pos = seg.camera_pose.get("position")
@@ -756,8 +795,16 @@ def segment_model_to_schema(seg: TranscriptSegment) -> TranscriptSegmentOut:
     vantage = seg.vantage if seg.vantage in ("jalan", "pintu", "dalam") else "jalan"
     conf = seg.confidence if seg.confidence in ("stabil", "tidak_pasti") else "stabil"
     resolved_frames = [
-        resolve_frame_public_url(k, seg.analysis_id) for k in (seg.frame_keys or []) if k
+        resolve_frame_public_url(
+            k,
+            seg.analysis_id,
+            bearer_token=bearer_token,
+            base_url=base_url,
+        )
+        for k in (seg.frame_keys or [])
+        if k
     ]
+    resolved_frames = [f for f in resolved_frames if f]
     return TranscriptSegmentOut(
         id=seg.id,
         timestamp_start=seg.timestamp_start,
@@ -784,7 +831,13 @@ def mark_transcript_changed(analysis: AnalysisModel) -> None:
         analysis.stale_reasons = reasons
 
 
-def list_transcript_segments(session: Session, analysis_id: str) -> list[TranscriptSegmentOut]:
+def list_transcript_segments(
+    session: Session,
+    analysis_id: str,
+    *,
+    bearer_token: str | None = None,
+    base_url: str | None = None,
+) -> list[TranscriptSegmentOut]:
     stmt = (
         select(TranscriptSegment)
         .where(TranscriptSegment.analysis_id == analysis_id)
@@ -807,7 +860,10 @@ def list_transcript_segments(session: Session, analysis_id: str) -> list[Transcr
             session.flush()
             session.commit()
             rows = seeded
-    return [segment_model_to_schema(r) for r in rows]
+    return [
+        segment_model_to_schema(r, bearer_token=bearer_token, base_url=base_url)
+        for r in rows
+    ]
 
 
 def create_transcript_segment(
@@ -1147,6 +1203,8 @@ def list_agent_decisions_for_analysis(
     analysis_id: str,
     final_decision: str | None = None,
     segment: str | None = None,
+    *,
+    auto_simulate: bool = False,
 ) -> list[AgentDecisionOut]:
     dec_stmt = (
         select(AgentDecisionRecord)
@@ -1155,8 +1213,8 @@ def list_agent_decisions_for_analysis(
     )
     all_decisions = list(session.scalars(dec_stmt).all())
 
-    # Jika analisis belum punya record keputusan agen sama sekali, jalankan simulasi otomatis
-    if not all_decisions:
+    # Hanya jalankan simulasi otomatis bila diminta secara eksplisit (GET read path tidak boleh memfabrikasi data)
+    if not all_decisions and auto_simulate:
         analysis = load_analysis_with_relations(session, analysis_id)
         if analysis is not None:
             return run_simulation_for_analysis(
@@ -1685,7 +1743,11 @@ def _build_dynamic_waypoints(
                     id=wp_id,
                     time=_mmss(seg.timestamp_start),
                     name=f"Jalur Jalan Depan {business_name}",
-                    status=f"{round(100 - r_lewat, 1):g}% menoleh · {lewat_cnt}/{total_agents} lewat",
+                    status=(
+                        f"{round(100 - r_lewat, 1):g}% menoleh · {lewat_cnt}/{total_agents} lewat"
+                        if total_agents > 0
+                        else "Menunggu simulasi agen"
+                    ),
                     is_hotspot=(max_drop > 0 and r_lewat == max_drop and r_lewat > r_berhenti and r_lewat > r_masuk),
                 )
             )
@@ -1703,7 +1765,7 @@ def _build_dynamic_waypoints(
                     id=wp_id,
                     time=_mmss(seg.timestamp_start),
                     name=wp_name,
-                    status=f"{r_berhenti:g}% batal masuk",
+                    status=f"{r_berhenti:g}% batal masuk" if total_agents > 0 else "Menunggu simulasi agen",
                     is_hotspot=(max_drop > 0 and r_berhenti == max_drop and r_berhenti >= r_lewat and r_berhenti > r_masuk),
                 )
             )
@@ -1731,7 +1793,11 @@ def _build_dynamic_waypoints(
                         id="menu",
                         time=_mmss(mseg.timestamp_start),
                         name=f"Area Menu & Harga {business_name}",
-                        status=f"{menu_hits} agen berhenti di sini",
+                        status=(
+                            f"{menu_hits} agen berhenti di sini"
+                            if total_agents > 0
+                            else "Menunggu simulasi agen"
+                        ),
                         is_hotspot=False,
                     )
                 )
@@ -1743,7 +1809,7 @@ def _build_dynamic_waypoints(
                     id=wp_id,
                     time=_mmss(seg.timestamp_start),
                     name=f"Titik Pesan / Kasir {business_name}",
-                    status=f"{round(100 - r_masuk, 1):g}% memesan",
+                    status=f"{round(100 - r_masuk, 1):g}% memesan" if total_agents > 0 else "Menunggu simulasi agen",
                     is_hotspot=(max_drop > 0 and r_masuk == max_drop and r_masuk >= r_lewat and r_masuk >= r_berhenti),
                 )
             )
@@ -1772,9 +1838,9 @@ def build_dashboard_data(
     )
     branch_name = biz.branch_name if biz is not None else "Pusat"
 
-    # Pastikan keputusan agen tersedia (jalankan simulasi otomatis bila belum ada)
+    # Ambil keputusan agen nyata dari DB (tanpa memfabrikasi angka saat simulasi belum ada)
     decisions = list_agent_decisions_for_analysis(session, analysis.id)
-    total_agents = len(decisions) or (analysis.total_agents or 20)
+    total_agents = len(decisions)
 
     # Ambil segmen transkrip untuk penentuan titik pantau (waypoints) dan lokasi gesekan
     segs = list(
@@ -1814,34 +1880,49 @@ def build_dashboard_data(
             id="melihat",
             name="1. Melihat Toko",
             count=total_agents,
-            percentage=100.0,
+            percentage=100.0 if total_agents > 0 else 0.0,
             drop_off_count=lewat_cnt,
             drop_off_rate=r_lewat,
-            is_highest_friction=(r_lewat == max_drop and r_lewat > r_berhenti and r_lewat > r_masuk),
+            is_highest_friction=(
+                total_agents > 0
+                and r_lewat == max_drop
+                and r_lewat > r_berhenti
+                and r_lewat > r_masuk
+            ),
         ),
         FunnelStageDataOut(
             id="berhenti",
             name="2. Berhenti Sejenak",
             count=berhenti_cnt,
-            percentage=round((berhenti_cnt / max(total_agents, 1)) * 100, 1),
+            percentage=round((berhenti_cnt / total_agents) * 100, 1) if total_agents > 0 else 0.0,
             drop_off_count=berhenti_pergi_cnt,
             drop_off_rate=r_berhenti,
-            is_highest_friction=(r_berhenti == max_drop and r_berhenti >= r_lewat and r_berhenti > r_masuk),
+            is_highest_friction=(
+                total_agents > 0
+                and r_berhenti == max_drop
+                and r_berhenti >= r_lewat
+                and r_berhenti > r_masuk
+            ),
         ),
         FunnelStageDataOut(
             id="masuk",
             name="3. Masuk ke Dalam",
             count=masuk_cnt,
-            percentage=round((masuk_cnt / max(total_agents, 1)) * 100, 1),
+            percentage=round((masuk_cnt / total_agents) * 100, 1) if total_agents > 0 else 0.0,
             drop_off_count=masuk_tanpa_cnt,
             drop_off_rate=r_masuk,
-            is_highest_friction=(r_masuk == max_drop and r_masuk >= r_lewat and r_masuk >= r_berhenti),
+            is_highest_friction=(
+                total_agents > 0
+                and r_masuk == max_drop
+                and r_masuk >= r_lewat
+                and r_masuk >= r_berhenti
+            ),
         ),
         FunnelStageDataOut(
             id="memesan",
             name="4. Jadi Memesan",
             count=memesan_cnt,
-            percentage=round((memesan_cnt / max(total_agents, 1)) * 100, 1),
+            percentage=round((memesan_cnt / total_agents) * 100, 1) if total_agents > 0 else 0.0,
             drop_off_count=0,
             drop_off_rate=0.0,
             is_highest_friction=False,
@@ -1916,6 +1997,56 @@ def build_dashboard_data(
         r_masuk=r_masuk,
         max_drop=max_drop,
     )
+
+    if total_agents == 0:
+        return DashboardDataOut(
+            analysis_id=analysis.id,
+            business_id=analysis.business_id,
+            business_name=business_name,
+            branch_name=branch_name,
+            created_at=analysis.created_at.isoformat()
+            if hasattr(analysis.created_at, "isoformat")
+            else str(analysis.created_at),
+            total_agents=0,
+            is_stale=bool(analysis.stale),
+            kpi=DashboardKpiOut(
+                buyers_count=0,
+                buyers_rate_text="0 dari 0 agen simulasi",
+                buyers_description=(
+                    f"Belum ada hasil simulasi agen untuk {business_name}. Jalankan simulasi terlebih dahulu."
+                ),
+                drop_off_rate_text="0%",
+                drop_off_from_stage="Melihat",
+                drop_off_to_stage="Berhenti",
+                drop_off_location="Belum disimulasikan",
+                drop_off_description="Simulasi agen belum dijalankan; belum ada data penurunan pelanggan.",
+                main_cause_title="Simulasi agen belum dijalankan",
+                main_cause_cue_rank="Belum ada peringkat",
+                main_cause_detail=(
+                    "Jalankan simulasi agen terlebih dahulu untuk mengidentifikasi faktor pembatalan pelanggan."
+                ),
+                potential_loss_amount="Belum dihitung",
+                potential_loss_basis="Menunggu simulasi agen",
+                potential_loss_detail="Potensi omzet lepas baru dihitung setelah simulasi agen selesai.",
+            ),
+            funnel_stages=funnel_stages,
+            cue_ranking=[],
+            key_insights=[
+                KeyInsightOut(
+                    id="ins_pending",
+                    number="01",
+                    type="neutral",
+                    title="Simulasi agen belum dijalankan",
+                    description=(
+                        f"Jalankan simulasi agen terlebih dahulu pada {business_name} untuk melihat titik kebocoran dan alasan pembatalan pelanggan."
+                    ),
+                )
+            ],
+            recommendations=recommendations,
+            twin_meta=twin_meta,
+            waypoints=waypoints,
+            what_if_projection=None,
+        )
 
     # Agregasi faktor penyebab batal tertinggi dari Katalog Isyarat (H1-H14)
     from app.services.simulation.pareto import aggregate_cue_scores

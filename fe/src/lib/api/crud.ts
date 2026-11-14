@@ -13,7 +13,22 @@ import type {
   WhatIfProjectionData,
 } from '@/types/api';
 
-const API_BASE = (process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000').replace(/\/$/, '') + '/api/v1';
+export const API_ORIGIN = (process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000').replace(/\/$/, '');
+const API_BASE = `${API_ORIGIN}/api/v1`;
+
+/** Selesaikan URL media relatif (`/api/...`), URL bertanda tangan (`http/https`), atau `data:image/`. */
+export function resolveMediaUrl(raw?: string | null): string | null {
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://') || trimmed.startsWith('data:image/')) {
+    return trimmed;
+  }
+  if (trimmed.startsWith('/')) {
+    return `${API_ORIGIN}${trimmed}`;
+  }
+  return null;
+}
 
 const STORAGE_BIZ_KEY = 'sekilas_businesses_v1';
 const STORAGE_ANL_KEY = 'sekilas_analyses_v1';
@@ -602,6 +617,7 @@ export async function fetchVideoMetadata(analysisId?: string | null): Promise<Vi
   if (remote) {
     const normalized: VideoMetadata = {
       ...remote,
+      public_url: resolveMediaUrl(remote.public_url),
       original_filename: remote.original_filename ?? '',
       duration_s: remote.duration_s ?? 0,
       cashier_at_s: remote.cashier_at_s ?? remote.duration_s ?? 0,
@@ -673,8 +689,10 @@ export async function uploadVideoToSupabaseStorage(
         contentType,
       });
       if (!error) {
-        const { data } = supabase.storage.from('videos').getPublicUrl(storageKey);
-        return { storageKey, publicUrl: data.publicUrl };
+        const { data: signedData } = await supabase.storage
+          .from('videos')
+          .createSignedUrl(storageKey, 3600);
+        return { storageKey, publicUrl: signedData?.signedUrl ?? null };
       }
     } catch {
       // Fallback ke penyimpanan lokal bila tidak ada jaringan
@@ -704,8 +722,10 @@ export async function uploadKeyframesToStorage(
         contentType: 'image/jpeg',
       });
       if (!error) {
-        const { data } = supabase.storage.from('videos').getPublicUrl(key);
-        uploadedUrls.push(data.publicUrl);
+        const { data: signedData } = await supabase.storage
+          .from('videos')
+          .createSignedUrl(key, 3600);
+        uploadedUrls.push(signedData?.signedUrl ?? key);
       } else {
         uploadedUrls.push(dataUrl);
       }
@@ -778,8 +798,12 @@ export async function fetchTranscriptSegments(analysisId?: string | null): Promi
   const id = analysisId || 'selasar-kopi';
   const remote = await tryApiFetch<TranscriptSegment[]>(`/analyses/${id}/transcript`);
   if (remote !== null) {
-    setLocalTranscript(id, remote);
-    return remote;
+    const normalized = remote.map((seg) => ({
+      ...seg,
+      frame_keys: (seg.frame_keys ?? []).map((fk) => resolveMediaUrl(fk) ?? fk),
+    }));
+    setLocalTranscript(id, normalized);
+    return normalized;
   }
   const local = getLocalTranscriptMap()[id];
   if (local && local.length > 0) return local;

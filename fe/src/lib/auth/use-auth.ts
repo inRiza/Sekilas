@@ -4,9 +4,15 @@ import type { User } from '@supabase/supabase-js';
 import { useEffect, useState } from 'react';
 
 import { createBusiness } from '@/lib/api/crud';
-import { CURRENT_USER } from '@/lib/mock/business';
 import { createClient } from '@/lib/supabase/client';
 import type { UserAccount } from '@/types/api';
+
+export const CURRENT_USER: UserAccount = {
+  id: 'usr_01',
+  name: 'Budi Santoso',
+  email: 'budi.selasar@gmail.com',
+  avatar_url: undefined,
+};
 
 const DEMO_SESSION_KEY = 'sekilas_demo_user_v1';
 const AUTH_EVENT = 'sekilas:auth-changed';
