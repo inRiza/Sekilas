@@ -560,11 +560,13 @@ def _generate_contextual_segments(
     t2 = round(end_time * 0.55, 1)
     t3 = round(end_time * 0.80, 1)
 
+    settings = get_settings()
+    base_prefix = f"{settings.supabase_url.rstrip('/')}/storage/v1/object/public/videos/{analysis.id}/frames"
     fk = list(frame_keys or [])
-    f1 = [fk[0]] if len(fk) >= 1 else [f"frame_{analysis.id}_01.jpg"]
-    f2 = [fk[1]] if len(fk) >= 2 else (f1 if fk else [f"frame_{analysis.id}_02.jpg"])
-    f3 = [fk[2]] if len(fk) >= 3 else (f2 if fk else [f"frame_{analysis.id}_03.jpg"])
-    f4 = [fk[3]] if len(fk) >= 4 else (f3 if fk else [f"frame_{analysis.id}_04.jpg"])
+    f1 = [fk[0]] if len(fk) >= 1 else [f"{base_prefix}/frame_01.jpg"]
+    f2 = [fk[1]] if len(fk) >= 2 else (f1 if fk else [f"{base_prefix}/frame_02.jpg"])
+    f3 = [fk[2]] if len(fk) >= 3 else (f2 if fk else [f"{base_prefix}/frame_03.jpg"])
+    f4 = [fk[3]] if len(fk) >= 4 else (f3 if fk else [f"{base_prefix}/frame_04.jpg"])
 
     return [
         TranscriptSegment(
@@ -739,6 +741,20 @@ def complete_video_and_enqueue_jobs(
 # ============================================================================
 # F3 & F4: Transcript Segment CRUD + AuditLog + Stale Marking
 # ============================================================================
+def resolve_frame_public_url(frame_key: str, analysis_id: str) -> str:
+    """Konversi storage key atau filename relatif menjadi URL publik Supabase Storage."""
+    if not frame_key:
+        return ""
+    if frame_key.startswith(("http://", "https://", "data:image/")):
+        return frame_key
+    settings = get_settings()
+    base = settings.supabase_url.rstrip("/")
+    clean = frame_key.lstrip("/")
+    if "/" in clean:
+        return f"{base}/storage/v1/object/public/videos/{clean}"
+    return f"{base}/storage/v1/object/public/videos/{analysis_id}/frames/{clean}"
+
+
 def segment_model_to_schema(seg: TranscriptSegment) -> TranscriptSegmentOut:
     pose = None
     if isinstance(seg.camera_pose, dict):
@@ -752,11 +768,14 @@ def segment_model_to_schema(seg: TranscriptSegment) -> TranscriptSegmentOut:
 
     vantage = seg.vantage if seg.vantage in ("jalan", "pintu", "dalam") else "jalan"
     conf = seg.confidence if seg.confidence in ("stabil", "tidak_pasti") else "stabil"
+    resolved_frames = [
+        resolve_frame_public_url(k, seg.analysis_id) for k in (seg.frame_keys or []) if k
+    ]
     return TranscriptSegmentOut(
         id=seg.id,
         timestamp_start=seg.timestamp_start,
         timestamp_end=seg.timestamp_end,
-        frame_keys=list(seg.frame_keys or []),
+        frame_keys=resolved_frames,
         vantage=vantage,  # type: ignore[arg-type]
         zone_id=seg.zone_id,
         narrative=seg.narrative,

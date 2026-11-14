@@ -31,7 +31,17 @@ const WALK_PAD = [
  * Penampil Visual Twin untuk dasbor: tab mode Putar / Jalan / Tur, kontrol tur, dan tombol jalan.
  * Bila file 3D gagal dimuat, otomatis memakai scene contoh.
  */
-export function TwinViewer({ source: initialSource, meta = [] }: { source: TwinSource; meta?: string[] }) {
+export function TwinViewer({
+  source: initialSource,
+  meta = [],
+  activeWaypoint,
+  onSelectWaypoint,
+}: {
+  source: TwinSource;
+  meta?: string[];
+  activeWaypoint?: string | null;
+  onSelectWaypoint?: (id: string) => void;
+}) {
   const [source, setSource] = useState<TwinSource>(initialSource);
   const [mode, setMode] = useState<NavMode>("putar");
   const [tourPlaying, setTourPlaying] = useState(true);
@@ -88,6 +98,11 @@ export function TwinViewer({ source: initialSource, meta = [] }: { source: TwinS
           onLoadError={() => setSource({ kind: "demo" })}
           mode={active}
           tourPlaying={tourPlaying}
+          activeWaypoint={activeWaypoint}
+          onSelectWaypoint={(id) => {
+            setMode("putar");
+            onSelectWaypoint?.(id);
+          }}
           onTourProgress={setTourProgress}
           onPathAvailable={setPathAvailable}
         />

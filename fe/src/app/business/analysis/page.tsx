@@ -243,6 +243,8 @@ function DashboardResultInner() {
             <TwinViewer
               source={{ kind: 'ply', url: '/samples/goffee-depan-kasir.ply', name: 'goffee-depan-kasir' }}
               meta={[`${durationSeconds} detik`, `${waypoints.length} zona`]}
+              activeWaypoint={activeWaypoint}
+              onSelectWaypoint={setActiveWaypoint}
             />
             <div className="rounded-xl border border-line bg-white overflow-hidden">
               {/* 2D Waypoint Progression Bar */}

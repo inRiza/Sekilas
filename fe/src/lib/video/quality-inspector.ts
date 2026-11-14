@@ -15,8 +15,7 @@
  */
 
 import {
-  detectPrivacyBoxesOnFrame,
-  ensurePrivacyDetectors,
+  detectPrivacyBoxesAsync,
   renderSelectivePrivacyBlur,
 } from '@/lib/video/privacy-blur';
 
@@ -282,7 +281,6 @@ export async function inspectVideoFile(file: File): Promise<VideoInspectionResul
       const height = video.videoHeight || 1080;
       const rawDuration = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 48;
 
-      const detectors = await ensurePrivacyDetectors();
       const samplePoints = [0.15, 0.4, 0.65, 0.85].map((r) => Math.min(rawDuration - 0.1, Math.max(0.1, rawDuration * r)));
       let sampleIdx = 0;
       let lumSum = 0;
@@ -311,7 +309,7 @@ export async function inspectVideoFile(file: File): Promise<VideoInspectionResul
         sampleIdx += 1;
       };
 
-      video.onseeked = () => {
+      video.onseeked = async () => {
         try {
           const canvas = document.createElement('canvas');
           canvas.width = 64;
@@ -329,7 +327,7 @@ export async function inspectVideoFile(file: File): Promise<VideoInspectionResul
             lumCount += 1;
           }
 
-          const boxes = detectPrivacyBoxesOnFrame(video, detectors);
+          const boxes = await detectPrivacyBoxesAsync(video);
           totalFacesDetected += boxes.filter((b) => b.kind === 'face').length;
           totalPlatesDetected += boxes.filter((b) => b.kind === 'plate').length;
 

@@ -26,12 +26,22 @@ const PATH: V3[] = [
   [6.2, 2.05, -1.2],
 ];
 const FRICTION: V3 = [-1, 0.1, 0.4];
-const ZONES: { label: string; at: V3; hot?: boolean }[] = [
-  { label: "Jalan depan", at: [-6.5, 0.2, 2.6] },
-  { label: "Dasar tangga", at: [-1, 0.2, 1.3], hot: true },
-  { label: "Area menu", at: [3.6, 2.3, 0.2] },
-  { label: "Kasir", at: [6.4, 2.3, -0.4] },
+const ZONES: { id: string; label: string; at: V3; cam: V3; target: V3; hot?: boolean }[] = [
+  { id: "jalan", label: "Jalan depan", at: [-6.5, 0.2, 2.6], cam: [-8.4, 2.5, 6.2], target: [-5.8, 0.4, 1.8] },
+  { id: "tangga", label: "Dasar tangga", at: [-1, 0.2, 1.3], cam: [-2.8, 2.6, 4.6], target: [-0.8, 0.5, 0.4], hot: true },
+  { id: "menu", label: "Area menu", at: [3.6, 2.3, 0.2], cam: [2.2, 4.0, 3.2], target: [3.6, 2.2, -1.2] },
+  { id: "kasir", label: "Kasir", at: [6.4, 2.3, -0.4], cam: [4.2, 4.0, 2.8], target: [6.0, 2.2, -1.4] },
 ];
+
+function normalizeWaypointKey(raw?: string | null): "jalan" | "tangga" | "menu" | "kasir" | null {
+  if (!raw) return null;
+  const k = raw.toLowerCase();
+  if (k.includes("jalan") || k === "wp_1" || k === "1") return "jalan";
+  if (k.includes("tangga") || k.includes("pintu") || k === "wp_2" || k === "2") return "tangga";
+  if (k.includes("menu")) return "menu";
+  if (k.includes("kasir") || k.includes("pesan") || k.includes("dalam") || k === "wp_3" || k === "3") return "kasir";
+  return null;
+}
 
 function mulberry32(seed: number) {
   return () => {
@@ -104,8 +114,15 @@ function useDemoCloud() {
   }, []);
 }
 
-function DemoTwin() {
+function DemoTwin({
+  activeWaypoint,
+  onSelectWaypoint,
+}: {
+  activeWaypoint?: string | null;
+  onSelectWaypoint?: (id: string) => void;
+}) {
   const geometry = useDemoCloud();
+  const normalizedActive = normalizeWaypointKey(activeWaypoint);
   return (
     <group>
       <points geometry={geometry}>
@@ -117,17 +134,26 @@ function DemoTwin() {
         <ringGeometry args={[0.35, 0.5, 48]} />
         <meshBasicMaterial color="#c2453a" transparent opacity={0.85} side={THREE.DoubleSide} />
       </mesh>
-      {ZONES.map((z) => (
-        <Html key={z.label} position={z.at} center zIndexRange={[10, 0]}>
-          <span
-            className={`pointer-events-none whitespace-nowrap rounded-full border px-2 py-0.5 font-mono text-[10px] ${
-              z.hot ? "border-friction/30 bg-white text-friction" : "border-line bg-white/90 text-muted"
-            }`}
-          >
-            {z.label}
-          </span>
-        </Html>
-      ))}
+      {ZONES.map((z) => {
+        const isSelected = normalizedActive === z.id;
+        return (
+          <Html key={z.label} position={z.at} center zIndexRange={[10, 0]}>
+            <button
+              type="button"
+              onClick={() => onSelectWaypoint?.(z.id)}
+              className={`whitespace-nowrap rounded-full border px-2.5 py-0.5 font-mono text-[10px] transition shadow-xs ${
+                isSelected
+                  ? "border-primary-40 bg-primary-40 text-white font-semibold scale-105"
+                  : z.hot
+                    ? "border-friction/30 bg-white text-friction hover:bg-friction-10"
+                    : "border-line bg-white/90 text-muted hover:text-ink"
+              }`}
+            >
+              {z.label}
+            </button>
+          </Html>
+        );
+      })}
     </group>
   );
 }
@@ -384,6 +410,107 @@ function FrameOrbit({ placement }: { placement: Placement }) {
   return null;
 }
 
+/**
+ * Animasi fly-to / orbit mulus saat pengguna mengklik kartu Waypoint (Trotoar, Akses Tangga, Kasir).
+ */
+function WaypointFlyTo({
+  activeWaypoint,
+  placement,
+  path,
+  isDemo,
+}: {
+  activeWaypoint?: string | null;
+  placement?: Placement | null;
+  path?: PathPoint[];
+  isDemo?: boolean;
+}) {
+  const getState = useThree((s) => s.get);
+  const animRef = useRef<{
+    startCam: THREE.Vector3;
+    endCam: THREE.Vector3;
+    startTarget: THREE.Vector3;
+    endTarget: THREE.Vector3;
+    progress: number;
+    active: boolean;
+  } | null>(null);
+
+  useEffect(() => {
+    const key = normalizeWaypointKey(activeWaypoint);
+    if (!key) return;
+
+    const { camera } = getState();
+    const controls = getState().controls as unknown as { target: THREE.Vector3; update: () => void } | null;
+    const currentTarget = controls?.target ? controls.target.clone() : new THREE.Vector3(0, 1, 0);
+
+    let destCam: THREE.Vector3 | null = null;
+    let destTarget: THREE.Vector3 | null = null;
+
+    if (isDemo) {
+      const zone = ZONES.find((z) => z.id === key) ?? ZONES[0]!;
+      destCam = new THREE.Vector3(...zone.cam);
+      destTarget = new THREE.Vector3(...zone.target);
+    } else if (path && path.length >= 2 && placement) {
+      const ratio = key === "jalan" ? 0.08 : key === "tangga" ? 0.48 : key === "menu" ? 0.72 : 0.92;
+      const idx = Math.min(path.length - 1, Math.max(0, Math.floor(ratio * (path.length - 1))));
+      const pt = path[idx]!;
+      const r = placement.radius;
+      destTarget = pt.position.clone().addScaledVector(pt.forward, r * 0.22);
+      destCam = pt.position
+        .clone()
+        .addScaledVector(pt.forward, -r * 0.35)
+        .add(new THREE.Vector3(r * 0.2, r * 0.22, r * 0.2));
+    } else if (placement) {
+      const { radius: r, targetY } = placement;
+      if (key === "jalan") {
+        destTarget = new THREE.Vector3(-r * 0.45, targetY, r * 0.35);
+        destCam = new THREE.Vector3(-r * 0.95, targetY + r * 0.55, r * 1.25);
+      } else if (key === "tangga") {
+        destTarget = new THREE.Vector3(0, targetY + r * 0.05, 0);
+        destCam = new THREE.Vector3(r * 0.45, targetY + r * 0.5, r * 0.95);
+      } else {
+        destTarget = new THREE.Vector3(r * 0.4, targetY + r * 0.15, -r * 0.25);
+        destCam = new THREE.Vector3(r * 0.85, targetY + r * 0.6, r * 0.65);
+      }
+    }
+
+    if (destCam && destTarget) {
+      animRef.current = {
+        startCam: camera.position.clone(),
+        endCam: destCam,
+        startTarget: currentTarget,
+        endTarget: destTarget,
+        progress: 0,
+        active: true,
+      };
+    }
+  }, [activeWaypoint, getState, isDemo, path, placement]);
+
+  useFrame(({ camera }, dt) => {
+    const anim = animRef.current;
+    if (!anim || !anim.active) return;
+
+    anim.progress = Math.min(1, anim.progress + Math.min(dt, 0.05) * 1.8);
+    // Ease out cubic
+    const t = 1 - Math.pow(1 - anim.progress, 3);
+
+    camera.position.lerpVectors(anim.startCam, anim.endCam, t);
+    const controls = getState().controls as unknown as { target: THREE.Vector3; update: () => void } | null;
+    if (controls?.target) {
+      controls.target.lerpVectors(anim.startTarget, anim.endTarget, t);
+      controls.update();
+    } else {
+      const lookPos = new THREE.Vector3().lerpVectors(anim.startTarget, anim.endTarget, t);
+      camera.lookAt(lookPos);
+    }
+
+    if (anim.progress >= 1) {
+      anim.active = false;
+    }
+  });
+
+  return null;
+}
+
 function lookAlong(camera: THREE.Camera, forward: THREE.Vector3) {
   camera.up.set(0, 1, 0);
   camera.lookAt(camera.position.clone().add(forward));
@@ -515,12 +642,16 @@ function ModelStage({
   source,
   mode,
   tourPlaying,
+  activeWaypoint,
+  onSelectWaypoint,
   onTourProgress,
   onPathAvailable,
 }: {
   source: Exclude<TwinSource, { kind: "demo" }>;
   mode: NavMode;
   tourPlaying: boolean;
+  activeWaypoint?: string | null;
+  onSelectWaypoint?: (id: string) => void;
   onTourProgress?: (u: number) => void;
   onPathAvailable?: (available: boolean) => void;
 }) {
@@ -528,8 +659,30 @@ function ModelStage({
   const rawPath = use(pathFor(source.url));
   const path = useMemo(() => (placement ? placePath(rawPath, placement) : []), [rawPath, placement]);
   const hasPath = path.length >= 2;
+  const normalizedActive = normalizeWaypointKey(activeWaypoint);
 
   useEffect(() => onPathAvailable?.(hasPath), [hasPath, onPathAvailable]);
+
+  const modelPinNodes = useMemo(() => {
+    if (!placement) return [];
+    if (hasPath) {
+      const pJalan = path[Math.floor((path.length - 1) * 0.08)]!;
+      const pTangga = path[Math.floor((path.length - 1) * 0.48)]!;
+      const pKasir = path[Math.floor((path.length - 1) * 0.92)]!;
+      return [
+        { id: "jalan", label: "Trotoar Depan", pos: pJalan.position, hot: false },
+        { id: "tangga", label: "Titik Friksi", pos: pTangga.position, hot: true },
+        { id: "kasir", label: "Titik Kasir", pos: pKasir.position, hot: false },
+      ];
+    }
+    const r = placement.radius;
+    const y = placement.targetY + r * 0.12;
+    return [
+      { id: "jalan", label: "Trotoar Depan", pos: new THREE.Vector3(-r * 0.45, y, r * 0.35), hot: false },
+      { id: "tangga", label: "Titik Friksi", pos: new THREE.Vector3(0, y, 0), hot: true },
+      { id: "kasir", label: "Titik Kasir", pos: new THREE.Vector3(r * 0.4, y, -r * 0.25), hot: false },
+    ];
+  }, [placement, hasPath, path]);
 
   return (
     <>
@@ -541,10 +694,33 @@ function ModelStage({
       {placement && mode === "putar" && hasPath && (
         <Line points={path.map((p) => p.position)} color="#3466e5" lineWidth={2} transparent opacity={0.6} />
       )}
+      {placement &&
+        mode === "putar" &&
+        modelPinNodes.map((pin) => {
+          const isSelected = normalizedActive === pin.id;
+          return (
+            <Html key={pin.id} position={[pin.pos.x, pin.pos.y, pin.pos.z]} center zIndexRange={[10, 0]}>
+              <button
+                type="button"
+                onClick={() => onSelectWaypoint?.(pin.id)}
+                className={`whitespace-nowrap rounded-full border px-2.5 py-0.5 font-mono text-[10px] transition shadow-xs ${
+                  isSelected
+                    ? "border-primary-40 bg-primary-40 text-white font-semibold scale-105"
+                    : pin.hot
+                      ? "border-friction/30 bg-white text-friction hover:bg-friction-10"
+                      : "border-line bg-white/90 text-muted hover:text-ink"
+                }`}
+              >
+                {pin.label}
+              </button>
+            </Html>
+          );
+        })}
       {placement && mode === "putar" && (
         <>
           <OrbitControls makeDefault enableDamping dampingFactor={0.08} maxPolarAngle={Math.PI / 2.05} />
           <FrameOrbit placement={placement} />
+          <WaypointFlyTo activeWaypoint={activeWaypoint} placement={placement} path={path} />
         </>
       )}
       {placement && mode === "jalan" && <WalkControls radius={placement.radius} start={hasPath ? path[0] : undefined} />}
@@ -562,6 +738,8 @@ export default function TwinScene({
   onLoadError,
   mode = "putar",
   tourPlaying = true,
+  activeWaypoint,
+  onSelectWaypoint,
   onTourProgress,
   onPathAvailable,
 }: {
@@ -569,6 +747,8 @@ export default function TwinScene({
   onLoadError: () => void;
   mode?: NavMode;
   tourPlaying?: boolean;
+  activeWaypoint?: string | null;
+  onSelectWaypoint?: (id: string) => void;
   onTourProgress?: (u: number) => void;
   onPathAvailable?: (available: boolean) => void;
 }) {
@@ -591,11 +771,14 @@ export default function TwinScene({
         <Suspense fallback={null}>
           {source.kind === "demo" ? (
             <>
-              <DemoTwin />
+              <DemoTwin activeWaypoint={activeWaypoint} onSelectWaypoint={onSelectWaypoint} />
               {mode === "jalan" ? (
                 <WalkControls radius={10} />
               ) : (
-                <OrbitControls makeDefault target={[0, 1, 0]} enableDamping dampingFactor={0.08} maxPolarAngle={Math.PI / 2.05} />
+                <>
+                  <OrbitControls makeDefault target={[0, 1, 0]} enableDamping dampingFactor={0.08} maxPolarAngle={Math.PI / 2.05} />
+                  <WaypointFlyTo activeWaypoint={activeWaypoint} isDemo />
+                </>
               )}
             </>
           ) : (
@@ -603,6 +786,8 @@ export default function TwinScene({
               source={source}
               mode={mode}
               tourPlaying={tourPlaying}
+              activeWaypoint={activeWaypoint}
+              onSelectWaypoint={onSelectWaypoint}
               onTourProgress={onTourProgress}
               onPathAvailable={onPathAvailable}
             />
