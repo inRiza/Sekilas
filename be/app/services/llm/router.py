@@ -78,7 +78,9 @@ class LLMRouter:
         if self._gemini_client is None:
             self._gemini_client = genai.Client(
                 api_key=self.settings.gemini_api_key,
-                http_options=types.HttpOptions(timeout=35_000),
+                # Transkrip mengirim hingga 20 keyframe dan meminta 15-20 segmen detail; Gemini
+                # bisa butuh lebih dari 35 dtk (504 Deadline expired). Job berjalan di latar belakang.
+                http_options=types.HttpOptions(timeout=150_000),
             )
         return self._gemini_client
 
@@ -110,7 +112,9 @@ class LLMRouter:
         for idx, kf in enumerate(keyframes, start=1):
             mins = int(kf.timestamp_s // 60)
             secs = int(kf.timestamp_s % 60)
-            contents.append(f"\n[Frame #{idx} — Stempel waktu: {mins:02d}:{secs:02d} ({kf.timestamp_s:.1f}s)]")
+            contents.append(
+                f"\n[Frame #{idx} — Stempel waktu: {mins:02d}:{secs:02d} ({kf.timestamp_s:.1f}s)]"
+            )
             contents.append(types.Part.from_bytes(data=kf.image_bytes, mime_type=kf.mime_type))
 
         config = types.GenerateContentConfig(
@@ -119,30 +123,41 @@ class LLMRouter:
             max_output_tokens=max_output_tokens,
             response_mime_type="application/json",
         )
-        try:
-            response = client.models.generate_content(
-                model=self.settings.gemini_model,
-                contents=contents,
-                config=config,
-            )
-        except genai_errors.APIError as exc:
-            code = int(getattr(exc, "code", 503) or 503)
-            if code == 503:
+        # Model utama dulu; bila sedang kelebihan beban (503/504) pindah ke model cadangan.
+        models = [self.settings.gemini_model, *self.settings.gemini_fallback_models]
+        response = None
+        used_model = models[0]
+        last_exc: genai_errors.APIError | None = None
+        for used_model in models:
+            try:
+                response = client.models.generate_content(
+                    model=used_model, contents=contents, config=config
+                )
+                break
+            except genai_errors.APIError as exc:
+                last_exc = exc
+                code = int(getattr(exc, "code", 503) or 503)
+                if code in (503, 504):
+                    logger.warning("Gemini %s sibuk (%s), mencoba model cadangan", used_model, code)
+                    continue
                 raise LLMUnavailableError(
-                    f"Model Gemini ({self.settings.gemini_model}) sedang mengalami lonjakan permintaan (503 UNAVAILABLE). Silakan coba beberapa saat lagi.",
-                    status_code=503,
+                    f"Layanan Gemini mengembalikan galat ({code}): {getattr(exc, 'message', str(exc))}",
+                    status_code=code if 400 <= code < 600 else 502,
                 ) from exc
+        if response is None:
+            code = int(getattr(last_exc, "code", 503) or 503)
             raise LLMUnavailableError(
-                f"Layanan Gemini mengembalikan galat ({code}): {getattr(exc, 'message', str(exc))}",
-                status_code=code if 400 <= code < 600 else 502,
-            ) from exc
+                f"Semua model Gemini ({', '.join(models)}) sedang kelebihan beban ({code}). "
+                "Silakan coba beberapa saat lagi.",
+                status_code=code,
+            ) from last_exc
         raw_text = response.text or "{}"
         parsed = _extract_json_payload(raw_text)
         usage = getattr(response, "usage_metadata", None)
         return LLMCallResult(
             data=parsed,
             provider="gemini",
-            model=self.settings.gemini_model,
+            model=used_model,
             prompt_tokens=int(getattr(usage, "prompt_token_count", 0) or 0),
             completion_tokens=int(getattr(usage, "candidates_token_count", 0) or 0),
         )
@@ -199,7 +214,9 @@ class LLMRouter:
 
         def _post_once(req_payload: dict[str, Any]) -> dict[str, Any]:
             with httpx.Client(timeout=60.0) as http:
-                resp = http.post("https://api.openai.com/v1/chat/completions", headers=headers, json=req_payload)
+                resp = http.post(
+                    "https://api.openai.com/v1/chat/completions", headers=headers, json=req_payload
+                )
                 if not resp.is_success:
                     err_msg = resp.text[:300]
                     try:
@@ -210,7 +227,11 @@ class LLMRouter:
                         pass
                     code = int(resp.status_code)
                     # Jika model OpenAI ini tidak mendukung parameter temperature kustom, coba ulang tanpa temperature pada model yang SAMA.
-                    if code == 400 and "temperature" in err_msg.lower() and "temperature" in req_payload:
+                    if (
+                        code == 400
+                        and "temperature" in err_msg.lower()
+                        and "temperature" in req_payload
+                    ):
                         stripped = {k: v for k, v in req_payload.items() if k != "temperature"}
                         return _post_once(stripped)
                     raise LLMUnavailableError(
@@ -223,7 +244,13 @@ class LLMRouter:
             body = _post_once(payload)
         except LLMUnavailableError:
             raise
-        except (httpx.HTTPError, ValueError, KeyError, TypeError, OSError) as exc:  # pragma: no cover
+        except (
+            httpx.HTTPError,
+            ValueError,
+            KeyError,
+            TypeError,
+            OSError,
+        ) as exc:  # pragma: no cover
             raise LLMUnavailableError(
                 f"Gagal memanggil model OpenAI ({self.settings.openai_model}): {exc}",
                 status_code=503,
