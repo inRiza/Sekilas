@@ -103,18 +103,6 @@ class EntryCreate(BaseModel):
     category: CueCategory
 
 
-class LlmEditRequest(BaseModel):
-    instruction: str
-
-
-class LlmEditProposal(BaseModel):
-    """Sebelum/sesudah; baru berlaku setelah pemilik menekan Terima (F4)."""
-
-    proposal_id: str
-    before: TranscriptEntry
-    after: TranscriptEntry
-
-
 class Transcript(BaseModel):
     analysis_id: str
     entries: list[TranscriptEntry]

@@ -139,6 +139,14 @@ def complete_video_upload(
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
 
+_JOB_STATUS = {
+    "antre": JobStatus.queued,
+    "berjalan": JobStatus.running,
+    "selesai": JobStatus.done,
+    "gagal": JobStatus.failed,
+}
+
+
 @router.get("/processing", response_model=JobState)
 def processing_status(
     analysis_id: str,
@@ -161,9 +169,12 @@ def processing_status(
     if job is not None:
         return JobState(
             job_id=job.id,
-            status=JobStatus.done if job.status == "selesai" else JobStatus.running,
+            status=_JOB_STATUS.get(job.status, JobStatus.running),
             progress=job.progress,
             stage=job.stage or "Transkrip VLM & 3D Visual Twin siap",
+            message="AI belum bisa membaca video ini. Coba unggah ulang."
+            if job.status == "gagal"
+            else None,
         )
 
     return JobState(

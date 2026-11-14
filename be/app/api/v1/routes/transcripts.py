@@ -6,9 +6,6 @@ from app.core.auth import CurrentUserDep
 from app.core.db import SessionDep
 from app.models.entities import TranscriptSegment
 from app.schemas.transcript import (
-    LlmEditProposal,
-    LlmEditRequest,
-    TranscriptEntry,
     TranscriptSegmentCreate,
     TranscriptSegmentOut,
     TranscriptSegmentUpdate,
@@ -85,17 +82,3 @@ def remove_segment(
     delete_transcript_segment(session, analysis, seg, actor=user.id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
-
-@router.post("/entries/{entry_id}/llm-edit", response_model=LlmEditProposal)
-def propose_llm_edit(analysis_id: str, entry_id: str, body: LlmEditRequest) -> LlmEditProposal:
-    raise HTTPException(status.HTTP_501_NOT_IMPLEMENTED, "TODO: M5")
-
-
-@router.post("/proposals/{proposal_id}/accept", response_model=TranscriptEntry)
-def accept_llm_edit(analysis_id: str, proposal_id: str) -> TranscriptEntry:
-    raise HTTPException(status.HTTP_501_NOT_IMPLEMENTED, "TODO: M5")
-
-
-@router.post("/proposals/{proposal_id}/reject", status_code=status.HTTP_204_NO_CONTENT)
-def reject_llm_edit(analysis_id: str, proposal_id: str) -> None:
-    raise HTTPException(status.HTTP_501_NOT_IMPLEMENTED, "TODO: M5")

@@ -173,6 +173,6 @@ class DashboardDataOut(BaseModel):
     funnel_stages: list[FunnelStageDataOut]
     key_insights: list[KeyInsightOut]
     recommendations: list[ParetoRecommendationOut]
-    twin_meta: VisualTwinMetaOut
+    twin_meta: VisualTwinMetaOut | None = None  # None bila Visual Twin belum dibangun
     waypoints: list[WaypointOut] = []
     what_if_projection: WhatIfProjectionOut | None = None

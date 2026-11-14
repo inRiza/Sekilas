@@ -69,6 +69,9 @@ from app.schemas.video import (
     VideoMetadataIn,
     VideoMetadataOut,
 )
+from app.services.transcript.job import STAGE_DONE as TRANSCRIPT_STAGE_DONE
+from app.services.transcript.job import STAGE_QUEUED as TRANSCRIPT_STAGE_QUEUED
+from app.services.transcript.job import TranscriptJobArgs, launch_transcript, start_transcript_job
 from app.services.transcript.quality import evaluate_video_metrics
 from app.services.twin.local_runner import launch_pending, start_twin_job
 
@@ -673,9 +676,9 @@ def complete_video_and_enqueue_jobs(
         id=f"job_tr_{uuid4().hex[:10]}",
         analysis_id=analysis.id,
         kind="transcript",
-        status="selesai",
-        stage="Transkrip VLM selesai diekstrak",
-        progress=1.0,
+        status="antre",
+        stage=TRANSCRIPT_STAGE_QUEUED,
+        progress=0.0,
     )
     session.add(transcript_job)
     # Visual Twin asli (mode lokal, PRD 11.2): COLMAP + Brush di thread latar belakang.
@@ -685,32 +688,34 @@ def complete_video_and_enqueue_jobs(
     if analysis.status in ("draft", "konteks", "video"):
         analysis.status = "processing"
 
-    # Bangun segmen transkrip kontekstual untuk video ini (kecuali analisis demo seed yang belum diubah)
-    existing_segs = list(
-        session.scalars(select(TranscriptSegment).where(TranscriptSegment.analysis_id == analysis.id)).all()
-    )
-    if not existing_segs or body.frame_keys or analysis.id != "selasar-kopi":
-        for old_seg in existing_segs:
-            session.delete(old_seg)
-        session.flush()
-        from app.services.transcript.extractor import extract_transcript_with_gemini
-
-        new_segments, new_checkpoints = extract_transcript_with_gemini(
-            analysis=analysis,
-            duration_s=video_out.duration_s,
-            cashier_at_s=video_out.cashier_at_s or video_out.duration_s,
-            frame_keys=list(body.frame_keys or []),
-            timestamps_s=list(body.frame_timestamps_s or []),
+    # Transkrip VLM dibaca di latar belakang (PRD 4.4.2): request ini langsung membalas 202.
+    # Analisis demo seed yang tidak mengirim frame baru memakai segmen yang sudah ada.
+    existing_segs = session.scalars(
+        select(TranscriptSegment.id).where(TranscriptSegment.analysis_id == analysis.id).limit(1)
+    ).first()
+    if existing_segs is None or body.frame_keys or analysis.id != "selasar-kopi":
+        start_transcript_job(
+            session,
+            TranscriptJobArgs(
+                job_id=transcript_job.id,
+                analysis_id=analysis.id,
+                duration_s=video_out.duration_s,
+                cashier_at_s=video_out.cashier_at_s or video_out.duration_s,
+                frame_keys=list(body.frame_keys or []),
+                timestamps_s=list(body.frame_timestamps_s or []),
+            ),
         )
-        for s in new_segments:
-            session.add(s)
-        session.flush()
-        for chk in new_checkpoints:
-            session.add(chk)
+    else:
+        transcript_job.status, transcript_job.stage, transcript_job.progress = (
+            "selesai",
+            TRANSCRIPT_STAGE_DONE,
+            1.0,
+        )
 
     session.flush()
     session.commit()
     launch_pending(session)
+    launch_transcript(session)
     return VideoCompleteResponse(
         video=video_out,
         transcript_job_id=transcript_job.id,
@@ -1458,22 +1463,14 @@ def build_dashboard_data(
         ).all()
     )
     vid = session.scalars(select(VideoAsset).where(VideoAsset.analysis_id == analysis.id)).first()
-    duration_s = vid.duration_s if vid and vid.duration_s > 0 else 48.0
+    # Durasi nyata: dari video, atau dari segmen transkrip terakhir bila metadata video kosong.
+    duration_s = vid.duration_s if vid and vid.duration_s > 0 else (segs[-1].timestamp_end if segs else 0.0)
 
     # Hitung metrik corong (Funnel) nyata dari keputusan agen di DB
     lewat_cnt = sum(1 for d in decisions if d.final_decision == "lewat")
     berhenti_pergi_cnt = sum(1 for d in decisions if d.final_decision == "berhenti_lalu_pergi")
     masuk_tanpa_cnt = sum(1 for d in decisions if d.final_decision == "masuk_tanpa_memesan")
     memesan_cnt = sum(1 for d in decisions if d.final_decision == "memesan")
-
-    # Jika seed demo lama hanya menyimpan 4 baris sampel tetapi total_agents = 20, skalakan proporsional
-    scale = (analysis.total_agents or 20) // len(decisions) if (0 < len(decisions) < 10 and (analysis.total_agents or 20) >= 20) else 1
-    if scale > 1:
-        total_agents = len(decisions) * scale
-        lewat_cnt *= scale
-        berhenti_pergi_cnt *= scale
-        masuk_tanpa_cnt *= scale
-        memesan_cnt *= scale
 
     berhenti_cnt = max(0, total_agents - lewat_cnt)
     masuk_cnt = max(0, masuk_tanpa_cnt + memesan_cnt)
@@ -1558,16 +1555,7 @@ def build_dashboard_data(
             path_duration_seconds=twin_row.path_duration_seconds or duration_s,
         )
     else:
-        total_f = max(60, round(duration_s * 30))
-        reg_f = round(total_f * 0.90)
-        twin_meta = VisualTwinMetaOut(
-            registered_frames=reg_f,
-            total_frames=total_f,
-            ratio=0.90,
-            quality_label=analysis.quality_label or "Kualitas baik",
-            points_count=reg_f * 60,
-            path_duration_seconds=duration_s,
-        )
+        twin_meta = None  # Visual Twin belum dibangun; dasbor tidak mengarang metrik 3D.
 
     # Waypoints dinamis dari segmen transkrip
     seg_jalan = next((s for s in segs if s.vantage == "jalan"), segs[0] if segs else None)
@@ -1641,10 +1629,14 @@ def build_dashboard_data(
 
     menus = list(analysis.menu_items or [])
     avg_price = round(sum(m.price for m in menus) / len(menus)) if menus else 20000
-    daily_vis = (analysis.context.daily_visitors if analysis.context and analysis.context.daily_visitors else None) or 50
-    monthly_lost_visitors = max(30, round(daily_vis * (berhenti_pergi_cnt / max(total_agents, 1)) * 15))
-    loss_low = monthly_lost_visitors * avg_price
-    loss_high = round(loss_low * 1.35)
+    # Potensi omzet hanya dihitung dari pengunjung harian yang diisi pemilik (F1 Bagian 5).
+    daily_vis = analysis.context.daily_visitors if analysis.context and analysis.context.daily_visitors else None
+    loss_low = loss_high = 0
+    can_estimate_loss = bool(daily_vis and menus)
+    if can_estimate_loss:
+        monthly_lost_visitors = round(daily_vis * (berhenti_pergi_cnt / max(total_agents, 1)) * 15)
+        loss_low = monthly_lost_visitors * avg_price
+        loss_high = round(loss_low * 1.35)
 
     key_insights = [
         KeyInsightOut(
@@ -1719,8 +1711,11 @@ def build_dashboard_data(
 
     kpi = DashboardKpiOut(
         buyers_count=memesan_cnt,
-        buyers_rate_text=f"{memesan_cnt} dari {total_agents} agen · contoh awal",
-        buyers_description=f"Konversi simulasi 20 agen di {business_name} hingga memesan di kasir (skala contoh awal, bukan persen presisi).",
+        buyers_rate_text=f"{memesan_cnt} dari {total_agents} agen simulasi",
+        buyers_description=(
+            f"Konversi simulasi {total_agents} agen di {business_name} hingga memesan di kasir "
+            "(satu kali simulasi, dibaca sebagai hipotesis, bukan persen presisi)."
+        ),
         drop_off_rate_text=_format_pct_id(top_rate),
         drop_off_from_stage=top_from,
         drop_off_to_stage=top_to,
@@ -1729,10 +1724,20 @@ def build_dashboard_data(
         main_cause_title=main_cause_short,
         main_cause_cue_rank=main_cause_rank_str,
         main_cause_detail=top_factor_text,
-        potential_loss_amount=f"{_format_rp_short(loss_low)} – {_format_rp_short(loss_high)}",
-        potential_loss_basis=f"Estimasi per bulan dari {berhenti_pergi_cnt} agen batal masuk",
-        potential_loss_detail=f"Dihitung dari rata-rata harga menu Rp {avg_price:,} x estimasi lalu lintas harian {business_name}.".replace(
-            ",", "."
+        potential_loss_amount=(
+            f"{_format_rp_short(loss_low)} – {_format_rp_short(loss_high)}" if can_estimate_loss else "Belum dihitung"
+        ),
+        potential_loss_basis=(
+            f"Estimasi per bulan dari {berhenti_pergi_cnt} agen batal masuk"
+            if can_estimate_loss
+            else "Isi menu dan pengunjung harian di Konteks usaha"
+        ),
+        potential_loss_detail=(
+            f"Dihitung dari rata-rata harga menu Rp {avg_price:,} x {daily_vis} pengunjung harian {business_name}.".replace(
+                ",", "."
+            )
+            if can_estimate_loss
+            else "Butuh harga menu dan jumlah pengunjung harian dari pemilik; angka ini tidak ditebak."
         ),
     )
 
