@@ -15,10 +15,11 @@ import {
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { AnalysisTwin } from '@/components/dashboard/analysis-twin';
+import { WaypointVideo } from '@/components/dashboard/waypoint-video';
 import { FunnelChart } from '@/components/dashboard/funnel-chart';
 import { CueRanking } from '@/components/dashboard/cue-ranking';
 import { Card, CardHeader } from '@/components/dashboard/card';
-import { AgentDots, CauseCard, HeroCard, KpiCard, ProjectionStat } from '@/components/dashboard/kpi';
+import { CauseCard, HeroCard, KpiCard, ProjectionStat } from '@/components/dashboard/kpi';
 import {
   cloneAnalysisWithTranscript,
   fetchDashboardData,
@@ -259,9 +260,7 @@ function DashboardResultInner() {
             sub={data.kpi.buyers_rate_text}
             icon={TrendingUp}
             tone="impact"
-          >
-            <AgentDots total={totalAgents} filled={data.kpi.buyers_count} />
-          </KpiCard>
+          />
           <KpiCard
             label="Potensi omzet lepas"
             info={data.kpi.potential_loss_detail}
@@ -273,8 +272,8 @@ function DashboardResultInner() {
           <CauseCard title={data.kpi.main_cause_title || '–'} rank={data.kpi.main_cause_cue_rank} />
         </div>
 
-        {/* Alur perilaku agen & peringkat semua alasan batal */}
-        <div className="grid grid-cols-1 items-stretch gap-4 lg:grid-cols-2">
+        {/* Alur perilaku agen, lalu peringkat semua alasan batal (masing-masing selebar halaman) */}
+        <div className="space-y-4">
           <Card className="p-5">
             <CardHeader
               title="Alur perilaku agen"
@@ -294,9 +293,9 @@ function DashboardResultInner() {
           </Card>
         </div>
 
-        {/* Bento: Visual Twin 3D di kiri; titik pantau dan temuan utama bertumpuk di kanan */}
-        <div id="twin" className="grid grid-cols-1 items-stretch gap-4 lg:grid-cols-12">
-          <div className="lg:col-span-8">
+        {/* Visual Twin 3D, titik pantau (video), lalu temuan utama: masing-masing selebar halaman */}
+        <div id="twin" className="space-y-4">
+          <div>
             <AnalysisTwin
               analysisId={analysisId}
               meta={durationSeconds > 0 ? [`${durationSeconds} detik`] : []}
@@ -307,43 +306,20 @@ function DashboardResultInner() {
             />
           </div>
 
-          <div className="flex flex-col gap-4 lg:col-span-4">
+          <div className="space-y-4">
             {waypoints.length > 0 && (
             <Card className="p-4">
-              <CardHeader title="Titik pantau lintasan" hint="Klik untuk melihat di Visual Twin" />
-              <div className="grid grid-cols-1 gap-2 sm:grid-cols-3 lg:grid-cols-1">
-                {waypoints.map((wp) => (
-                  <button
-                    key={wp.id}
-                    type="button"
-                    onClick={() => setActiveWaypoint(wp.id)}
-                    className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-left ring-1 transition ${
-                      activeWaypoint === wp.id
-                        ? 'bg-primary-10/60 ring-2 ring-primary-40'
-                        : wp.is_hotspot
-                          ? 'bg-friction-10/60 ring-friction/30 hover:bg-friction-10'
-                          : 'bg-panel ring-line/70 hover:bg-hover'
-                    }`}
-                  >
-                    <span className="w-9 shrink-0 font-mono text-[11px] text-muted">{wp.time}</span>
-                    <span className="min-w-0 flex-1">
-                      <span className="block text-[13px] font-semibold leading-tight text-ink">{wp.name}</span>
-                      <span className={`block text-[12px] ${wp.is_hotspot ? 'font-medium text-friction' : 'text-muted'}`}>
-                        {wp.status}
-                      </span>
-                    </span>
-                    {wp.is_hotspot && (
-                      <span className="shrink-0 rounded-full bg-friction px-2 py-0.5 text-[10px] font-semibold text-white">
-                        Friksi
-                      </span>
-                    )}
-                  </button>
-                ))}
-              </div>
+              <CardHeader title="Titik pantau lintasan" hint="Klik untuk memutar video dari detik itu dan melihatnya di Visual Twin" />
+              <WaypointVideo
+                analysisId={analysisId}
+                waypoints={waypoints}
+                active={activeWaypoint}
+                onSelect={setActiveWaypoint}
+              />
             </Card>
             )}
 
-            <Card className="flex-1 p-4">
+            <Card className="p-4">
               <CardHeader title="3 temuan utama" hint="Berdasarkan perilaku agen" />
               <ul className="divide-y divide-hairline">
                 {data.key_insights.map((ins) => (

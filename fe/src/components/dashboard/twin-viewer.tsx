@@ -106,7 +106,7 @@ export function TwinViewer({
       </div>
 
       {/* Kanvas */}
-      <div className="relative h-[420px] flex-1 lg:h-auto lg:min-h-[420px]">
+      <div className="relative h-[420px] lg:h-[560px]">
         {loadFailed ? (
           <div className="grid h-full place-items-center bg-panel px-6 text-center text-[13px] text-muted">
             Berkas 3D tidak bisa dimuat. Coba muat ulang halaman.

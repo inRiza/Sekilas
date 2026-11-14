@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { ArrowDownRight, ArrowUpRight, TriangleAlert, type LucideIcon } from 'lucide-react';
+import { ArrowDownRight, ArrowUpRight, ChevronDown, TriangleAlert, type LucideIcon } from 'lucide-react';
 import { InfoIcon } from '@/components/ui/icons';
 import { Card } from './card';
 
@@ -18,6 +18,7 @@ export function KpiCard({
   sub,
   icon: Icon,
   tone,
+  badge,
   children,
 }: {
   label: string;
@@ -27,6 +28,8 @@ export function KpiCard({
   sub: string;
   icon: LucideIcon;
   tone: keyof typeof KPI_TONE;
+  /** Chip kecil di bawah keterangan (misal kode hipotesis atau status), agar judul tetap satu baris. */
+  badge?: ReactNode;
   children?: ReactNode;
 }) {
   return (
@@ -35,8 +38,8 @@ export function KpiCard({
         <span className={`grid size-9 shrink-0 place-items-center rounded-xl ${KPI_TONE[tone]}`}>
           <Icon size={17} strokeWidth={2} />
         </span>
-        <span className="min-w-0 flex-1 text-[13px] font-medium leading-tight text-ink-soft">{label}</span>
-        <div className="group/tip relative cursor-help">
+        <span className="min-w-0 flex-1 truncate text-[13px] font-medium leading-tight text-ink-soft">{label}</span>
+        <div className="group/tip relative shrink-0 cursor-help">
           <InfoIcon size={15} className="text-subtle transition-colors hover:text-ink" />
           <div className="pointer-events-none absolute right-0 top-5 z-30 hidden w-56 rounded-md bg-ink p-2.5 text-[11px] leading-relaxed text-white shadow-lg group-hover/tip:block">
             {info}
@@ -46,7 +49,7 @@ export function KpiCard({
       <div className="mt-5 flex items-baseline gap-1.5">
         <span
           className={`break-words font-semibold tracking-[-0.03em] text-ink tabular-nums ${
-            value.length > 20 ? 'text-[20px] leading-snug' : 'text-[34px] leading-none'
+            value.length > 16 ? 'text-[18px] leading-snug' : 'text-[28px] leading-none'
           }`}
         >
           {value}
@@ -54,23 +57,13 @@ export function KpiCard({
         {unit && <span className="text-[14px] text-muted">{unit}</span>}
       </div>
       <p className="mt-2 text-[12px] leading-snug text-muted">{sub}</p>
+      {badge && <div className="mt-2.5 flex">{badge}</div>}
       {children && <div className="mt-auto pt-4">{children}</div>}
     </Card>
   );
 }
 
-/** Satu titik per agen: yang terisi biru adalah agen yang memesan. */
-export function AgentDots({ total, filled }: { total: number; filled: number }) {
-  return (
-    <div className="grid w-fit grid-cols-10 gap-1.5" aria-label={`${filled} dari ${total} agen memesan`}>
-      {Array.from({ length: Math.min(total, 100) }, (_, i) => (
-        <span key={i} className={`size-2.5 rounded-full ${i < filled ? 'bg-primary-40' : 'bg-line'}`} />
-      ))}
-    </div>
-  );
-}
-
-/** Kartu temuan terpenting. Warna menunjukkan sentimen: merah = penurunan parah, hijau = terkendali. */
+/** Penurunan terbesar: kerangka sama dengan KPI lain; lokasi dan penjelasan di kotak bawah. */
 export function HeroCard({
   value,
   from,
@@ -84,50 +77,41 @@ export function HeroCard({
   location: string;
   description: string;
 }) {
-  // ponytail: ambang 30% adalah tebakan kasar; angka yang tak terbaca dianggap parah. Naikkan jadi ambang per-usaha bila perlu.
+  // ponytail: ambang 30% adalah tebakan kasar; angka yang tak terbaca dianggap parah.
   const rate = parseFloat(value.replace(',', '.'));
   const negative = !(rate < 30);
-  const Icon = negative ? ArrowDownRight : ArrowUpRight;
 
   return (
-    <section
-      className={`relative flex h-full flex-col justify-between gap-5 overflow-hidden rounded-2xl bg-gradient-to-br p-5 text-white ${
-        negative
-          ? 'from-[#b8372d] to-[#e5685c] shadow-[0_8px_24px_rgba(194,69,58,0.28)]'
-          : 'from-[#1a7a50] to-[#3bb27f] shadow-[0_8px_24px_rgba(31,138,91,0.25)]'
-      }`}
+    <KpiCard
+      label="Penurunan terbesar"
+      info={description}
+      value={value}
+      sub={`Agen batal antara tahap ${from} ke ${to}`}
+      icon={negative ? ArrowDownRight : ArrowUpRight}
+      tone={negative ? 'friction' : 'impact'}
+      badge={
+        <span
+          className={`shrink-0 rounded-md px-2 py-0.5 text-[11px] font-semibold ${
+            negative ? 'bg-friction-10 text-friction' : 'bg-impact-10 text-impact'
+          }`}
+        >
+          {negative ? 'Perlu perhatian' : 'Terkendali'}
+        </span>
+      }
     >
-      <span className="pointer-events-none absolute -right-12 -top-12 size-52 rounded-full border border-white/20" />
-      <span className="pointer-events-none absolute -right-24 -top-24 size-80 rounded-full border border-white/10" />
-      <div className="relative">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-white/15 px-3 py-1 text-[12px] font-medium">
-            <TriangleAlert size={13} /> Penurunan terbesar
-          </span>
-          <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-ink">
-            {negative ? 'Perlu perhatian' : 'Terkendali'}
-          </span>
-        </div>
-        <div className="mt-5 flex items-center gap-2.5">
-          <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-white/20">
-            <Icon size={24} strokeWidth={2.25} />
-          </span>
-          <p className="text-[48px] font-semibold leading-none tracking-[-0.04em] tabular-nums">{value}</p>
-        </div>
-        <p className="mt-3 text-[14px] leading-snug text-white/90">
-          agen batal antara tahap <strong className="font-semibold text-white">{from}</strong> ke{' '}
-          <strong className="font-semibold text-white">{to}</strong>
-        </p>
-      </div>
-      <div className="relative rounded-xl bg-white/10 p-3 text-[12px] leading-relaxed text-white/85">
-        <p className="font-medium text-white">{location}</p>
-        <p className="mt-1">{description}</p>
-      </div>
-    </section>
+      {/* Lokasi + penjelasan dilipat agar tinggi kartu sejajar dengan KPI lain. */}
+      <details className="group rounded-lg bg-panel text-[12px] leading-relaxed text-muted">
+        <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 [&::-webkit-details-marker]:hidden">
+          <span className="min-w-0 flex-1 truncate font-medium text-ink-soft">{location}</span>
+          <ChevronDown size={14} className="shrink-0 text-subtle transition-transform group-open:rotate-180" />
+        </summary>
+        <p className="px-3 pb-2.5">{description}</p>
+      </details>
+    </KpiCard>
   );
 }
 
-/** Penyebab utama batal: header, lalu judul penuh (tidak pernah dipotong) dan peringkatnya. */
+/** Penyebab utama batal: kerangka sama dengan KPI lain; judul penuh, kode hipotesis jadi chip. */
 export function CauseCard({ title, rank }: { title: string; rank: string }) {
   // judul backend berbentuk "H8 · Menu dan harga ...": kodenya jadi chip agar judul mudah dibaca
   const match = /^(H\d+)\s·\s(.+)$/.exec(title);
@@ -135,32 +119,21 @@ export function CauseCard({ title, rank }: { title: string; rank: string }) {
   const heading = match?.[2] ?? title;
 
   return (
-    <Card className="flex h-full flex-col gap-4 p-5">
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2.5">
-          <span className={`grid size-9 shrink-0 place-items-center rounded-xl ${KPI_TONE.friction}`}>
-            <TriangleAlert size={17} strokeWidth={2} />
-          </span>
-          <span className="text-[13px] font-medium text-ink-soft">Penyebab utama batal</span>
-        </div>
-        {code && (
-          <span className="rounded-md bg-friction-10 px-2 py-0.5 font-mono text-[11px] font-semibold text-friction">
+    <KpiCard
+      label="Penyebab utama batal"
+      info={title}
+      value={heading}
+      sub={rank}
+      icon={TriangleAlert}
+      tone="friction"
+      badge={
+        code ? (
+          <span className="shrink-0 rounded-md bg-friction-10 px-2 py-0.5 font-mono text-[11px] font-semibold text-friction">
             {code}
           </span>
-        )}
-      </div>
-
-      <div className="my-auto">
-        <p
-          className={`font-semibold tracking-[-0.02em] text-ink ${
-            heading.length > 48 ? 'text-[15px] leading-snug' : heading.length > 28 ? 'text-[18px] leading-snug' : 'text-[22px] leading-tight'
-          }`}
-        >
-          {heading}
-        </p>
-        <p className="mt-2 text-[12px] text-muted">{rank}</p>
-      </div>
-    </Card>
+        ) : undefined
+      }
+    />
   );
 }
 
