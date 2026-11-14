@@ -55,6 +55,7 @@ export interface VideoInspectionResult {
   blurredFacesCount: number;
   blurredPlatesCount: number;
   sampledFrameDataUrls: string[];
+  sampledFrameTimestamps: number[];
   accepted: boolean;
   checks: VideoCheckItem[];
   rejectionReasons: string[];
@@ -238,6 +239,7 @@ export async function inspectVideoFile(file: File): Promise<VideoInspectionResul
       detectedFaces?: number,
       detectedPlates?: number,
       sampledFrameDataUrls: string[] = [],
+      sampledFrameTimestamps: number[] = [],
     ) => {
       const faces =
         detectedFaces !== undefined
@@ -265,6 +267,7 @@ export async function inspectVideoFile(file: File): Promise<VideoInspectionResul
         blurredFacesCount: faces,
         blurredPlatesCount: plates,
         sampledFrameDataUrls,
+        sampledFrameTimestamps,
         accepted,
         checks,
         rejectionReasons,
@@ -272,6 +275,7 @@ export async function inspectVideoFile(file: File): Promise<VideoInspectionResul
     };
 
     const capturedFrames: string[] = [];
+    const capturedTimestamps: number[] = [];
     let resolvedWidth = 1920;
     let resolvedHeight = 1080;
     let resolvedDuration = 48;
@@ -289,12 +293,13 @@ export async function inspectVideoFile(file: File): Promise<VideoInspectionResul
       faces?: number,
       plates?: number,
       frames: string[] = [],
+      timestamps: number[] = [],
     ) => {
       if (settled) return;
       settled = true;
       window.clearTimeout(timeout);
       URL.revokeObjectURL(objectUrl);
-      finishWith(w, h, dur, bright, faces, plates, frames);
+      finishWith(w, h, dur, bright, faces, plates, frames, timestamps);
     };
 
     const timeout = window.setTimeout(() => {
@@ -307,17 +312,21 @@ export async function inspectVideoFile(file: File): Promise<VideoInspectionResul
         totalFacesDetected,
         totalPlatesDetected,
         capturedFrames,
+        capturedTimestamps,
       );
-    }, 20000);
+    }, 35000);
 
     video.onloadedmetadata = async () => {
       resolvedWidth = video.videoWidth || 1920;
       resolvedHeight = video.videoHeight || 1080;
       resolvedDuration = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 48;
 
-      const samplePoints = [0.15, 0.4, 0.65, 0.85].map((r) =>
-        Math.min(resolvedDuration - 0.1, Math.max(0.1, resolvedDuration * r)),
-      );
+      // Ekstrak ~16-20 keyframe merata di sepanjang video (~20 event untuk 1 video standar)
+      const targetFrames = Math.min(20, Math.max(10, Math.round(resolvedDuration / 2.2)));
+      const samplePoints = Array.from({ length: targetFrames }, (_, idx) => {
+        const ratio = (idx + 0.5) / targetFrames;
+        return Math.min(resolvedDuration - 0.1, Math.max(0.1, resolvedDuration * ratio));
+      });
       let sampleIdx = 0;
 
       const seekNext = () => {
@@ -332,6 +341,7 @@ export async function inspectVideoFile(file: File): Promise<VideoInspectionResul
             totalFacesDetected,
             totalPlatesDetected,
             capturedFrames,
+            capturedTimestamps,
           );
           return;
         }
@@ -358,17 +368,17 @@ export async function inspectVideoFile(file: File): Promise<VideoInspectionResul
             lumCount += 1;
           }
 
-          // Gunakan timeout per-frame 3 detik untuk deteksi agar tidak memblokir ekstraksi keyframe
+          // Gunakan timeout per-frame 1.5 detik untuk deteksi agar ekstraksi ~20 keyframe tetap cepat
           const boxes = await Promise.race([
             detectPrivacyBoxesAsync(video),
             new Promise<Awaited<ReturnType<typeof detectPrivacyBoxesAsync>>>((res) =>
-              window.setTimeout(() => res([]), 3000),
+              window.setTimeout(() => res([]), 1500),
             ),
           ]);
           totalFacesDetected += boxes.filter((b) => b.kind === 'face').length;
           totalPlatesDetected += boxes.filter((b) => b.kind === 'plate').length;
 
-          // Tangkap thumbnail terburam (640x360) untuk dijadikan frame bukti di Verifikasi Transkrip
+          // Tangkap keyframe terburam minimal 640x360 beserta stempel waktu
           const thumbCanvas = document.createElement('canvas');
           thumbCanvas.width = 640;
           thumbCanvas.height = 360;
@@ -378,7 +388,8 @@ export async function inspectVideoFile(file: File): Promise<VideoInspectionResul
               blurEnabled: true,
               showIndicators: false,
             });
-            capturedFrames.push(thumbCanvas.toDataURL('image/jpeg', 0.8));
+            capturedFrames.push(thumbCanvas.toDataURL('image/jpeg', 0.78));
+            capturedTimestamps.push(Math.round(video.currentTime * 10) / 10);
           }
         } catch {
           // Lanjut ke sampel berikutnya

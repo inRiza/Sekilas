@@ -1,6 +1,5 @@
 """Layanan CRUD & Simulasi Dinamis untuk Business, Analysis, Context, Video, Transkrip, Agen, dan Dasbor (PRD v1.4)."""
 
-import random
 from collections import Counter
 from datetime import datetime
 from typing import Any
@@ -18,6 +17,7 @@ from app.models.entities import (
     Persona,
     RecommendationItem,
     SimulationRun,
+    TranscriptCheckpoint,
     TranscriptSegment,
     TwinAsset,
     UserAccount,
@@ -693,14 +693,20 @@ def complete_video_and_enqueue_jobs(
         for old_seg in existing_segs:
             session.delete(old_seg)
         session.flush()
-        new_segments = _generate_contextual_segments(
+        from app.services.transcript.extractor import extract_transcript_with_gemini
+
+        new_segments, new_checkpoints = extract_transcript_with_gemini(
             analysis=analysis,
             duration_s=video_out.duration_s,
             cashier_at_s=video_out.cashier_at_s or video_out.duration_s,
-            frame_keys=body.frame_keys,
+            frame_keys=list(body.frame_keys or []),
+            timestamps_s=list(body.frame_timestamps_s or []),
         )
         for s in new_segments:
             session.add(s)
+        session.flush()
+        for chk in new_checkpoints:
+            session.add(chk)
 
     session.flush()
     session.commit()
@@ -940,26 +946,25 @@ def run_simulation_for_analysis(
     seed: int = 42,
     clear_stale: bool = True,
 ) -> list[AgentDecisionOut]:
-    """Jalankan simulasi agen sintetis secara deterministik berdasarkan konteks & transkrip analisis."""
+    """Jalankan simulasi 20 agen individual (model persona diskret + Gemini 2 batch + Katalog Isyarat)."""
+    from app.services.simulation.pareto import (
+        aggregate_cue_scores,
+        generate_catalog_recommendations,
+    )
+    from app.services.simulation.population import generate_discrete_personas
+    from app.services.simulation.runner import SegmentInput, run_20_agent_swarm
+
     ctx = analysis.context
     biz = analysis.business
     bname = (ctx.business_name if ctx else (biz.name if biz else analysis.name)) or "Tempat Usaha"
     loc_desc = (ctx.location_description if ctx and ctx.location_description else "") or f"fasad depan {bname}"
     passersby = list(ctx.passersby or []) if ctx and ctx.passersby else ["mahasiswa", "pekerja_kantor", "warga_sekitar"]
-    fixed_constraints = set(ctx.fixed_constraints or []) if ctx else set()
+    fixed_constraints = list(ctx.fixed_constraints or []) if ctx else []
+    owner_goals = [ctx.business_goal] if ctx and ctx.business_goal else []
 
     menus = sorted(analysis.menu_items or [], key=lambda m: m.sort_order)
-    if menus:
-        prices = sorted(m.price for m in menus if m.price > 0)
-        median_price = prices[len(prices) // 2] if prices else 20000
-        min_price = prices[0] if prices else 15000
-        top_menu_name = menus[0].name
-        second_menu_name = menus[1].name if len(menus) > 1 else menus[0].name
-    else:
-        median_price = 20000
-        min_price = 15000
-        top_menu_name = "menu utama"
-        second_menu_name = "menu pilihan"
+    prices = sorted(m.price for m in menus if m.price > 0)
+    median_price = float(prices[len(prices) // 2]) if prices else 20000.0
 
     segs = list(
         session.scalars(
@@ -977,18 +982,7 @@ def run_simulation_for_analysis(
             session.add(s)
         session.flush()
 
-    seg_jalan = next((s for s in segs if s.vantage == "jalan"), segs[0])
-    seg_pintu = next((s for s in segs if s.vantage == "pintu"), segs[min(1, len(segs) - 1)])
-    seg_dalam = next((s for s in segs if s.vantage == "dalam"), segs[-1])
-
-    # Hitung tingkat gesekan dari transkrip yang telah diverifikasi/diedit pemilik
-    jalan_missing = bool((seg_jalan.not_visible or "").strip())
-    pintu_missing = bool((seg_pintu.not_visible or "").strip())
-    all_text_lower = " ".join(f"{s.narrative} {s.not_visible}" for s in segs).lower()
-    has_price_friction = any(k in all_text_lower for k in ("harga", "menu", "banner", "tidak terlihat", "belum terbaca"))
-    has_light_friction = any(k in all_text_lower for k in ("gelap", "redup", "temaram", "tertutup", "bayangan"))
-
-    # Hapus hasil simulasi lama agar simulasi ulang selalu mencerminkan konteks & transkrip terbaru
+    # Hapus hasil simulasi lama
     for old_dec in session.scalars(
         select(AgentDecisionRecord).where(AgentDecisionRecord.analysis_id == analysis.id)
     ).all():
@@ -1005,8 +999,20 @@ def run_simulation_for_analysis(
         session.delete(old_rec)
     session.flush()
 
-    total = max(8, min(n_agents if n_agents <= 30 else 20, 30))
-    rng = random.Random(f"{analysis.id}:{seed}:{analysis.transcript_version}")
+    # Skala resmi demo/hemat: 20 agen individual (tanpa archetype)
+    total = max(8, min(min(n_agents, 20), 20))
+    personas = generate_discrete_personas(
+        n=total,
+        seed=seed,
+        surrounding_type=(ctx.surroundings[0] if ctx and ctx.surroundings else None),
+        visitor_types=passersby,
+        median_menu_price=median_price,
+        peak_hours=(
+            [f"{rh.get('start', '')}-{rh.get('end', '')}" for rh in (ctx.rush_hours or [])]
+            if ctx and ctx.rush_hours
+            else None
+        ),
+    )
 
     sim_run = SimulationRun(
         id=f"run_{uuid4().hex[:10]}",
@@ -1022,195 +1028,88 @@ def run_simulation_for_analysis(
     session.add(sim_run)
     session.flush()
 
-    traits_laziness = ["malas", "normal", "eksploratif"]
-    traits_dining = ["sendiri_buru_buru", "santai", "rombongan"]
-    traits_fam = ["baru_pertama", "cukup_tahu", "warga_lokal"]
-    traits_intent = ["mencari_makan", "lewat_saja", "spesifik_tujuan"]
-    moods = ["Santai", "Lapar & ingin cepat", "Penasaran", "Hemat akhir bulan", "Fokus kerja"]
-
-    for i in range(1, total + 1):
-        seg_type = passersby[(i - 1) % len(passersby)]
-        budget_pool = SEGMENT_BUDGET_POOL.get(seg_type, [20000, 25000, 35000])
-        meal_budget = rng.choice(budget_pool)
-        break_mins = rng.choice([20, 30, 45, 60, 90])
-
-        budget_sens = "hemat" if meal_budget <= median_price else ("sedang" if meal_budget <= median_price * 1.5 else "fleksibel")
-        laziness = traits_laziness[i % len(traits_laziness)]
-        dining = traits_dining[i % len(traits_dining)]
-        fam = traits_fam[i % len(traits_fam)]
-        intent = traits_intent[i % len(traits_intent)]
-        mood = moods[i % len(moods)]
-
-        # Tentukan keputusan agen secara kontekstual
-        ratio_pos = i / total
-        lewat_cutoff = 0.25 if jalan_missing else 0.15
-        berhenti_cutoff = 0.65 if (pintu_missing or has_price_friction) else 0.40
-        if meal_budget < min_price:
-            berhenti_cutoff = min(0.80, berhenti_cutoff + 0.15)
-        masuk_tanpa_cutoff = berhenti_cutoff + 0.10
-
-        if ratio_pos <= lewat_cutoff:
-            final_dec = "lewat"
-            stopped_id = seg_jalan.id
-            factor_ids = [seg_jalan.id]
-            hesitation = 4
-            deciding_factor = (
-                f"Plang & penanda {bname} dari arah jalan belum cukup mencolok ({seg_jalan.not_visible or 'visibilitas fasad terbatas'})."
+    for p in personas:
+        session.add(
+            Persona(
+                id=f"per_{analysis.id}_{p.agent_id:02d}",
+                analysis_id=analysis.id,
+                agent_id=p.agent_id,
+                segment=p.segment,
+                discrete_traits=p.discrete_traits,
+                concrete_facts=p.concrete_facts,
+                context_around=p.context_around,
+                daily_mood=p.daily_mood,
+                seed=p.seed,
+                table_version=p.table_version,
             )
-            monologue = (
-                f"Aku lewat di depan {bname} ({loc_desc}), tapi dari jalan belum kelihatan jelas "
-                f"apakah sedang buka dan jual {top_menu_name} di kisaran anggaran Rp {meal_budget:,}. Aku jalan terus dulu."
-            ).replace(",", ".")
-        elif ratio_pos <= berhenti_cutoff:
-            final_dec = "berhenti_lalu_pergi"
-            stopped_id = seg_pintu.id
-            factor_ids = [seg_jalan.id, seg_pintu.id]
-            hesitation = 5
-            if meal_budget < median_price or has_price_friction:
-                deciding_factor = (
-                    f"Tidak ada informasi harga {top_menu_name} (mulai Rp {min_price:,}) di depan pintu masuk {bname}."
-                ).replace(",", ".")
-                monologue = (
-                    f"Sebenarnya tertarik mampir ke {bname}, tapi pas berhenti di depan akses masuk ({_mmss(seg_pintu.timestamp_start)}), "
-                    f"aku nggak melihat daftar menu & harga {top_menu_name}. Uang makanku Rp {meal_budget:,}, khawatir kemahalan kalau sudah terlanjur masuk."
-                ).replace(",", ".")
-            else:
-                deciding_factor = (
-                    f"Area akses masuk {bname} tampak agak redup/kurang mengundang dari luar."
-                )
-                monologue = (
-                    f"Aku sempat berhenti sebentar memperhatikan pintu masuk {bname}, tapi karena bagian dalamnya terlihat agak temaram "
-                    f"dan belum ada standing banner menu, aku urung masuk."
-                )
-        elif ratio_pos <= masuk_tanpa_cutoff:
-            final_dec = "masuk_tanpa_memesan"
-            stopped_id = seg_dalam.id
-            factor_ids = [seg_pintu.id, seg_dalam.id]
-            hesitation = 3
-            deciding_factor = (
-                f"Waktu istirahat terbatas ({break_mins} menit) dan belum melihat paket cepat di dekat pintu {bname}."
-            )
-            monologue = (
-                f"Aku sudah masuk ke area {bname} untuk melihat daftar menu ({top_menu_name}, {second_menu_name}), "
-                f"tapi karena waktu istirahatku cuma {break_mins} menit, aku putuskan beli lain waktu."
-            )
-        else:
-            final_dec = "memesan"
-            stopped_id = None
-            factor_ids = [seg_dalam.id]
-            hesitation = 1 if meal_budget >= median_price else 2
-            deciding_factor = (
-                f"Menu {top_menu_name} (Rp {menus[0].price if menus else median_price:,}) sesuai anggaran dan area kasir {bname} terlihat meyakinkan."
-            ).replace(",", ".")
-            monologue = (
-                f"Begitu masuk ke dalam {bname} dan sampai di kasir (detik {_mmss(seg_dalam.timestamp_end)}), "
-                f"papan menu {top_menu_name} dan {second_menu_name} langsung terbaca jelas. Harganya masuk di anggaranku Rp {meal_budget:,}, jadi aku langsung pesan!"
-            ).replace(",", ".")
-
-        persona_row = Persona(
-            id=f"per_{analysis.id}_{i:02d}",
-            analysis_id=analysis.id,
-            agent_id=i,
-            segment=seg_type,
-            discrete_traits={
-                "budget_sensitivity": budget_sens,
-                "physical_laziness": laziness,
-                "dining_context": dining,
-                "area_familiarity": fam,
-                "visit_intent": intent,
-            },
-            concrete_facts={
-                "meal_budget": meal_budget,
-                "break_time_minutes": break_mins,
-            },
-            context_around=SEGMENT_CONTEXT_AROUND.get(seg_type, f"Melintas di sekitar {bname}"),
-            daily_mood=mood,
-            seed=seed + i,
-            table_version="v1.4-dynamic",
         )
-        session.add(persona_row)
 
-        dec_row = AgentDecisionRecord(
-            id=f"dec_{analysis.id}_{i:02d}",
-            run_id=sim_run.id,
-            analysis_id=analysis.id,
-            agent_id=i,
-            monologue=monologue,
-            final_decision=final_dec,
-            stopped_at_segment_id=stopped_id,
-            deciding_factor=deciding_factor,
-            factor_segment_ids=factor_ids,
-            hesitation_score=hesitation,
-        )
-        session.add(dec_row)
-
-    # Bangun 3 Rekomendasi Pareto yang kontekstual (menghormati fixed_constraints)
-    pintu_time = _mmss((seg_pintu.timestamp_start + seg_pintu.timestamp_end) / 2)
-    jalan_time = _mmss((seg_jalan.timestamp_start + seg_jalan.timestamp_end) / 2)
-    min_price_rb = f"Rp {min_price // 1000}rb" if min_price >= 1000 else f"Rp {min_price}"
-
-    recs_to_create = [
-        RecommendationItem(
-            id=f"rec_{analysis.id}_1",
-            analysis_id=analysis.id,
-            run_id=sim_run.id,
-            hypothesis_id="H8",
-            action_id="A8.1",
-            priority_tag="Prioritas",
-            rank=1,
-            title=f"Pasang standing banner menu ({top_menu_name}) & harga mulai {min_price_rb} di depan pintu masuk",
-            description=(
-                f"Tampilkan daftar menu favorit {bname} ({top_menu_name}, {second_menu_name}) beserta harga jelas "
-                f"agar calon pembeli yang berhenti di depan akses masuk tidak ragu soal harga."
-            ),
-            impact="Tinggi",
-            effort="Rendah",
-            estimated_lift_range="+14% – +19%",
-            location_zone=f"Akses Masuk (Detik {pintu_time})",
-        ),
-        RecommendationItem(
-            id=f"rec_{analysis.id}_2",
-            analysis_id=analysis.id,
-            run_id=sim_run.id,
-            hypothesis_id="H2",
-            action_id="A2.1",
-            priority_tag="Prioritas",
-            rank=2,
-            title=(
-                f"Tambahkan lampu sorot hangat & penanda 'BUKA' kontras tinggi di area masuk {bname}"
-                if has_light_friction or "fasad" in fixed_constraints
-                else f"Perjelas penanda pintu masuk & arah menuju kasir {bname}"
-            ),
-            description=(
-                f"Pastikan transisi dari luar ({loc_desc}) menuju dalam toko terlihat terang dan ramah "
-                f"sehingga pejalan kaki tahu {bname} sedang beroperasi."
-            ),
-            impact="Sedang",
-            effort="Rendah",
-            estimated_lift_range="+6% – +10%",
-            location_zone=f"Ambang Pintu (Detik {pintu_time})",
-        ),
-        RecommendationItem(
-            id=f"rec_{analysis.id}_3",
-            analysis_id=analysis.id,
-            run_id=sim_run.id,
-            hypothesis_id="H1",
-            action_id="A1.1",
-            priority_tag="Nanti",
-            rank=3,
-            title=f"Optimalkan posisi plang nama {bname} agar terbaca tegak lurus dari arah pejalan kaki",
-            description=(
-                f"Bantu pengendara dan pejalan kaki di sekitar {ctx.location_name if ctx else bname} "
-                f"mengenali {bname} sejak detik pertama melintas."
-            ),
-            impact="Sedang",
-            effort="Sedang",
-            estimated_lift_range="+3% – +6%",
-            location_zone=f"Fasad Jalan (Detik {jalan_time})",
-        ),
+    seg_inputs = [
+        SegmentInput(id=s.id, vantage=s.vantage, narrative=s.narrative, not_visible=s.not_visible or "")
+        for s in segs
     ]
-    for r in recs_to_create:
-        session.add(r)
+    btype = ctx.business_type if ctx and ctx.business_type else "usaha kuliner"
+    business_summary = f"{bname} ({btype}), berlokasi di {loc_desc}."
+
+    agent_results = run_20_agent_swarm(
+        personas=personas,
+        segments=seg_inputs,
+        business_summary=business_summary,
+        batch_size=10,
+        seed=seed,
+    )
+
+    for res in agent_results:
+        session.add(
+            AgentDecisionRecord(
+                id=f"dec_{sim_run.id}_{res.agent_id:02d}",
+                run_id=sim_run.id,
+                analysis_id=analysis.id,
+                agent_id=res.agent_id,
+                batch_id=res.batch_id,
+                monologue=res.monologue,
+                final_decision=res.final_decision,
+                stopped_at_segment_id=res.stopped_at_segment_id,
+                deciding_factor=res.deciding_factor,
+                factor_segment_ids=res.factor_segment_ids,
+                segment_traces=res.segment_traces,
+                attributions=res.attributions,
+                primary_hypothesis_id=res.primary_hypothesis_id,
+                other_reason=res.other_reason,
+            )
+        )
+
+    # Agregasi Katalog Isyarat & 1 panggilan LLM untuk memilih tindakan dari katalog
+    cues = aggregate_cue_scores(agent_results)
+    curated_recs = generate_catalog_recommendations(
+        cues=cues,
+        segments=seg_inputs,
+        cannot_change=fixed_constraints,
+        owner_goals=owner_goals,
+    )
+
+    seg_map = {s.id: s for s in segs}
+    for rank_idx, rec in enumerate(curated_recs, start=1):
+        target_seg = seg_map.get(rec.segment_ids[0]) if rec.segment_ids else segs[0]
+        time_str = _mmss(target_seg.timestamp_start) if target_seg else "00:00"
+        impact_lbl = "Tinggi" if rec.impact_score >= 18 else ("Sedang" if rec.impact_score >= 9 else "Rendah")
+        session.add(
+            RecommendationItem(
+                id=f"rec_{analysis.id}_{rank_idx}",
+                analysis_id=analysis.id,
+                run_id=sim_run.id,
+                hypothesis_id=rec.cue_code,
+                action_id=rec.action_id,
+                priority_tag="Prioritas" if rec.is_priority else "Nanti",
+                rank=rank_idx,
+                title=rec.title,
+                description=rec.description,
+                impact=impact_lbl,
+                effort=rec.effort,
+                estimated_lift_range=f"+{max(1, round(rec.efficacy * 6))} dari {total} agen",
+                location_zone=f"{(target_seg.vantage if target_seg else 'jalan').title()} (Detik {time_str})",
+            )
+        )
 
     analysis.total_agents = total
     if clear_stale:
@@ -1295,7 +1194,25 @@ def list_agent_decisions_for_analysis(
                 stopped_at_segment_id=dec.stopped_at_segment_id,
                 deciding_factor=dec.deciding_factor,
                 factor_segment_ids=list(dec.factor_segment_ids or []),
-                hesitation_score=dec.hesitation_score,
+                segment_traces=[
+                    {
+                        "segment_id": str(t.get("segment_id", "")),
+                        "monologue": str(t.get("monologue", "")),
+                        "action": str(t.get("action", "lanjut")),
+                    }
+                    for t in (dec.segment_traces or [])
+                    if isinstance(t, dict)
+                ],
+                attributions=[
+                    {
+                        "cue_code": str(a.get("cue_code") or a.get("hypothesis_id") or "H0"),
+                        "direction": str(a.get("direction") or "menghambat"),
+                        "relevance_score": int(a.get("relevance_score") or a.get("strength") or 0),
+                        "evidence": str(a.get("evidence") or ""),
+                    }
+                    for a in (dec.attributions or [])
+                    if isinstance(a, dict)
+                ],
             )
         )
     return results
@@ -1306,8 +1223,21 @@ def compute_what_if_projection(
     funnel_stages: list[FunnelStageDataOut],
     recommendations: list[ParetoRecommendationOut],
     checked_ids: list[str] | None = None,
+    *,
+    decisions: list[AgentDecisionRecord] | None = None,
+    segments: list[TranscriptSegment] | None = None,
+    rec_rows: list[RecommendationItem] | None = None,
+    personas: list[Persona] | None = None,
+    projection_mode: str = "estimasi_cepat",
 ) -> WhatIfProjectionOut:
-    """Hitung proyeksi pasca-simulasi (What-If) secara dinamis sesuai rekomendasi yang dicentang."""
+    """Mode 1 (estimasi_cepat) & Mode 2 (terverifikasi_simulasi) untuk proyeksi pasca-simulasi."""
+    from app.services.simulation.ablation import (
+        compute_quick_estimate_projection,
+        run_verified_simulation_projection,
+    )
+    from app.services.simulation.catalog import ACTION_BY_ID
+    from app.services.simulation.runner import AgentRunResult, SegmentInput
+
     biz = analysis.business
     bname = (
         biz.name
@@ -1320,29 +1250,7 @@ def compute_what_if_projection(
 
     active_ids = set(checked_ids) if checked_ids is not None else {r.id for r in recommendations}
     checked_recs = [r for r in recommendations if r.id in active_ids]
-
-    # Bobot lift berdasarkan impact dari rekomendasi yang dicentang
-    stop_boost_pts = 0
-    enter_boost_pts = 0
-    order_boost_pts = 0
-    total_cost_rp = 0
-
-    for r in checked_recs:
-        if r.impact == "Tinggi":
-            stop_boost_pts += 12
-            enter_boost_pts += 18
-            order_boost_pts += 14
-            total_cost_rp += 150_000
-        elif r.impact == "Sedang":
-            stop_boost_pts += 8
-            enter_boost_pts += 9
-            order_boost_pts += 6
-            total_cost_rp += 120_000
-        else:
-            stop_boost_pts += 5
-            enter_boost_pts += 4
-            order_boost_pts += 3
-            total_cost_rp += 85_000
+    rec_row_by_id = {r.id: r for r in (rec_rows or [])}
 
     s_see = funnel_stages[0] if len(funnel_stages) > 0 else None
     s_stop = funnel_stages[1] if len(funnel_stages) > 1 else None
@@ -1353,27 +1261,111 @@ def compute_what_if_projection(
     base_stop_pct = round(s_stop.percentage) if s_stop else 70
     base_enter_pct = round(s_enter.percentage) if s_enter else 30
     base_order_pct = round(s_order.percentage) if s_order else 20
+    buyers_base = s_order.count if s_order else max(0, round(total * base_order_pct / 100))
+
+    low_accuracy = False
+    active_mode = "estimasi_cepat"
+
+    if decisions and segments:
+        seg_inputs = [
+            SegmentInput(id=s.id, vantage=s.vantage, narrative=s.narrative, not_visible=s.not_visible or "")
+            for s in segments
+        ]
+        baseline_runs = [
+            AgentRunResult(
+                agent_id=d.agent_id,
+                batch_id=1 if d.agent_id <= 10 else 2,
+                monologue=d.monologue,
+                final_decision=d.final_decision,
+                stopped_at_segment_id=d.stopped_at_segment_id,
+                deciding_factor=d.deciding_factor,
+                factor_segment_ids=list(d.factor_segment_ids or []),
+                segment_traces=[t.model_dump() for t in d.segment_traces],
+                attributions=[a.model_dump() for a in d.attributions],
+                primary_hypothesis_id=(d.attributions[0].cue_code if d.attributions else "H0"),
+            )
+            for d in decisions
+        ]
+        checked_actions: list[tuple[str, list[str]]] = []
+        for r in checked_recs:
+            row = rec_row_by_id.get(r.id)
+            action_id = row.action_id if row else "A8.1"
+            target_sids = [s.id for s in segments if s.vantage in r.location_zone.lower()] or (
+                [segments[0].id] if segments else []
+            )
+            checked_actions.append((action_id, target_sids))
+
+        if projection_mode == "terverifikasi_simulasi" and personas and checked_actions:
+            persona_specs = [
+                PersonaSpecOut(
+                    agent_id=p.agent_id,
+                    segment=p.segment,
+                    discrete_traits=dict(p.discrete_traits),
+                    concrete_facts=dict(p.concrete_facts),
+                    context_around=p.context_around,
+                    daily_mood=p.daily_mood,
+                    seed=p.seed,
+                    table_version=p.table_version,
+                )
+                for p in sorted(personas, key=lambda x: x.agent_id)
+            ]
+            verified = run_verified_simulation_projection(
+                personas=persona_specs,
+                segments=seg_inputs,
+                baseline_results=baseline_runs,
+                business_summary=f"{bname}",
+                checked_actions=[(aid, sids, None) for aid, sids in checked_actions],
+                batch_size=10,
+                seed=persona_specs[0].seed if persona_specs else 42,
+            )
+            buyers_proj = verified.buyers_verified_count
+            proj_stop_pct = round((verified.stage_verified_counts["tertarik"] / total) * 100)
+            proj_enter_pct = round((verified.stage_verified_counts["masuk"] / total) * 100)
+            proj_order_pct = round((buyers_proj / total) * 100)
+            total_cost_rp = sum(
+                ACTION_BY_ID[aid].cost_rp for aid, _ in checked_actions if aid in ACTION_BY_ID
+            )
+            accuracy_note = None
+            active_mode = "terverifikasi_simulasi"
+        else:
+            quick = compute_quick_estimate_projection(
+                segments=seg_inputs,
+                baseline_results=baseline_runs,
+                checked_actions=checked_actions,
+            )
+            buyers_proj = quick.buyers_projected_count
+            proj_stop_pct = round((quick.stage_projected_counts["tertarik"] / total) * 100)
+            proj_enter_pct = round((quick.stage_projected_counts["masuk"] / total) * 100)
+            proj_order_pct = round((buyers_proj / total) * 100)
+            total_cost_rp = quick.total_cost_rp
+            low_accuracy = quick.low_accuracy_early_edit
+            accuracy_note = quick.accuracy_note
+    else:
+        proj_stop_pct = base_stop_pct
+        proj_enter_pct = base_enter_pct
+        proj_order_pct = base_order_pct
+        buyers_proj = buyers_base
+        total_cost_rp = 0
+        accuracy_note = None
 
     proj_see_pct = 100
-    proj_stop_pct = min(95, base_stop_pct + stop_boost_pts)
-    proj_enter_pct = min(proj_stop_pct - 5, base_enter_pct + enter_boost_pts)
-    proj_order_pct = min(proj_enter_pct - 2, base_order_pct + order_boost_pts)
-
-    buyers_base = s_order.count if s_order else max(1, round(total * base_order_pct / 100))
-    buyers_proj = max(buyers_base, round(total * proj_order_pct / 100))
-
     highest_drop = max((s.drop_off_rate for s in funnel_stages[:3]), default=50.0)
-    proj_drop = max(12.0, highest_drop - (enter_boost_pts + order_boost_pts) * 0.85)
+    proj_drop = max(10.0, highest_drop - max(0, proj_order_pct - base_order_pct) * 0.9)
 
     daily_visitors = (analysis.context.daily_visitors if analysis.context and analysis.context.daily_visitors else None) or 60
-    extra_daily_buyers = max(0, round(daily_visitors * ((proj_order_pct - base_order_pct) / 100.0)))
+    extra_daily_buyers = max(0, round(daily_visitors * ((buyers_proj - buyers_base) / total)))
     daily_rev_lift = extra_daily_buyers * avg_ticket
     rev_lift_str = f"+{_format_rp_short(daily_rev_lift).replace('Rp ', '')}" if daily_rev_lift > 0 else "Rp 0"
     cost_str = _format_rp_short(total_cost_rp) if total_cost_rp > 0 else "Rp 0"
 
     def _delta(base: int, proj: int) -> str:
         diff = proj - base
-        return "Tetap" if diff <= 0 else f"+{diff} poin"
+        return "Tetap" if diff <= 0 else f"+{diff} dari {total} agen"
+
+    base_stop_cnt = s_stop.count if s_stop else round(total * base_stop_pct / 100)
+    base_enter_cnt = s_enter.count if s_enter else round(total * base_enter_pct / 100)
+    proj_stop_cnt = round(total * proj_stop_pct / 100)
+    proj_enter_cnt = round(total * proj_enter_pct / 100)
 
     stages_comp = [
         WhatIfStageComparisonOut(
@@ -1381,40 +1373,45 @@ def compute_what_if_projection(
             name="Melihat Toko",
             baseline_pct=base_see_pct,
             projected_pct=proj_see_pct,
-            delta_label=_delta(base_see_pct, proj_see_pct),
+            delta_label="Tetap",
         ),
         WhatIfStageComparisonOut(
             id="tertarik",
             name="Berhenti & Tertarik",
             baseline_pct=base_stop_pct,
             projected_pct=proj_stop_pct,
-            delta_label=_delta(base_stop_pct, proj_stop_pct),
+            delta_label=_delta(base_stop_cnt, proj_stop_cnt),
         ),
         WhatIfStageComparisonOut(
             id="masuk",
             name="Masuk ke Dalam",
             baseline_pct=base_enter_pct,
             projected_pct=proj_enter_pct,
-            delta_label=_delta(base_enter_pct, proj_enter_pct),
+            delta_label=_delta(base_enter_cnt, proj_enter_cnt),
         ),
         WhatIfStageComparisonOut(
             id="memesan",
             name="Jadi Memesan",
             baseline_pct=base_order_pct,
             projected_pct=proj_order_pct,
-            delta_label=_delta(base_order_pct, proj_order_pct),
+            delta_label=_delta(buyers_base, buyers_proj),
         ),
     ]
 
     if checked_recs:
         top_titles = "; ".join(r.title for r in checked_recs[:2])
+        prefix_label = (
+            "Terverifikasi simulasi (20 agen)"
+            if active_mode == "terverifikasi_simulasi"
+            else "Estimasi cepat (contoh awal)"
+        )
         conclusion = (
-            f"Dengan menerapkan {len(checked_recs)} perbaikan pada {bname} ({top_titles}), "
-            f"konversi agen diproyeksikan naik dari {buyers_base} menjadi {buyers_proj} pembeli "
-            f"(+{proj_order_pct - base_order_pct} poin persentase) dengan estimasi tambahan omzet {rev_lift_str}/hari."
+            f"{prefix_label}: dengan menerapkan {len(checked_recs)} tindakan pada {bname} ({top_titles}), "
+            f"pembeli menjadi {buyers_proj} dari {total} agen (baseline {buyers_base} dari {total})."
+            + (f" Catatan: {accuracy_note}" if accuracy_note else "")
         )
     else:
-        conclusion = f"Pilih minimal satu rekomendasi perbaikan untuk melihat proyeksi kenaikan konversi di {bname}."
+        conclusion = f"Pilih minimal satu rekomendasi perbaikan untuk melihat estimasi cepat di {bname}."
 
     now_str = datetime.now().strftime("%d %b %Y · %H.%M")
     return WhatIfProjectionOut(
@@ -1428,6 +1425,9 @@ def compute_what_if_projection(
         cost_estimate=cost_str,
         stages_comparison=stages_comp,
         model_conclusion=conclusion,
+        mode=active_mode,
+        low_accuracy_early_edit=low_accuracy,
+        accuracy_note=accuracy_note,
     )
 
 
@@ -1435,6 +1435,7 @@ def build_dashboard_data(
     session: Session,
     analysis: AnalysisModel,
     checked_recommendation_ids: list[str] | None = None,
+    projection_mode: str = "estimasi_cepat",
 ) -> DashboardDataOut:
     biz = analysis.business
     business_name = (
@@ -1490,7 +1491,7 @@ def build_dashboard_data(
             percentage=100.0,
             drop_off_count=lewat_cnt,
             drop_off_rate=r_lewat,
-            is_highest_friction=(r_lewat == max_drop and r_lewat > r_berhenti),
+            is_highest_friction=(r_lewat == max_drop and r_lewat > r_berhenti and r_lewat > r_masuk),
         ),
         FunnelStageDataOut(
             id="berhenti",
@@ -1499,7 +1500,7 @@ def build_dashboard_data(
             percentage=round((berhenti_cnt / max(total_agents, 1)) * 100, 1),
             drop_off_count=berhenti_pergi_cnt,
             drop_off_rate=r_berhenti,
-            is_highest_friction=(r_berhenti >= max_drop),
+            is_highest_friction=(r_berhenti == max_drop and r_berhenti >= r_lewat and r_berhenti > r_masuk),
         ),
         FunnelStageDataOut(
             id="masuk",
@@ -1508,7 +1509,7 @@ def build_dashboard_data(
             percentage=round((masuk_cnt / max(total_agents, 1)) * 100, 1),
             drop_off_count=masuk_tanpa_cnt,
             drop_off_rate=r_masuk,
-            is_highest_friction=(r_masuk == max_drop and r_masuk > r_berhenti and r_masuk > r_lewat),
+            is_highest_friction=(r_masuk == max_drop and r_masuk >= r_lewat and r_masuk >= r_berhenti),
         ),
         FunnelStageDataOut(
             id="memesan",
@@ -1583,59 +1584,74 @@ def build_dashboard_data(
             time=t_jalan,
             name=f"Jalur Jalan Depan {business_name}",
             status=f"{round(100 - r_lewat, 1):g}% menoleh",
-            is_hotspot=(r_lewat > r_berhenti),
+            is_hotspot=(r_lewat == max_drop and r_lewat > r_berhenti and r_lewat > r_masuk),
         ),
         WaypointOut(
             id="tangga",
             time=t_pintu,
             name=f"Akses Masuk {business_name}",
             status=f"{r_berhenti:g}% bocor",
-            is_hotspot=(r_berhenti >= r_lewat),
+            is_hotspot=(r_berhenti == max_drop and r_berhenti >= r_lewat and r_berhenti > r_masuk),
         ),
         WaypointOut(
             id="kasir",
             time=t_dalam,
             name=f"Titik Pesan / Kasir {business_name}",
             status=f"{round(100 - r_masuk, 1):g}% memesan",
-            is_hotspot=False,
+            is_hotspot=(r_masuk == max_drop and r_masuk >= r_lewat and r_masuk >= r_berhenti),
         ),
     ]
 
-    # Analisis faktor penyebab batal tertinggi
+    # Agregasi faktor penyebab batal tertinggi dari Katalog Isyarat (H1-H10)
+    from app.services.simulation.pareto import aggregate_cue_scores
+    from app.services.simulation.runner import AgentRunResult
+
+    dec_runs = [
+        AgentRunResult(
+            agent_id=d.agent_id,
+            batch_id=1 if d.agent_id <= 10 else 2,
+            monologue=d.monologue,
+            final_decision=d.final_decision,
+            stopped_at_segment_id=d.stopped_at_segment_id,
+            deciding_factor=d.deciding_factor,
+            factor_segment_ids=list(d.factor_segment_ids or []),
+            segment_traces=[t.model_dump() for t in d.segment_traces],
+            attributions=[a.model_dump() for a in d.attributions],
+            primary_hypothesis_id=(d.attributions[0].cue_code if d.attributions else "H0"),
+        )
+        for d in decisions
+    ]
+    cue_ranks = aggregate_cue_scores(dec_runs)
+    non_h0_cues = [c for c in cue_ranks if c.cue_code != "H0"]
+    top_cue = non_h0_cues[0] if non_h0_cues else (cue_ranks[0] if cue_ranks else None)
+
     non_buyers = [d for d in decisions if d.final_decision != "memesan"]
     factor_counts = Counter(d.deciding_factor for d in non_buyers if d.deciding_factor)
     top_factor_text = (
         factor_counts.most_common(1)[0][0]
         if factor_counts
-        else f"Informasi menu & harga {business_name} belum terlihat dari jalan"
+        else (top_cue.title if top_cue else f"Informasi menu & harga {business_name} belum terlihat dari jalan")
     )
-    top_factor_Lower = top_factor_text.lower()
-    if "harga" in top_factor_Lower or "menu" in top_factor_Lower:
-        main_cause_short = "Menu & Harga"
-    elif "gelap" in top_factor_Lower or "redup" in top_factor_Lower or "lampu" in top_factor_Lower:
-        main_cause_short = "Pencahayaan Masuk"
-    elif "plang" in top_factor_Lower or "visibilitas" in top_factor_Lower:
-        main_cause_short = "Visibilitas Fasad"
-    else:
-        main_cause_short = "Info Depan Toko"
+    main_cause_short = f"{top_cue.cue_code} · {top_cue.title}" if top_cue else "Info Depan Toko"
+    main_cause_rank_str = (
+        f"Peringkat 1 Katalog Isyarat ({top_cue.affected_agents_count} dari {top_cue.total_non_buyers} agen batal · Lift {top_cue.lift}x)"
+        if top_cue
+        else f"Peringkat 1 ({len(non_buyers)} dari {total_agents} agen batal)"
+    )
 
     menus = list(analysis.menu_items or [])
     avg_price = round(sum(m.price for m in menus) / len(menus)) if menus else 20000
-    batal_total = lewat_cnt + berhenti_pergi_cnt + masuk_tanpa_cnt
     daily_vis = (analysis.context.daily_visitors if analysis.context and analysis.context.daily_visitors else None) or 50
     monthly_lost_visitors = max(30, round(daily_vis * (berhenti_pergi_cnt / max(total_agents, 1)) * 15))
     loss_low = monthly_lost_visitors * avg_price
     loss_high = round(loss_low * 1.35)
-
-    in_store_conv = round((memesan_cnt / max(masuk_cnt, 1)) * 100, 1)
-    buyers_pct = round((memesan_cnt / max(total_agents, 1)) * 100, 1)
 
     key_insights = [
         KeyInsightOut(
             id=f"ins_{analysis.id}_1",
             number="01",
             type="friction",
-            title=f"Friksi Utama di Akses Masuk {business_name} ({r_berhenti:g}% Batal)",
+            title=f"Friksi Utama di Akses Masuk {business_name} ({berhenti_pergi_cnt} dari {berhenti_cnt} agen batal)",
             description=(
                 f"Dari {berhenti_cnt} agen yang tertarik berhenti di depan {business_name}, "
                 f"{berhenti_pergi_cnt} agen urung masuk. Alasan terkuat: {top_factor_text}"
@@ -1645,7 +1661,7 @@ def build_dashboard_data(
             id=f"ins_{analysis.id}_2",
             number="02",
             type="friction" if lewat_cnt >= 5 else "positive",
-            title=f"Daya Tarik Fasad dari Jalan ({round(100 - r_lewat, 1):g}% Berhenti)",
+            title=f"Daya Tarik Fasad dari Jalan ({berhenti_cnt} dari {total_agents} agen berhenti)",
             description=(
                 f"{berhenti_cnt} dari {total_agents} agen pejalan kaki menoleh ke {business_name}, "
                 f"namun {lewat_cnt} agen langsung lewat karena penanda dari arah jalan belum terbaca cepat."
@@ -1655,25 +1671,63 @@ def build_dashboard_data(
             id=f"ins_{analysis.id}_3",
             number="03",
             type="positive",
-            title=f"Konversi Area Kasir Sangat Tinggi ({in_store_conv:g}%)",
+            title=f"Konversi Area Kasir ({memesan_cnt} dari {masuk_cnt} agen memesan)",
             description=(
                 f"Begitu calon pelanggan melewati pintu masuk {business_name}, "
-                f"{memesan_cnt} dari {masuk_cnt} agen langsung memesan karena daftar menu di kasir jelas."
+                f"{memesan_cnt} dari {masuk_cnt} agen memesan di kasir."
             ),
         ),
     ]
 
+    def _format_pct_id(pct: float) -> str:
+        txt = f"{pct:.1f}".rstrip("0").rstrip(".")
+        return f"{txt.replace('.', ',')}%"
+
+    drop_candidates = [
+        (
+            r_lewat,
+            0,
+            total_agents,
+            "Melihat",
+            "Berhenti",
+            f"Fasad / Jalan {business_name} (Detik {t_jalan})",
+            f"{lewat_cnt} dari {total_agents} agen langsung lewat dari arah jalan tanpa berhenti ({_format_pct_id(r_lewat)}).",
+        ),
+        (
+            r_berhenti,
+            1,
+            berhenti_cnt,
+            "Berhenti",
+            "Masuk",
+            f"Akses Masuk {business_name} (Detik {t_pintu})",
+            f"{berhenti_pergi_cnt} dari {berhenti_cnt} agen yang sudah berhenti akhirnya batal masuk ({_format_pct_id(r_berhenti)}).",
+        ),
+        (
+            r_masuk,
+            2,
+            masuk_cnt,
+            "Masuk",
+            "Memesan",
+            f"Titik Pesan / Kasir {business_name} (Detik {t_dalam})",
+            f"{masuk_tanpa_cnt} dari {masuk_cnt} agen yang sudah masuk akhirnya batal memesan di kasir ({_format_pct_id(r_masuk)}).",
+        ),
+    ]
+    valid_drops = [d for d in drop_candidates if d[2] > 0]
+    top_rate, _, _, top_from, top_to, top_loc, top_desc = max(
+        valid_drops or drop_candidates[:1], key=lambda d: (d[0], d[1])
+    )
+
     kpi = DashboardKpiOut(
         buyers_count=memesan_cnt,
-        buyers_rate_text=f"{buyers_pct:g}% dari {total_agents} agen yang melihat",
-        buyers_description=f"Konversi akhir simulasi calon pelanggan di {business_name} hingga memesan di kasir.",
-        drop_off_rate_text=f"v {max_drop:g}%",
-        drop_off_from_stage="Berhenti" if r_berhenti >= r_lewat else "Melihat",
-        drop_off_to_stage="Masuk" if r_berhenti >= r_lewat else "Berhenti",
-        drop_off_location=f"Akses Masuk {business_name} (Detik {t_pintu})",
-        drop_off_description=f"{berhenti_pergi_cnt} dari {berhenti_cnt} agen yang sudah berhenti akhirnya batal masuk.",
+        buyers_rate_text=f"{memesan_cnt} dari {total_agents} agen · contoh awal",
+        buyers_description=f"Konversi simulasi 20 agen di {business_name} hingga memesan di kasir (skala contoh awal, bukan persen presisi).",
+        drop_off_rate_text=_format_pct_id(top_rate),
+        drop_off_from_stage=top_from,
+        drop_off_to_stage=top_to,
+        drop_off_location=top_loc,
+        drop_off_description=top_desc,
         main_cause_title=main_cause_short,
-        main_cause_cue_rank=f"Peringkat 1 ({round((berhenti_pergi_cnt / max(batal_total, 1)) * 100)}% alasan batal)",
+        main_cause_cue_rank=main_cause_rank_str,
         main_cause_detail=top_factor_text,
         potential_loss_amount=f"{_format_rp_short(loss_low)} – {_format_rp_short(loss_high)}",
         potential_loss_basis=f"Estimasi per bulan dari {berhenti_pergi_cnt} agen batal masuk",
@@ -1682,11 +1736,17 @@ def build_dashboard_data(
         ),
     )
 
+    persona_rows = list(session.scalars(select(Persona).where(Persona.analysis_id == analysis.id)).all())
     what_if = compute_what_if_projection(
         analysis=analysis,
         funnel_stages=funnel_stages,
         recommendations=recommendations,
         checked_ids=checked_recommendation_ids,
+        decisions=decisions,
+        segments=segs,
+        rec_rows=rec_rows,
+        personas=persona_rows,
+        projection_mode=projection_mode,
     )
 
     return DashboardDataOut(
@@ -1794,3 +1854,156 @@ def get_or_create_measurement_plan(
         metrics=metrics_out,
         practical_tips=list(plan.practical_tips or []),
     )
+
+
+def clone_analysis_with_transcript(
+    session: Session,
+    source: AnalysisModel,
+    name: str | None = None,
+) -> AnalysisSchema:
+    """Buat analisis baru dengan menyalin konteks, menu, video, & transkrip dari analisis sumber."""
+    new_id = f"anl_{uuid4().hex[:12]}"
+    new_anl = AnalysisModel(
+        id=new_id,
+        business_id=source.business_id,
+        name=(name.strip() if name and name.strip() else f"{source.name} (Salinan)"),
+        status="processing",
+        transcript_version=1,
+        stale=False,
+        total_agents=20,
+        is_demo=source.is_demo,
+        quality_label=source.quality_label,
+        thumbnail_url=source.thumbnail_url,
+    )
+    session.add(new_anl)
+    session.flush()
+
+    if source.context is not None:
+        c = source.context
+        session.add(
+            AnalysisContextModel(
+                id=f"ctx_{uuid4().hex[:10]}",
+                analysis_id=new_id,
+                business_type=c.business_type,
+                business_name=c.business_name,
+                location_name=c.location_name,
+                location_lat=c.location_lat,
+                location_lng=c.location_lng,
+                location_description=c.location_description,
+                surroundings=list(c.surroundings or []),
+                surroundings_other=c.surroundings_other,
+                passersby=list(c.passersby or []),
+                business_goal=c.business_goal,
+                fixed_constraints=list(c.fixed_constraints or []),
+                calculated_price_level=c.calculated_price_level,
+                open_hour=c.open_hour,
+                close_hour=c.close_hour,
+                rush_hours=list(c.rush_hours or []),
+                daily_sales_rp=c.daily_sales_rp,
+                daily_visitors=c.daily_visitors,
+                parking=list(c.parking or []),
+                categorical_features=dict(c.categorical_features or {}),
+                w_matrix_version=c.w_matrix_version,
+                segment_table_version=c.segment_table_version,
+                segment_overrides=dict(c.segment_overrides) if c.segment_overrides else None,
+            )
+        )
+
+    for m in source.menu_items or []:
+        session.add(
+            MenuItemModel(
+                id=f"mnu_{uuid4().hex[:10]}",
+                analysis_id=new_id,
+                name=m.name,
+                price=m.price,
+                category=m.category,
+                is_featured=m.is_featured,
+                sort_order=m.sort_order,
+            )
+        )
+
+    src_vid = session.scalars(select(VideoAsset).where(VideoAsset.analysis_id == source.id)).first()
+    if src_vid is not None:
+        session.add(
+            VideoAsset(
+                id=f"vid_{uuid4().hex[:10]}",
+                analysis_id=new_id,
+                original_filename=src_vid.original_filename,
+                storage_key=src_vid.storage_key,
+                duration_s=src_vid.duration_s,
+                cashier_at_s=src_vid.cashier_at_s,
+                width=src_vid.width,
+                height=src_vid.height,
+                accepted=src_vid.accepted,
+                quality_checks=dict(src_vid.quality_checks or {}),
+                blurred_faces_count=src_vid.blurred_faces_count,
+                blurred_plates_count=src_vid.blurred_plates_count,
+            )
+        )
+
+    src_twin = session.scalars(select(TwinAsset).where(TwinAsset.analysis_id == source.id)).first()
+    if src_twin is not None:
+        session.add(
+            TwinAsset(
+                id=f"tw_{uuid4().hex[:10]}",
+                analysis_id=new_id,
+                mode=src_twin.mode,
+                registered_frames=src_twin.registered_frames,
+                total_frames=src_twin.total_frames,
+                quality_label=src_twin.quality_label,
+                points_count=src_twin.points_count,
+                path_duration_seconds=src_twin.path_duration_seconds,
+                asset_url=src_twin.asset_url,
+            )
+        )
+
+    src_segs = list(
+        session.scalars(
+            select(TranscriptSegment)
+            .where(TranscriptSegment.analysis_id == source.id)
+            .order_by(TranscriptSegment.timestamp_start.asc())
+        ).all()
+    )
+    seg_id_map: dict[str, str] = {}
+    for s in src_segs:
+        new_seg_id = f"seg_{uuid4().hex[:8]}"
+        seg_id_map[s.id] = new_seg_id
+        session.add(
+            TranscriptSegment(
+                id=new_seg_id,
+                analysis_id=new_id,
+                timestamp_start=s.timestamp_start,
+                timestamp_end=s.timestamp_end,
+                frame_keys=list(s.frame_keys or []),
+                vantage=s.vantage,
+                zone_id=s.zone_id,
+                narrative=s.narrative,
+                not_visible=s.not_visible,
+                confidence=s.confidence,
+                is_confirmed_by_owner=s.is_confirmed_by_owner,
+                edited_by_owner=s.edited_by_owner,
+                camera_pose=dict(s.camera_pose) if s.camera_pose else None,
+            )
+        )
+    session.flush()
+
+    src_chks = list(
+        session.scalars(
+            select(TranscriptCheckpoint).where(TranscriptCheckpoint.analysis_id == source.id)
+        ).all()
+    )
+    for chk in src_chks:
+        session.add(
+            TranscriptCheckpoint(
+                id=f"chk_{uuid4().hex[:8]}",
+                analysis_id=new_id,
+                kind=chk.kind,
+                timestamp_s=chk.timestamp_s,
+                segment_id=seg_id_map.get(chk.segment_id or ""),
+            )
+        )
+
+    session.commit()
+    loaded = load_analysis_with_relations(session, new_id)
+    assert loaded is not None
+    return analysis_to_schema(loaded)

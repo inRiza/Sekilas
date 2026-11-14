@@ -253,3 +253,48 @@ def test_video_transcript_dashboard_and_measurement_endpoints(client: TestClient
     assert mp_res.status_code == 200
     assert mp_res.json()["suggested_duration_minutes"] == 30
     assert len(mp_res.json()["metrics"]) == 4
+
+
+def test_dashboard_kpi_drop_off_shows_percentage_and_matches_highest_stage(client: TestClient) -> None:
+    biz_res = client.post(
+        "/api/v1/businesses",
+        json={"name": "Nasi Goreng Uji", "branch_name": "Pusat", "category": "warung"},
+    )
+    assert biz_res.status_code == 201
+    anl_res = client.post(
+        f"/api/v1/businesses/{biz_res.json()['id']}/analyses",
+        json={"name": "Uji KPI"},
+    )
+    assert anl_res.status_code == 201
+    anl_id = anl_res.json()["id"]
+
+    # Seed segmen minimal lalu jalankan simulasi mode mock (0 token)
+    seg_res = client.post(
+        f"/api/v1/analyses/{anl_id}/transcript/segments",
+        json={
+            "timestamp_start": 0.0,
+            "timestamp_end": 10.0,
+            "vantage": "jalan",
+            "narrative": "Plang belum terlihat dari trotoar.",
+            "not_visible": "Harga dan menu belum tampak.",
+        },
+    )
+    assert seg_res.status_code == 201
+
+    sim_res = client.post(f"/api/v1/analyses/{anl_id}/simulation", json={"n_agents": 20, "seed": 42})
+    assert sim_res.status_code == 202
+
+    dash = client.get(f"/api/v1/analyses/{anl_id}/dashboard").json()
+    kpi = dash["kpi"]
+    assert kpi["drop_off_rate_text"].endswith("%")
+    assert "agen" not in kpi["drop_off_rate_text"]
+
+    highest_stage = next(s for s in dash["funnel_stages"] if s.get("is_highest_friction"))
+    expected_pct = f"{highest_stage['drop_off_rate']:.1f}".rstrip("0").rstrip(".").replace(".", ",") + "%"
+    assert kpi["drop_off_rate_text"] == expected_pct
+    if highest_stage["id"] == "melihat":
+        assert (kpi["drop_off_from_stage"], kpi["drop_off_to_stage"]) == ("Melihat", "Berhenti")
+    elif highest_stage["id"] == "berhenti":
+        assert (kpi["drop_off_from_stage"], kpi["drop_off_to_stage"]) == ("Berhenti", "Masuk")
+    else:
+        assert (kpi["drop_off_from_stage"], kpi["drop_off_to_stage"]) == ("Masuk", "Memesan")

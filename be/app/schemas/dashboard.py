@@ -151,10 +151,14 @@ class WhatIfProjectionOut(BaseModel):
     cost_estimate: str
     stages_comparison: list[WhatIfStageComparisonOut]
     model_conclusion: str
+    mode: str = "estimasi_cepat"  # estimasi_cepat | terverifikasi_simulasi
+    low_accuracy_early_edit: bool = False
+    accuracy_note: str | None = None
 
 
 class WhatIfRequest(BaseModel):
     checked_recommendation_ids: list[str] = []
+    mode: str = "estimasi_cepat"  # estimasi_cepat | terverifikasi_simulasi
 
 
 class DashboardDataOut(BaseModel):

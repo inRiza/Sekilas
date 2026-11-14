@@ -57,6 +57,7 @@ class VideoCompleteRequest(BaseModel):
     blurred_faces_count: int | None = None
     blurred_plates_count: int | None = None
     frame_keys: list[str] | None = None
+    frame_timestamps_s: list[float] | None = None
 
 
 class VideoCompleteResponse(BaseModel):

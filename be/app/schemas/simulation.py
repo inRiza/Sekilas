@@ -45,7 +45,7 @@ class AgentResult(BaseModel):
 
 
 class SimulationRequest(BaseModel):
-    n_agents: int = Field(500, ge=200, le=500)
+    n_agents: int = Field(20, ge=8, le=500)
     seed: int = 42
     scenarios: list[Scenario] = list(Scenario)
 
@@ -62,6 +62,19 @@ class PersonaSpecOut(BaseModel):
     table_version: str
 
 
+class CueAttributionOut(BaseModel):
+    cue_code: str
+    direction: str = "menghambat"  # menghambat | mendorong | netral
+    relevance_score: int = 0  # 0..3
+    evidence: str = ""
+
+
+class AgentSegmentTraceOut(BaseModel):
+    segment_id: str
+    monologue: str
+    action: str = "lanjut"  # lanjut | berhenti
+
+
 class AgentDecisionOut(BaseModel):
     agent_id: int
     persona: PersonaSpecOut
@@ -70,4 +83,5 @@ class AgentDecisionOut(BaseModel):
     stopped_at_segment_id: str | None = None
     deciding_factor: str
     factor_segment_ids: list[str] = Field(default_factory=list)
-    hesitation_score: int = 1
+    segment_traces: list[AgentSegmentTraceOut] = Field(default_factory=list)
+    attributions: list[CueAttributionOut] = Field(default_factory=list)
