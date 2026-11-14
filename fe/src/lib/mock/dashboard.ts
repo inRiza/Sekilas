@@ -93,7 +93,7 @@ export const MOCK_DASHBOARD: DashboardData = {
 
     // 3. Penyebab utama gak beli (dihitung per isyarat dan diranking)
     main_cause_title: 'Menu & Harga Tak Terlihat dari Luar',
-    main_cause_cue_rank: 'Peringkat 1 dari 4 Isyarat (48% suara agen)',
+    main_cause_cue_rank: 'Peringkat 1 dari 5 Isyarat (48% suara agen)',
     main_cause_detail: 'Dihitung per isyarat visual: ketiadaan info harga di trotoar menjadi alasan terbesar pembeli batal naik.',
 
     // 4. Potential loss (1 angka pasti tanpa rentang)
@@ -135,6 +135,13 @@ export const MOCK_DASHBOARD: DashboardData = {
       drop_off_count: 0,
       drop_off_rate: 0,
     },
+  ],
+  cue_ranking: [
+    { rank: 1, cue_code: 'H8', title: 'Menu dan harga tidak terlihat atau tidak terbaca', share_pct: 48, affected_agents_count: 8, total_non_buyers: 16, lift: 3.2 },
+    { rank: 2, cue_code: 'H5', title: 'Hambatan fisik akses masuk (tangga, pintu tertutup, jalur sempit)', share_pct: 25, affected_agents_count: 6, total_non_buyers: 16, lift: 2.1 },
+    { rank: 3, cue_code: 'H1', title: 'Tempat tidak terlihat atau tidak dikenali dari jalan', share_pct: 13, affected_agents_count: 3, total_non_buyers: 16, lift: 1.4 },
+    { rank: 4, cue_code: 'H9', title: 'Harga terkesan tidak sesuai anggaran', share_pct: 9, affected_agents_count: 2, total_non_buyers: 16, lift: 1.1 },
+    { rank: 5, cue_code: 'H0', title: 'Lainnya atau faktor di luar daftar', share_pct: 5, affected_agents_count: 1, total_non_buyers: 16, lift: 0.8 },
   ],
   key_insights: [
     {

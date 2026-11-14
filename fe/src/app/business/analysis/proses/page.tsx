@@ -8,8 +8,8 @@ import { SekilasMascot } from '@/components/brand/mascot';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ArrowLeftIcon, ArrowRightIcon } from '@/components/ui/icons';
-import { fetchTranscriptSegments } from '@/lib/api/crud';
-import { MOCK_TRANSCRIPT } from '@/lib/mock/transcript';
+import { fetchProcessingStatus, fetchTranscriptSegments, type ProcessingJob } from '@/lib/api/crud';
+import { TWIN_STAGES, useTwin } from '@/lib/use-twin';
 import type { TranscriptSegment } from '@/types/api';
 
 /** Jeda antar-baris log pembacaan (UI simulasi; nanti diganti stream dari backend). */
@@ -107,14 +107,42 @@ function ProsesInner() {
     businessId ? `&businessId=${encodeURIComponent(businessId)}` : ''
   }`;
 
-  const [segments, setSegments] = useState<TranscriptSegment[]>(
-    analysisId === 'selasar-kopi' ? MOCK_TRANSCRIPT : [],
-  );
+  // Visual Twin asli dari backend (GET /analyses/{id}/twin), dipoll selama job berjalan.
+  const { twin, error: twinError } = useTwin(analysisId);
+  const job = twin?.job ?? null;
+  const twinDone = Boolean(twin?.assets) && (!job || job.status === 'selesai');
+  const twinFailed = job?.status === 'gagal';
+  const twinStatus: StageStatus = twinDone ? 'done' : job && !twinFailed ? 'running' : 'waiting';
+  const twinPercent = job ? Math.round(job.progress * 100) : twinDone ? 100 : 0;
+
+  const [segments, setSegments] = useState<TranscriptSegment[]>([]);
+  // Job transkrip VLM asli: dipoll sampai selesai/gagal, lalu segmennya dimuat.
+  const [transcriptJob, setTranscriptJob] = useState<ProcessingJob | null>(null);
   useEffect(() => {
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const tick = async () => {
+      const job = await fetchProcessingStatus(analysisId);
+      if (cancelled) return;
+      setTranscriptJob(job);
+      if (job && (job.status === 'queued' || job.status === 'running')) timer = setTimeout(tick, 2000);
+    };
+    void tick();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [analysisId]);
+  // Backend tidak terjangkau (null) tetap memuat segmen dari cadangan lokal.
+  const transcriptReady = transcriptJob === null || transcriptJob.status === 'done';
+  const transcriptFailed = transcriptJob?.status === 'failed';
+
+  useEffect(() => {
+    if (!transcriptReady) return;
     void fetchTranscriptSegments(analysisId).then((list) => {
       if (list.length > 0) setSegments(list);
     });
-  }, [analysisId]);
+  }, [analysisId, transcriptReady]);
 
   const log = useMemo(() => buildLog(segments), [segments]);
   const [shown, setShown] = useState(0);
@@ -133,7 +161,7 @@ function ProsesInner() {
     if (box) box.scrollTo({ top: box.scrollHeight, behavior: 'smooth' });
   }, [shown]);
 
-  const transcriptDone = log.length > 0 && shown >= log.length;
+  const transcriptDone = transcriptReady && log.length > 0 && shown >= log.length;
   const progress = log.length > 0 ? Math.round((shown / log.length) * 100) : 100;
   const segmentsRead = log.slice(0, shown).filter((l) => l.kind === 'segment').length;
 
@@ -164,21 +192,86 @@ function ProsesInner() {
                   <StageRow
                     icon={FileText}
                     title="Transkrip video"
-                    description={`${segmentsRead} dari ${segments.length} segmen dibaca, lengkap dengan frame bukti.`}
-                    status={transcriptDone ? 'done' : 'running'}
+                    description={
+                      transcriptFailed
+                        ? transcriptJob?.message ?? 'AI belum bisa membaca video ini. Coba unggah ulang.'
+                        : transcriptReady
+                          ? `${segmentsRead} dari ${segments.length} segmen dibaca, lengkap dengan frame bukti.`
+                          : `${transcriptJob?.stage ?? 'Menunggu antrean'}…`
+                    }
+                    status={transcriptDone ? 'done' : transcriptFailed ? 'waiting' : 'running'}
                   />
                   <StageRow
                     icon={Box}
                     title="Visual Twin 3D"
-                    description="Membangun peta 3D dari jalur kamera. Hasilnya menyusul di dasbor."
-                    status="running"
+                    description={
+                      twinFailed
+                        ? job?.message ?? 'Tampilan 3D tidak bisa dibangun dari video ini.'
+                        : twinDone
+                          ? `Selesai. ${twin?.assets?.registered_frames ?? 0} dari ${twin?.assets?.total_frames ?? 0} frame terpetakan.`
+                          : job
+                            ? `${job.stage_label} (${twinPercent}%)`
+                            : 'Menunggu video diproses.'
+                    }
+                    status={twinStatus}
                   />
                 </ul>
+                {twinError && <p className="mt-3 text-[12px] text-friction">{twinError}</p>}
               </section>
+
+              {/* Visual Twin 3D: progres asli dari backend */}
+              {job && (
+                <section>
+                  <SectionTitle n={2} title="Visual Twin 3D" description="Dibangun dari frame video di server. Biasanya beberapa menit." />
+                  <div className="mb-4">
+                    <div className="mb-2 flex items-center justify-between text-[13px]">
+                      <span className="font-medium text-ink">
+                        {twinDone ? 'Visual Twin siap' : twinFailed ? 'Pembangunan gagal' : job.stage_label}
+                      </span>
+                      <span className="tabular-nums text-muted">{twinPercent}%</span>
+                    </div>
+                    <div className="h-1.5 w-full overflow-hidden rounded-full bg-soft">
+                      <div
+                        className={`h-full rounded-full transition-[width] duration-700 ease-out ${twinFailed ? 'bg-friction' : 'bg-primary-40'}`}
+                        style={{ width: `${twinPercent}%` }}
+                      />
+                    </div>
+                  </div>
+                  <ol className="space-y-1.5">
+                    {TWIN_STAGES.map((label, i) => {
+                      const stageNo = i + 1;
+                      const state =
+                        twinDone || job.stage > stageNo
+                          ? 'done'
+                          : job.stage === stageNo && job.status === 'berjalan'
+                            ? 'running'
+                            : 'waiting';
+                      return (
+                        <li key={label} className="flex items-center gap-3 rounded-md px-1 py-1 text-[13px]">
+                          <span
+                            className={`grid size-5 shrink-0 place-items-center rounded-full ${
+                              state === 'done' ? 'bg-impact-10 text-impact' : state === 'running' ? 'bg-primary-10 text-primary-40' : 'bg-soft text-subtle'
+                            }`}
+                          >
+                            {state === 'done' ? (
+                              <Check size={12} strokeWidth={2.5} />
+                            ) : state === 'running' ? (
+                              <LoaderCircle size={12} className="animate-spin" />
+                            ) : (
+                              <span className="text-[10px]">{stageNo}</span>
+                            )}
+                          </span>
+                          <span className={state === 'waiting' ? 'text-muted' : 'text-ink'}>{label}</span>
+                        </li>
+                      );
+                    })}
+                  </ol>
+                </section>
+              )}
 
               {/* 2. Log pembacaan */}
               <section>
-                <SectionTitle n={2} title="Yang sedang dibaca AI" description="Catatan muncul per segmen video, dari jalan sampai titik pesan." />
+                <SectionTitle n={job ? 3 : 2} title="Yang sedang dibaca AI" description="Catatan muncul per segmen video, dari jalan sampai titik pesan." />
 
                 <div className="mb-4">
                   <div className="mb-2 flex items-center justify-between text-[13px]">
@@ -223,7 +316,7 @@ function ProsesInner() {
                         </li>
                       );
                     })}
-                    {!transcriptDone && (
+                    {!transcriptDone && !transcriptFailed && (
                       <li className="flex items-center gap-3 px-3 py-2.5 text-[13px] text-muted">
                         <LoaderCircle size={14} className="animate-spin text-primary-40" />
                         Membaca frame berikutnya…
@@ -244,6 +337,18 @@ function ProsesInner() {
               >
                 <ArrowLeftIcon size={16} /> Kembali ke rekam video
               </Button>
+              <div className="flex flex-col gap-2 sm:flex-row">
+                {job && (
+                  <Button
+                    variant="secondary"
+                    size="lg"
+                    disabled={!twinDone}
+                    onClick={() => twinDone && router.push(`/business/analysis${querySuffix}#twin`)}
+                    className="justify-center !rounded-md"
+                  >
+                    Lihat Visual Twin
+                  </Button>
+                )}
               <Button
                 variant="primary"
                 size="lg"
@@ -253,6 +358,7 @@ function ProsesInner() {
               >
                 Cek transkrip <ArrowRightIcon size={16} />
               </Button>
+              </div>
             </div>
           </div>
         </div>

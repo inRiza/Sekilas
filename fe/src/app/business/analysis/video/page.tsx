@@ -2,7 +2,6 @@
 
 import {
   AlertTriangle,
-  Camera,
   Check,
   Eye,
   EyeOff,
@@ -21,11 +20,11 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input, Label } from '@/components/ui/form';
 import { ArrowLeftIcon, ArrowRightIcon } from '@/components/ui/icons';
-import { LiveCameraRecorder } from '@/components/video/live-camera-recorder';
 import {
   completeVideoUpload,
   fetchVideoMetadata,
   uploadKeyframesToStorage,
+  uploadVideoFileToBackend,
   uploadVideoToSupabaseStorage,
 } from '@/lib/api/crud';
 import {
@@ -70,8 +69,16 @@ function SectionTitle({ n, title, description }: { n: number; title: string; des
 function VideoUploadInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const analysisId = searchParams.get('analysisId') || 'selasar-kopi';
+  const analysisIdParam = searchParams.get('analysisId');
+  // Tanpa analysisId jangan memakai analisis demo: video baru akan menimpa datanya.
+  const analysisId = analysisIdParam ?? '';
   const businessId = searchParams.get('businessId');
+  useEffect(() => {
+    if (analysisIdParam) return;
+    router.replace(
+      `/business/analysis/konteks?mode=new${businessId ? `&businessId=${encodeURIComponent(businessId)}` : ''}`,
+    );
+  }, [analysisIdParam, businessId, router]);
   const inputRef = useRef<HTMLInputElement>(null);
   const videoElRef = useRef<HTMLVideoElement>(null);
   const canvasElRef = useRef<HTMLCanvasElement>(null);
@@ -104,7 +111,6 @@ function VideoUploadInner() {
   const [inspecting, setInspecting] = useState<boolean>(false);
 
   const [dragging, setDragging] = useState(false);
-  const [liveCameraOpen, setLiveCameraOpen] = useState(false);
   const [blurPreviewActive, setBlurPreviewActive] = useState(true);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentPlaySec, setCurrentPlaySec] = useState<number>(0);
@@ -239,7 +245,6 @@ function VideoUploadInner() {
     setSelectedFile(f);
     setPreviewUrl(url);
     setVideoName(f.name);
-    setLiveCameraOpen(false);
     setIsPlaying(false);
     setInspecting(true);
 
@@ -320,12 +325,21 @@ function VideoUploadInner() {
       if (selectedFile) {
         setUploadStage('Memburamkan wajah & plat nomor di perangkatmu...');
         const redactedFile = await exportRedactedVideoFile(selectedFile, (ratio) => {
-          setUploadStage(`Memburamkan wajah & plat nomor (${Math.round(ratio * 100)}%)...`);
+          setUploadStage(
+            `Memburamkan wajah & plat nomor (${Math.round(ratio * 100)}%). Biarkan tab ini tetap terbuka...`,
+          );
         });
 
         setUploadStage('Mengunggah video terburam ke Supabase Storage...');
         const uploaded = await uploadVideoToSupabaseStorage(analysisId, redactedFile);
         storageKey = uploaded.storageKey;
+
+        // Job Visual Twin mengunduh video dari Storage. Bila unggahan ke Storage gagal,
+        // kirim langsung ke server agar 3D tetap bisa dibangun.
+        if (!uploaded.publicUrl) {
+          setUploadStage('Mengirim video ke server Visual Twin 3D...');
+          await uploadVideoFileToBackend(analysisId, redactedFile);
+        }
 
         let framesToUpload = sampledFrames;
         if (framesToUpload.length === 0 && videoElRef.current && videoElRef.current.readyState >= 2) {
@@ -451,7 +465,7 @@ function VideoUploadInner() {
 
                 {hasVideo ? (
                   <div className="space-y-3">
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                       <div className="flex min-w-0 flex-wrap items-center gap-2">
                         <span className="truncate text-[13px] font-medium text-ink">{videoName}</span>
                         <Badge>{`${Math.round(durationSec)} detik`}</Badge>
@@ -463,26 +477,17 @@ function VideoUploadInner() {
                           </Badge>
                         )}
                       </div>
-                      <div className="flex items-center gap-2">
+                      {/* Ponsel: tombol blur satu baris penuh, lalu Ganti file / hapus. */}
+                      <div className="grid w-full grid-cols-[1fr_auto] gap-2 lg:flex lg:w-auto lg:items-center">
                         <Button
                           type="button"
                           variant="secondary"
                           size="sm"
-                          className="!rounded-md"
+                          className="col-span-2 !rounded-md"
                           onClick={() => setBlurPreviewActive((v) => !v)}
                         >
                           {blurPreviewActive ? <Eye size={14} /> : <EyeOff size={14} />}
                           {blurPreviewActive ? 'Blur Wajah & Plat: Aktif' : 'Tampilan Asli (Tanpa Blur)'}
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          size="sm"
-                          className="!rounded-md"
-                          onClick={() => setLiveCameraOpen(true)}
-                        >
-                          <Camera size={14} />
-                          Rekam Ulang
                         </Button>
                         <Button
                           type="button"
@@ -603,31 +608,8 @@ function VideoUploadInner() {
                       </div>
                     )}
                   </div>
-                ) : liveCameraOpen ? (
-                  <LiveCameraRecorder
-                    onComplete={(recordedFile, markedCashierSec) => {
-                      void pickFile(recordedFile, markedCashierSec);
-                    }}
-                    onCancel={() => setLiveCameraOpen(false)}
-                  />
                 ) : (
                   <div className="space-y-3">
-                    <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-line bg-panel px-4 py-3">
-                      <div className="text-[13px] text-ink-soft">
-                        Belum punya rekaman? Rekam langsung dengan panduan garis horizon & kecepatan langkah di layar.
-                      </div>
-                      <Button
-                        type="button"
-                        variant="primary"
-                        size="sm"
-                        className="!rounded-full"
-                        onClick={() => setLiveCameraOpen(true)}
-                      >
-                        <Camera size={14} />
-                        Buka Kamera Langsung
-                      </Button>
-                    </div>
-
                     <button
                       type="button"
                       onClick={() => inputRef.current?.click()}

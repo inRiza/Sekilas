@@ -11,10 +11,12 @@ import { ArrowLeftIcon, ArrowRightIcon } from '@/components/ui/icons';
 import {
   createTranscriptSegment,
   deleteTranscriptSegment,
+  fetchAgentDecisions,
+  fetchAnalysis,
   fetchTranscriptSegments,
+  isAnalysisComplete,
   updateTranscriptSegment,
 } from '@/lib/api/crud';
-import { MOCK_TRANSCRIPT } from '@/lib/mock/transcript';
 import { TranscriptSegment } from '@/types/api';
 
 const VANTAGE_LABEL: Record<TranscriptSegment['vantage'], string> = {
@@ -214,20 +216,23 @@ function SegmentItem({
       {!editing && (
         <div className="mt-4 flex items-center gap-2">
           {needsAction && (
-            <Button variant="primary" size="sm" className="!rounded-md" onClick={onConfirm}>
+            <Button variant="primary" size="sm" className="flex-1 !rounded-md sm:flex-none" onClick={onConfirm}>
               <Check size={14} /> Sudah benar
             </Button>
           )}
-          <Button variant="secondary" size="sm" className="!rounded-md" onClick={() => setEditing(true)}>
+          <Button variant="secondary" size="sm" className="flex-1 !rounded-md sm:flex-none" onClick={() => setEditing(true)}>
             <PencilLine size={14} /> Koreksi
           </Button>
-          <span className="flex-1" />
+          <span className="hidden flex-1 sm:block" />
+          {/* Ponsel: ikon saja agar dua tombol utama tetap satu baris penuh. */}
           <button
             type="button"
             onClick={onDelete}
-            className="inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-[12px] text-muted transition-colors hover:bg-friction-10 hover:text-friction"
+            aria-label="Hapus segmen"
+            title="Hapus segmen"
+            className="inline-flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2 text-[12px] text-muted transition-colors hover:bg-friction-10 hover:text-friction sm:px-2.5"
           >
-            <Trash2 size={14} /> Hapus
+            <Trash2 size={14} className="shrink-0" /> <span className="hidden sm:inline">Hapus</span>
           </button>
         </div>
       )}
@@ -241,9 +246,7 @@ function VerifikasiTranskripInner() {
   const analysisId = searchParams.get('analysisId') || 'selasar-kopi';
   const businessId = searchParams.get('businessId');
 
-  const [segments, setSegments] = useState<TranscriptSegment[]>(
-    analysisId === 'selasar-kopi' ? MOCK_TRANSCRIPT : [],
-  );
+  const [segments, setSegments] = useState<TranscriptSegment[]>([]);
   const [showAddForm, setShowAddForm] = useState(false);
   const [newStart, setNewStart] = useState('15');
   const [newEnd, setNewEnd] = useState('25');
@@ -253,6 +256,14 @@ function VerifikasiTranskripInner() {
 
   useEffect(() => {
     void fetchTranscriptSegments(analysisId).then((list) => setSegments(list));
+  }, [analysisId]);
+
+  // Analisis yang sudah punya hasil simulasi berlaku: tombol utama membuka dasbor.
+  const [complete, setComplete] = useState(false);
+  useEffect(() => {
+    void Promise.all([fetchAnalysis(analysisId), fetchAgentDecisions(analysisId)]).then(([analysis, decisions]) =>
+      setComplete(isAnalysisComplete(analysis, decisions.length)),
+    );
   }, [analysisId]);
 
   const handleConfirm = async (id: string) => {
@@ -438,16 +449,29 @@ function VerifikasiTranskripInner() {
                 <ArrowLeftIcon size={16} /> Kembali ke pemrosesan
               </Button>
               <div className="flex flex-col items-stretch gap-2 sm:items-end">
-                <Button
-                  variant="primary"
-                  size="lg"
-                  disabled={!ready}
-                  onClick={() => ready && router.push(`/business/analysis/simulasi${querySuffix}`)}
-                  className="justify-center !rounded-md"
-                >
-                  Jalankan simulasi agen <ArrowRightIcon size={16} />
-                </Button>
-                {!ready && <span className="text-[12px] text-muted">Cek {pending} segmen dulu untuk melanjutkan</span>}
+                {complete ? (
+                  <Button
+                    variant="primary"
+                    size="lg"
+                    onClick={() => router.push(`/business/analysis${querySuffix}`)}
+                    className="justify-center !rounded-md"
+                  >
+                    Lihat dasbor hasil <ArrowRightIcon size={16} />
+                  </Button>
+                ) : (
+                  <Button
+                    variant="primary"
+                    size="lg"
+                    disabled={!ready}
+                    onClick={() => ready && router.push(`/business/analysis/simulasi${querySuffix}`)}
+                    className="justify-center !rounded-md"
+                  >
+                    Jalankan simulasi agen <ArrowRightIcon size={16} />
+                  </Button>
+                )}
+                {!ready && !complete && (
+                  <span className="text-[12px] text-muted">Cek {pending} segmen dulu untuk melanjutkan</span>
+                )}
               </div>
             </div>
           </div>

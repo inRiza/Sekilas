@@ -5,8 +5,10 @@ import dynamic from "next/dynamic";
 import { useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
+import type { AgentMap } from "@/lib/agent-map";
 
-import type { TwinSource } from "./twin-scene";
+import { AgentCaption, AgentReplayBar, AgentStopPanel, useAgentReplay } from "./agent-replay";
+import type { TwinSource, TwinWaypoint } from "./twin-scene";
 import { walkInput, type NavMode } from "./walk-input";
 
 const TwinScene = dynamic(() => import("./twin-scene"), {
@@ -36,13 +38,22 @@ export function TwinViewer({
   meta = [],
   activeWaypoint,
   onSelectWaypoint,
+  agents = null,
+  focusAgentId = null,
+  waypoints,
 }: {
   source: TwinSource;
   meta?: string[];
   activeWaypoint?: string | null;
   onSelectWaypoint?: (id: string) => void;
+  /** Keputusan agen yang dipetakan ke jalur rekaman; tampil di mode Putar. */
+  agents?: AgentMap | null;
+  focusAgentId?: number | null;
+  waypoints?: TwinWaypoint[];
 }) {
-  const [source, setSource] = useState<TwinSource>(initialSource);
+  const [source] = useState<TwinSource>(initialSource);
+  // Bila berkas 3D gagal dimuat, tampilkan pesan; tidak diganti scene contoh.
+  const [loadFailed, setLoadFailed] = useState(false);
   const [mode, setMode] = useState<NavMode>("putar");
   const [tourPlaying, setTourPlaying] = useState(true);
   const [tourProgress, setTourProgress] = useState(0);
@@ -51,9 +62,12 @@ export function TwinViewer({
   const tourAvailable = source.kind !== "demo" && pathAvailable;
   const active: NavMode = mode === "tur" && !tourAvailable ? "putar" : mode;
   const activeMode = MODES.find((m) => m.mode === active)!;
+  const replay = useAgentReplay(agents, focusAgentId);
+  // Lapisan agen butuh jalur kamera asli; tidak tampil di scene contoh.
+  const showAgents = Boolean(agents) && active === "putar" && source.kind !== "demo" && pathAvailable;
 
   return (
-    <div className="overflow-hidden rounded-md border border-line bg-white">
+    <div className="flex h-full flex-col overflow-hidden rounded-2xl border border-line/70 bg-white shadow-[0_1px_2px_rgba(16,24,40,0.04)]">
       {/* Kepala: judul, info, tab mode */}
       <div className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5">
         <div className="flex flex-wrap items-center gap-2">
@@ -92,20 +106,36 @@ export function TwinViewer({
       </div>
 
       {/* Kanvas */}
-      <div className="relative h-[420px] lg:h-[520px]">
-        <TwinScene
-          source={source}
-          onLoadError={() => setSource({ kind: "demo" })}
-          mode={active}
-          tourPlaying={tourPlaying}
-          activeWaypoint={activeWaypoint}
-          onSelectWaypoint={(id) => {
-            setMode("putar");
-            onSelectWaypoint?.(id);
-          }}
-          onTourProgress={setTourProgress}
-          onPathAvailable={setPathAvailable}
-        />
+      <div className="relative h-[420px] lg:h-[560px]">
+        {loadFailed ? (
+          <div className="grid h-full place-items-center bg-panel px-6 text-center text-[13px] text-muted">
+            Berkas 3D tidak bisa dimuat. Coba muat ulang halaman.
+          </div>
+        ) : (
+          <TwinScene
+            source={source}
+            onLoadError={() => setLoadFailed(true)}
+            mode={active}
+            tourPlaying={tourPlaying}
+            activeWaypoint={activeWaypoint}
+            onSelectWaypoint={(id) => {
+              setMode("putar");
+              onSelectWaypoint?.(id);
+            }}
+            onTourProgress={setTourProgress}
+            onPathAvailable={setPathAvailable}
+            agents={showAgents ? replay.overlay : null}
+            waypoints={waypoints}
+          />
+        )}
+
+        {showAgents && (
+          <>
+            <AgentCaption replay={replay} />
+            <AgentStopPanel replay={replay} />
+            <AgentReplayBar replay={replay} />
+          </>
+        )}
 
         {active === "tur" && (
           <div className="absolute inset-x-3 bottom-3 flex items-center gap-3 rounded-md bg-white/90 px-3 py-2 shadow-[0_1px_3px_rgba(16,24,40,0.08)] backdrop-blur">
@@ -154,7 +184,11 @@ export function TwinViewer({
       {/* Kaki: petunjuk mode */}
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 bg-panel px-4 py-2.5 text-[12px] text-muted sm:px-5">
         <span className="font-medium text-ink-soft">{activeMode.label}:</span>
-        <span>{activeMode.hint}</span>
+        <span>
+          {showAgents
+            ? "Garis menipis tiap ada agen batal. Klik label untuk melihat siapa yang batal di titik itu dan alasannya."
+            : activeMode.hint}
+        </span>
         <span className="flex-1" />
         <span>Tampilan 3D adalah perkiraan dari video, bukan ukuran sebenarnya.</span>
       </div>

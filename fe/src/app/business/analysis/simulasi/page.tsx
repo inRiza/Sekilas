@@ -8,8 +8,7 @@ import { SekilasMascot } from '@/components/brand/mascot';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ArrowLeftIcon, ArrowRightIcon } from '@/components/ui/icons';
-import { fetchAgentDecisions, triggerSimulationRun } from '@/lib/api/crud';
-import { MOCK_AGENTS } from '@/lib/mock/agents';
+import { fetchAgentDecisions, fetchAnalysis, isAnalysisComplete, triggerSimulationRun } from '@/lib/api/crud';
 import type { AgentDecision } from '@/types/api';
 
 /** Jeda antar-langkah animasi (UI simulasi; nanti diganti progres asli dari backend). */
@@ -82,9 +81,7 @@ function SimulasiAgenInner() {
     businessId ? `&businessId=${encodeURIComponent(businessId)}` : ''
   }`;
 
-  const [agents, setAgents] = useState<AgentDecision[]>(
-    analysisId === 'selasar-kopi' ? MOCK_AGENTS : [],
-  );
+  const [agents, setAgents] = useState<AgentDecision[]>([]);
   const [isRunning, setIsRunning] = useState<boolean>(analysisId !== 'selasar-kopi');
   const [simError, setSimError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
@@ -99,6 +96,14 @@ function SimulasiAgenInner() {
       try {
         setIsRunning(true);
         setSimError(null);
+        // Hasil yang masih berlaku tidak disimulasikan ulang (biaya token, hasil berubah):
+        // langsung ke dasbor. Simulasi ulang hanya bila data berubah (stale).
+        const [analysis, existing] = await Promise.all([fetchAnalysis(analysisId), fetchAgentDecisions(analysisId)]);
+        if (!active) return;
+        if (isAnalysisComplete(analysis, existing.length)) {
+          router.replace(`/business/analysis${querySuffix}`);
+          return;
+        }
         await triggerSimulationRun(analysisId);
         const list = await fetchAgentDecisions(analysisId);
         if (active && list.length > 0) {
@@ -116,7 +121,7 @@ function SimulasiAgenInner() {
     return () => {
       active = false;
     };
-  }, [analysisId]);
+  }, [analysisId, querySuffix, router]);
 
   useEffect(() => {
     if (simError) return;

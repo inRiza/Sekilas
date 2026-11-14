@@ -1,6 +1,6 @@
 # Sekilas Backend (`be/`)
 
-Layanan backend FastAPI dengan SQLAlchemy 2.0 untuk manajemen tempat usaha/cabang, siklus analisis, konteks & menu usaha (F1), ekstraksi transkrip video (F2–F4), simulasi agen pelanggan (F5), agregasi dasbor & proyeksi *what-if* (F6), serta asisten RAG (F8). Worker GPU untuk rekonstruksi Visual Twin 3D berada di [`../twin`](../twin/README.md).
+Layanan backend FastAPI dengan SQLAlchemy 2.0 untuk manajemen tempat usaha/cabang, siklus analisis, konteks & menu usaha (F1), ekstraksi transkrip video (F2–F4), simulasi agen pelanggan (F5), agregasi dasbor & proyeksi *what-if* (F6). Worker GPU untuk rekonstruksi Visual Twin 3D berada di [`../twin`](../twin/README.md).
 
 ## Menjalankan
 
@@ -20,6 +20,31 @@ uv run arq app.workers.tasks.WorkerSettings # worker antrean job asinkron
 uv run ruff check .
 uv run pytest
 ```
+
+## Demo Visual Twin (tanpa agen)
+
+Alur yang sudah tersambung ke database: bisnis -> analisis -> unggah video -> job Visual Twin
+(pipeline lokal `twin/scripts/local_twin.sh`, PRD 11.2) -> dasbor menampilkan splat.
+
+```bash
+docker compose -f ../docker-compose.yml up -d db   # Postgres
+uv run uvicorn app.main:app --port 8000            # skema dari supabase/migrations + seed.sql
+cd ../fe && bun dev                                # http://localhost:3000/businesses
+```
+
+- Prasyarat pipeline lokal: `twin/scripts/setup_local.sh` (COLMAP + Brush) dan `ffmpeg`.
+- Job dijalankan di thread dalam proses API (tanpa Redis). Hasil 3D ditulis ke
+  `fe/public/samples/<id>.*`, lalu diunggah ke Supabase Storage (`videos/twins/<id>/`);
+  URL publiknya disimpan di `twin_assets`. Bila Storage tidak terjangkau, URL menunjuk `/samples`.
+- `DATABASE_URL` ke Supabase: skema dan seed tidak disentuh saat start (dikelola
+  `supabase/migrations`). `DATABASE_URL` lokal: skema dibangun dari migrasi + `seed.sql`.
+- Tes memakai SQLite, `LLM_MODE=mock`, dan `TWIN_LOCAL_RUNNER=false` (`tests/conftest.py`),
+  jadi tidak pernah menyentuh Supabase atau API LLM.
+- Video terburam diunggah ke Supabase Storage dan salinannya ke `POST /analyses/{id}/video/file`
+  (disimpan di `STORAGE_DIR/videos`); bila salinan lokal tidak ada, job mengunduh dari `storage_key`.
+- `POST /analyses/{id}/video/complete` memulai job twin asli; progres di `GET /analyses/{id}/twin`.
+- Analisis demo `selasar-kopi` (dari `supabase/seed.sql`) memakai hasil 3D contoh yang sudah ada.
+- Transkrip VLM dan simulasi agen masih dibangkitkan dari templat (`services/crud.py`).
 
 ## Kebijakan Model & Privasi (Gemini Free Tier)
 
@@ -55,7 +80,6 @@ app/
     dashboard.py          Agregasi metrik dasbor & rekomendasi Pareto
     twin.py               Metadata Visual Twin 3D
     measurement.py        Rencana pengukuran lapangan
-    assistant.py          Tanya jawab RAG berjangkar bukti
   services/
     crud.py               Transformasi ORM <-> Pydantic, upsert konteks & menu, penandaan stale
     context/              F1 pembacaan foto menu (OCR)
@@ -63,11 +87,9 @@ app/
     simulation/           F5 populasi diskret, model keputusan, ablasi, Pareto
     narrative/            F5 penulisan narasi LLM & cek konsistensi
     report/               F6 ringkasan dasbor, verifier angka, rencana pengukuran
-    rag/                  F8 ingest, retriever, jawaban bersumber
     twin/                 F7 klien antrean ke worker GPU
   workers/                Definisi job asinkron arq (Redis)
   llm/                    Klien LLM/VLM & template prompt berversi
-knowledge_base/           Dokumen referensi RAG (cues, actions, guides)
 tests/
   api/                    Tes endpoint (health, alur penuh CRUD bisnis/analisis/konteks)
   models/                 Tes registrasi tabel & mapper SQLAlchemy
