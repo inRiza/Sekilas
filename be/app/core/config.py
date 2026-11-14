@@ -32,6 +32,10 @@ class Settings(BaseSettings):
     sim_concurrency_limit: int = 2
 
     twin_queue_name: str = "twin"
+    # Mode lokal (PRD 11.2): bangun Visual Twin di thread proses API. Matikan untuk tes.
+    twin_local_runner: bool = True
+    # Job transkrip di thread latar belakang (PRD 4.4.2). Tes menjalankannya inline.
+    jobs_in_background: bool = True
 
     langfuse_public_key: str = ""
     langfuse_secret_key: str = ""
