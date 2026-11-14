@@ -21,6 +21,8 @@ class Settings(BaseSettings):
     anthropic_model: str = "claude-sonnet-5-5"
     gemini_api_key: str = ""
     gemini_model: str = "gemini-3.8-flash"
+    # Dipakai berurutan bila model utama membalas 503/504 (kelebihan beban di sisi Google).
+    gemini_fallback_models: list[str] = ["gemini-3.6-flash", "gemini-3.5-flash"]
     openai_api_key: str = ""
     openai_model: str = "gpt-6-luna"
     vision_provider: str = "gemini"
@@ -32,6 +34,10 @@ class Settings(BaseSettings):
     sim_concurrency_limit: int = 2
 
     twin_queue_name: str = "twin"
+    # Mode lokal (PRD 11.2): bangun Visual Twin di thread proses API. Matikan untuk tes.
+    twin_local_runner: bool = True
+    # Job transkrip di thread latar belakang (PRD 4.4.2). Tes menjalankannya inline.
+    jobs_in_background: bool = True
 
     langfuse_public_key: str = ""
     langfuse_secret_key: str = ""

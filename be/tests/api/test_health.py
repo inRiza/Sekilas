@@ -9,5 +9,5 @@ def test_health() -> None:
 
 def test_openapi_lists_all_routers() -> None:
     paths = TestClient(app).get("/openapi.json").json()["paths"]
-    for fragment in ("context", "video", "transcript", "twin", "simulation", "dashboard", "ask"):
+    for fragment in ("context", "video", "transcript", "twin", "simulation", "dashboard"):
         assert any(fragment in p for p in paths), fragment

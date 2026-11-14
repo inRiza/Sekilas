@@ -2,7 +2,6 @@ from fastapi import APIRouter
 
 from app.api.v1.routes import (
     analyses,
-    assistant,
     auth,
     businesses,
     context,
@@ -25,7 +24,6 @@ for module in (
     twin,
     simulations,
     dashboard,
-    assistant,
     measurement,
 ):
     api_router.include_router(module.router)

@@ -6,7 +6,31 @@ import { Component, Suspense, use, useEffect, useMemo, useRef, useState, type Re
 import * as THREE from "three";
 import { PLYLoader } from "three/examples/jsm/loaders/PLYLoader.js";
 
+import {
+  DECISION_COLOR,
+  DECISION_ORDER,
+  remainingAt,
+  stopsBySegment,
+  type AgentJourney,
+  type AgentMap,
+} from "@/lib/agent-map";
+
 import { walkInput, type NavMode } from "./walk-input";
+
+/** Titik pantau dasbor pada detik tertentu di video; posisinya diambil dari jalur kamera. */
+export type TwinWaypoint = { id: string; label: string; t: number; hot: boolean };
+
+/** Lapisan agen yang dikendalikan TwinViewer (status putar ulang, titik terpilih). */
+export type AgentOverlay = {
+  map: AgentMap;
+  /** Agen yang sudah tampil di jalur (saat putar ulang: yang sudah selesai berjalan). */
+  revealed: AgentJourney[];
+  walker: { journey: AgentJourney; key: string; playing: boolean; rate: number } | null;
+  selectedStop: number | null;
+  onSelectStop: (index: number | null) => void;
+  onWalkerStep: (segmentIndex: number) => void;
+  onWalkerDone: () => void;
+};
 
 export type TwinSource =
   | { kind: "demo" }
@@ -250,10 +274,17 @@ type Orientation = { quaternion: THREE.Quaternion; up: THREE.Vector3 };
 const orientationCache = new Map<string, Promise<Orientation>>();
 const NO_ROTATION: Orientation = { quaternion: new THREE.Quaternion(), up: new THREE.Vector3(0, 1, 0) };
 
+// Berkas pendamping (<nama>.json, <nama>.path.json) ada di folder yang sama: /samples lokal
+// atau folder twins/<nama>/ di Supabase Storage.
+function siblingUrl(url: string, suffix: ".json" | ".path.json"): string | null {
+  const fromPipeline = url.startsWith("/samples/") || url.includes("/storage/v1/object/public/videos/twins/");
+  return fromPipeline ? url.replace(/\.(ply|splat)(\?.*)?$/, suffix) : null;
+}
+
 function orientationFor(url: string): Promise<Orientation> {
   let promise = orientationCache.get(url);
   if (!promise) {
-    const meta = url.startsWith("/samples/") ? url.replace(/\.(ply|splat)(\?.*)?$/, ".json") : null;
+    const meta = siblingUrl(url, ".json");
     promise = (meta ? fetch(meta).then((r) => (r.ok ? r.json() : null)) : Promise.resolve(null))
       .then((data: { up?: number[] } | null) => {
         if (!data?.up || data.up.length !== 3) return NO_ROTATION;
@@ -371,7 +402,7 @@ const pathCache = new Map<string, Promise<RawPathPoint[]>>();
 function pathFor(url: string): Promise<RawPathPoint[]> {
   let promise = pathCache.get(url);
   if (!promise) {
-    const file = url.startsWith("/samples/") ? url.replace(/\.(ply|splat)(\?.*)?$/, ".path.json") : null;
+    const file = siblingUrl(url, ".path.json");
     promise = (file ? fetch(file).then((r) => (r.ok ? r.json() : [])) : Promise.resolve([])).catch(() => []);
     pathCache.set(url, promise);
   }
@@ -418,11 +449,13 @@ function WaypointFlyTo({
   placement,
   path,
   isDemo,
+  waypoints,
 }: {
   activeWaypoint?: string | null;
   placement?: Placement | null;
   path?: PathPoint[];
   isDemo?: boolean;
+  waypoints?: TwinWaypoint[];
 }) {
   const getState = useThree((s) => s.get);
   const animRef = useRef<{
@@ -436,7 +469,8 @@ function WaypointFlyTo({
 
   useEffect(() => {
     const key = normalizeWaypointKey(activeWaypoint);
-    if (!key) return;
+    const real = waypoints?.find((w) => w.id === activeWaypoint);
+    if (!key && !real) return;
 
     const { camera } = getState();
     const controls = getState().controls as unknown as { target: THREE.Vector3; update: () => void } | null;
@@ -449,28 +483,15 @@ function WaypointFlyTo({
       const zone = ZONES.find((z) => z.id === key) ?? ZONES[0]!;
       destCam = new THREE.Vector3(...zone.cam);
       destTarget = new THREE.Vector3(...zone.target);
-    } else if (path && path.length >= 2 && placement) {
-      const ratio = key === "jalan" ? 0.08 : key === "tangga" ? 0.48 : key === "menu" ? 0.72 : 0.92;
-      const idx = Math.min(path.length - 1, Math.max(0, Math.floor(ratio * (path.length - 1))));
-      const pt = path[idx]!;
+    } else if (path && path.length >= 2 && placement && real) {
+      // Posisi kamera perekam pada detik titik pantau itu (bukan tebakan persentase jalur).
+      const pt = poseAt(path, real.t);
       const r = placement.radius;
       destTarget = pt.position.clone().addScaledVector(pt.forward, r * 0.22);
       destCam = pt.position
         .clone()
         .addScaledVector(pt.forward, -r * 0.35)
         .add(new THREE.Vector3(r * 0.2, r * 0.22, r * 0.2));
-    } else if (placement) {
-      const { radius: r, targetY } = placement;
-      if (key === "jalan") {
-        destTarget = new THREE.Vector3(-r * 0.45, targetY, r * 0.35);
-        destCam = new THREE.Vector3(-r * 0.95, targetY + r * 0.55, r * 1.25);
-      } else if (key === "tangga") {
-        destTarget = new THREE.Vector3(0, targetY + r * 0.05, 0);
-        destCam = new THREE.Vector3(r * 0.45, targetY + r * 0.5, r * 0.95);
-      } else {
-        destTarget = new THREE.Vector3(r * 0.4, targetY + r * 0.15, -r * 0.25);
-        destCam = new THREE.Vector3(r * 0.85, targetY + r * 0.6, r * 0.65);
-      }
     }
 
     if (destCam && destTarget) {
@@ -483,7 +504,7 @@ function WaypointFlyTo({
         active: true,
       };
     }
-  }, [activeWaypoint, getState, isDemo, path, placement]);
+  }, [activeWaypoint, getState, isDemo, path, placement, waypoints]);
 
   useFrame(({ camera }, dt) => {
     const anim = animRef.current;
@@ -636,6 +657,224 @@ function TourControls({
   return null;
 }
 
+/* ---------- Lapisan agen: keputusan agen ditaruh di jalur rekaman ---------- */
+
+/** Pose kamera pada detik `t` (interpolasi antar-frame). `gap` = jarak ke frame terpetakan terdekat. */
+function poseAt(path: PathPoint[], t: number): { position: THREE.Vector3; forward: THREE.Vector3; gap: number } {
+  if (t <= path[0]!.t) return { position: path[0]!.position.clone(), forward: path[0]!.forward.clone(), gap: path[0]!.t - t };
+  const lastP = path[path.length - 1]!;
+  if (t >= lastP.t) return { position: lastP.position.clone(), forward: lastP.forward.clone(), gap: t - lastP.t };
+  let lo = 0;
+  let hi = path.length - 1;
+  while (hi - lo > 1) {
+    const mid = (lo + hi) >> 1;
+    if (path[mid]!.t <= t) lo = mid;
+    else hi = mid;
+  }
+  const a = path[lo]!;
+  const b = path[hi]!;
+  const u = (t - a.t) / Math.max(1e-6, b.t - a.t);
+  return {
+    position: a.position.clone().lerp(b.position, u),
+    forward: a.forward.clone().lerp(b.forward, u).normalize(),
+    gap: Math.min(t - a.t, b.t - t),
+  };
+}
+
+/** Titik-titik jalur di antara dua detik, termasuk ujungnya. */
+function pathBetween(path: PathPoint[], start: number, end: number): THREE.Vector3[] {
+  return [
+    poseAt(path, start).position,
+    ...path.filter((p) => p.t > start && p.t < end).map((p) => p.position),
+    poseAt(path, end).position,
+  ];
+}
+
+function AgentLayer({
+  path,
+  radius,
+  agents,
+  revealed,
+  selectedStop,
+  onSelectStop,
+}: {
+  path: PathPoint[];
+  radius: number;
+  agents: AgentMap;
+  revealed: AgentJourney[];
+  selectedStop: number | null;
+  onSelectStop?: (index: number | null) => void;
+}) {
+  const total = agents.journeys.length;
+  // Jalur sebagai aliran: tebal saat banyak agen masih berjalan, menipis tiap ada yang berhenti.
+  const flow = useMemo(
+    () =>
+      agents.segments
+        .map((seg) => ({ seg, remaining: remainingAt(revealed, seg.index) }))
+        .filter((f) => f.remaining > 0)
+        .map((f) => ({ ...f, points: pathBetween(path, f.seg.start, f.seg.end) })),
+    [agents.segments, path, revealed],
+  );
+  const stops = useMemo(() => stopsBySegment(revealed), [revealed]);
+  const dot = radius * 0.007;
+
+  return (
+    <>
+      {flow.map(({ seg, remaining, points }) => (
+        <Line
+          key={seg.id}
+          points={points}
+          color="#414040"
+          lineWidth={1.5 + 9 * (remaining / Math.max(1, total))}
+          transparent
+          opacity={0.45}
+        />
+      ))}
+      {stops.map((stop) => {
+        const seg = agents.segments[stop.index]!;
+        const base = poseAt(path, seg.end).position;
+        const stack = revealed
+          .filter((j) => j.stopIndex === stop.index)
+          .sort((a, b) => DECISION_ORDER.indexOf(a.decision) - DECISION_ORDER.indexOf(b.decision));
+        const selected = selectedStop === stop.index;
+        const leaks = stop.total - stop.byDecision.memesan;
+        return (
+          <group key={seg.id}>
+            {stack.map((j, k) => (
+              <mesh key={j.agentId} position={[base.x, base.y + dot * 2.3 * (k + 1), base.z]}>
+                <sphereGeometry args={[dot, 16, 12]} />
+                <meshStandardMaterial color={DECISION_COLOR[j.decision]} />
+              </mesh>
+            ))}
+            <Html position={[base.x, base.y + dot * 2.3 * (stack.length + 2), base.z]} center zIndexRange={[20, 10]}>
+              <button
+                type="button"
+                onClick={() => onSelectStop?.(selected ? null : stop.index)}
+                className={`whitespace-nowrap rounded-full border px-2 py-0.5 text-[11px] font-medium shadow-[0_1px_2px_rgba(16,24,40,0.08)] transition ${
+                  selected
+                    ? 'border-ink bg-ink text-white'
+                    : leaks > 0
+                      ? 'border-friction/30 bg-white text-friction hover:bg-friction-10'
+                      : 'border-impact/30 bg-white text-impact hover:bg-impact-10'
+                }`}
+              >
+                {[leaks > 0 && `${leaks} batal`, stop.byDecision.memesan > 0 && `${stop.byDecision.memesan} memesan`]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </button>
+            </Html>
+          </group>
+        );
+      })}
+    </>
+  );
+}
+
+/** Satu agen menyusuri jalur sampai titik keputusannya, lalu memberi tahu induk. */
+function AgentWalker({
+  path,
+  radius,
+  journey,
+  segments,
+  playing,
+  rate,
+  onStep,
+  onDone,
+}: {
+  path: PathPoint[];
+  radius: number;
+  journey: AgentJourney;
+  segments: AgentMap['segments'];
+  playing: boolean;
+  rate: number;
+  onStep: (segmentIndex: number) => void;
+  onDone: () => void;
+}) {
+  const mesh = useRef<THREE.Mesh>(null);
+  const material = useRef<THREE.MeshStandardMaterial>(null);
+  const state = useRef({ t: segments[0]?.start ?? 0, step: -1, hold: 0, done: false });
+  const getState = useThree((st) => st.get);
+
+  useFrame(({ camera }, dt) => {
+    const s = state.current;
+    if (!mesh.current || s.done) return;
+    if (playing) {
+      if (s.t < journey.stopTime) s.t = Math.min(journey.stopTime, s.t + Math.min(dt, 0.1) * rate);
+      else s.hold += dt;
+    }
+    const pose = poseAt(path, s.t);
+    mesh.current.position.set(pose.position.x, pose.position.y + radius * 0.03, pose.position.z);
+    // Kamera menggeser pusat orbit ke agen (sudut dan jarak tetap) agar agen selalu terlihat.
+    const controls = getState().controls as unknown as { target: THREE.Vector3; update: () => void } | null;
+    if (controls) {
+      const k = 1 - Math.exp(-Math.min(dt, 0.1) * 2.5);
+      const shift = pose.position.clone().sub(controls.target).multiplyScalar(k);
+      controls.target.add(shift);
+      camera.position.add(shift);
+      // Jaga jarak kejar: tidak masuk ke dalam model, dan sedikit dari atas agar jalur terbaca.
+      const offset = camera.position.clone().sub(controls.target);
+      const want = Math.max(offset.length(), radius * 0.55);
+      offset.setLength(THREE.MathUtils.lerp(offset.length(), want, k));
+      offset.y = THREE.MathUtils.lerp(offset.y, Math.max(offset.y, radius * 0.25), k);
+      camera.position.copy(controls.target).add(offset);
+      controls.update();
+    }
+    const step = segments.findIndex((seg) => s.t <= seg.end);
+    const current = step === -1 ? segments.length - 1 : step;
+    if (current !== s.step) {
+      s.step = current;
+      onStep(current);
+    }
+    if (s.t >= journey.stopTime) material.current?.color.set(DECISION_COLOR[journey.decision]);
+    // Jeda sebentar di titik keputusan agar monolog terakhir terbaca.
+    if (s.hold > 1.6) {
+      s.done = true;
+      onDone();
+    }
+  });
+
+  return (
+    <mesh ref={mesh}>
+      <sphereGeometry args={[radius * 0.016, 20, 16]} />
+      <meshStandardMaterial ref={material} color="#262626" emissive="#262626" emissiveIntensity={0.15} />
+    </mesh>
+  );
+}
+
+/** Terbang mulus ke titik berhenti yang dipilih, menghadap arah pandang perekam. */
+function StopFlyTo({ path, radius, time }: { path: PathPoint[]; radius: number; time: number | null }) {
+  const getState = useThree((s) => s.get);
+  const anim = useRef<{ from: THREE.Vector3; to: THREE.Vector3; fromT: THREE.Vector3; toT: THREE.Vector3; p: number } | null>(null);
+
+  useEffect(() => {
+    if (time === null) return;
+    const { camera } = getState();
+    const controls = getState().controls as unknown as { target: THREE.Vector3 } | null;
+    const pose = poseAt(path, time);
+    const toT = pose.position.clone();
+    const to = pose.position
+      .clone()
+      .addScaledVector(pose.forward, -radius * 0.45)
+      .add(new THREE.Vector3(0, radius * 0.3, 0));
+    anim.current = { from: camera.position.clone(), to, fromT: controls?.target.clone() ?? toT.clone(), toT, p: 0 };
+  }, [time, path, radius, getState]);
+
+  useFrame(({ camera }, dt) => {
+    const a = anim.current;
+    if (!a) return;
+    a.p = Math.min(1, a.p + Math.min(dt, 0.05) * 1.6);
+    const e = 1 - Math.pow(1 - a.p, 3);
+    camera.position.lerpVectors(a.from, a.to, e);
+    const controls = getState().controls as unknown as { target: THREE.Vector3; update: () => void } | null;
+    if (controls) {
+      controls.target.lerpVectors(a.fromT, a.toT, e);
+      controls.update();
+    }
+    if (a.p >= 1) anim.current = null;
+  });
+  return null;
+}
+
 /* ---------- Panggung model + navigasi ---------- */
 
 function ModelStage({
@@ -646,6 +885,8 @@ function ModelStage({
   onSelectWaypoint,
   onTourProgress,
   onPathAvailable,
+  agents,
+  waypoints,
 }: {
   source: Exclude<TwinSource, { kind: "demo" }>;
   mode: NavMode;
@@ -654,35 +895,26 @@ function ModelStage({
   onSelectWaypoint?: (id: string) => void;
   onTourProgress?: (u: number) => void;
   onPathAvailable?: (available: boolean) => void;
+  agents?: AgentOverlay | null;
+  waypoints?: TwinWaypoint[];
 }) {
   const [placement, setPlacement] = useState<Placement | null>(null);
   const rawPath = use(pathFor(source.url));
   const path = useMemo(() => (placement ? placePath(rawPath, placement) : []), [rawPath, placement]);
   const hasPath = path.length >= 2;
-  const normalizedActive = normalizeWaypointKey(activeWaypoint);
 
   useEffect(() => onPathAvailable?.(hasPath), [hasPath, onPathAvailable]);
 
+  const showAgents = Boolean(agents && placement && mode === "putar" && hasPath);
+  const selectedTime =
+    agents && agents.selectedStop !== null ? (agents.map.segments[agents.selectedStop]?.end ?? null) : null;
+
   const modelPinNodes = useMemo(() => {
-    if (!placement) return [];
-    if (hasPath) {
-      const pJalan = path[Math.floor((path.length - 1) * 0.08)]!;
-      const pTangga = path[Math.floor((path.length - 1) * 0.48)]!;
-      const pKasir = path[Math.floor((path.length - 1) * 0.92)]!;
-      return [
-        { id: "jalan", label: "Trotoar Depan", pos: pJalan.position, hot: false },
-        { id: "tangga", label: "Titik Friksi", pos: pTangga.position, hot: true },
-        { id: "kasir", label: "Titik Kasir", pos: pKasir.position, hot: false },
-      ];
-    }
-    const r = placement.radius;
-    const y = placement.targetY + r * 0.12;
-    return [
-      { id: "jalan", label: "Trotoar Depan", pos: new THREE.Vector3(-r * 0.45, y, r * 0.35), hot: false },
-      { id: "tangga", label: "Titik Friksi", pos: new THREE.Vector3(0, y, 0), hot: true },
-      { id: "kasir", label: "Titik Kasir", pos: new THREE.Vector3(r * 0.4, y, -r * 0.25), hot: false },
-    ];
-  }, [placement, hasPath, path]);
+    // Saat lapisan agen aktif, titik berhenti agen menggantikan penanda ini. Tanpa jalur kamera
+    // atau titik pantau dari server, tidak ada penanda (tidak ditebak).
+    if (!placement || agents || !hasPath || !waypoints?.length) return [];
+    return waypoints.map((w) => ({ id: w.id, label: w.label, pos: poseAt(path, w.t).position, hot: w.hot }));
+  }, [placement, hasPath, path, agents, waypoints]);
 
   return (
     <>
@@ -692,12 +924,44 @@ function ModelStage({
         <SplatModel url={source.url} onPlacement={setPlacement} />
       )}
       {placement && mode === "putar" && hasPath && (
-        <Line points={path.map((p) => p.position)} color="#3466e5" lineWidth={2} transparent opacity={0.6} />
+        <Line
+          points={path.map((p) => p.position)}
+          color="#3466e5"
+          lineWidth={agents ? 1.5 : 2}
+          transparent
+          opacity={agents ? 0.3 : 0.6}
+        />
+      )}
+      {showAgents && agents && placement && (
+        <>
+          <AgentLayer
+            path={path}
+            radius={placement.radius}
+            agents={agents.map}
+            revealed={agents.revealed}
+            selectedStop={agents.selectedStop}
+            onSelectStop={agents.onSelectStop}
+          />
+          {agents.walker && (
+            <AgentWalker
+              key={agents.walker.key}
+              path={path}
+              radius={placement.radius}
+              journey={agents.walker.journey}
+              segments={agents.map.segments}
+              playing={agents.walker.playing}
+              rate={agents.walker.rate}
+              onStep={agents.onWalkerStep}
+              onDone={agents.onWalkerDone}
+            />
+          )}
+          <StopFlyTo path={path} radius={placement.radius} time={selectedTime} />
+        </>
       )}
       {placement &&
         mode === "putar" &&
         modelPinNodes.map((pin) => {
-          const isSelected = normalizedActive === pin.id;
+          const isSelected = activeWaypoint === pin.id;
           return (
             <Html key={pin.id} position={[pin.pos.x, pin.pos.y, pin.pos.z]} center zIndexRange={[10, 0]}>
               <button
@@ -720,7 +984,7 @@ function ModelStage({
         <>
           <OrbitControls makeDefault enableDamping dampingFactor={0.08} maxPolarAngle={Math.PI / 2.05} />
           <FrameOrbit placement={placement} />
-          <WaypointFlyTo activeWaypoint={activeWaypoint} placement={placement} path={path} />
+          <WaypointFlyTo activeWaypoint={activeWaypoint} placement={placement} path={path} waypoints={waypoints} />
         </>
       )}
       {placement && mode === "jalan" && <WalkControls radius={placement.radius} start={hasPath ? path[0] : undefined} />}
@@ -742,6 +1006,8 @@ export default function TwinScene({
   onSelectWaypoint,
   onTourProgress,
   onPathAvailable,
+  agents,
+  waypoints,
 }: {
   source: TwinSource;
   onLoadError: () => void;
@@ -751,6 +1017,8 @@ export default function TwinScene({
   onSelectWaypoint?: (id: string) => void;
   onTourProgress?: (u: number) => void;
   onPathAvailable?: (available: boolean) => void;
+  agents?: AgentOverlay | null;
+  waypoints?: TwinWaypoint[];
 }) {
   return (
     <Canvas dpr={[1, 2]} camera={{ position: [0.5, 11, 20.5], fov: 50 }} gl={{ antialias: true }}>
@@ -790,6 +1058,8 @@ export default function TwinScene({
               onSelectWaypoint={onSelectWaypoint}
               onTourProgress={onTourProgress}
               onPathAvailable={onPathAvailable}
+              agents={agents}
+              waypoints={waypoints}
             />
           )}
         </Suspense>

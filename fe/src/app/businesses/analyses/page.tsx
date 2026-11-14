@@ -130,10 +130,10 @@ function BusinessAnalysesInner() {
               </p>
             </div>
 
-            <div className="flex items-center gap-2.5 shrink-0">
+            <div className="flex w-full shrink-0 flex-col-reverse gap-2 sm:w-auto sm:flex-row sm:items-center sm:gap-2.5">
               <Link
                 href="/businesses"
-                className="inline-flex h-9 items-center rounded-md border border-line bg-white px-3.5 text-xs font-medium text-ink hover:bg-panel transition"
+                className="inline-flex h-9 items-center justify-center whitespace-nowrap rounded-md border border-line bg-white px-3.5 text-xs font-medium text-ink hover:bg-panel transition"
               >
                 Ganti Tempat Usaha
               </Link>
@@ -143,9 +143,9 @@ function BusinessAnalysesInner() {
                   setNewAnalysisName('');
                   setShowNewModal(true);
                 }}
-                className="btn-primary inline-flex h-9 items-center gap-1.5 rounded-md px-4 text-xs font-semibold text-white shadow-xs transition"
+                className="btn-primary inline-flex h-9 items-center justify-center gap-1.5 whitespace-nowrap rounded-md px-4 text-xs font-semibold text-white shadow-xs transition"
               >
-                <PlusIcon size={14} />
+                <PlusIcon size={14} className="shrink-0" />
                 <span>Buat Analisis Baru</span>
               </button>
             </div>
@@ -153,8 +153,8 @@ function BusinessAnalysesInner() {
 
           {/* Section: Riwayat Analisis Video */}
           <div>
-            <div className="flex items-center justify-between mb-4">
-              <div>
+            <div className="mb-4 flex items-start justify-between gap-3">
+              <div className="min-w-0">
                 <h2 className="text-lg font-normal tracking-[-0.02em] text-ink">
                   Daftar Analisis Video & Simulasi
                 </h2>
@@ -163,8 +163,8 @@ function BusinessAnalysesInner() {
                 </p>
               </div>
 
-              <span className="font-mono text-[11px] text-subtle">
-                {filteredAnalyses.length} Analisis Terdaftar
+              <span className="mt-1.5 shrink-0 whitespace-nowrap font-mono text-[11px] text-subtle">
+                {filteredAnalyses.length} analisis
               </span>
             </div>
 
@@ -252,33 +252,11 @@ function BusinessAnalysesInner() {
                       </div>
                     </div>
 
-                    <div className="mt-4 pt-2 flex flex-wrap items-center gap-2">
-                      <Link
-                        href={`/business/analysis/konteks?analysisId=${encodeURIComponent(analysis.id)}&businessId=${encodeURIComponent(activeBiz.id)}`}
-                        className="h-8.5 px-3 rounded-md border border-line bg-white text-xs font-medium text-muted hover:text-ink hover:bg-panel flex items-center justify-center transition"
-                      >
-                        Konteks
-                      </Link>
-                      <button
-                        type="button"
-                        onClick={async () => {
-                          try {
-                            const cloned = await cloneAnalysisWithTranscript(analysis.id);
-                            router.push(
-                              `/business/analysis/verifikasi?analysisId=${encodeURIComponent(cloned.id)}&businessId=${encodeURIComponent(activeBiz.id)}`,
-                            );
-                          } catch (err) {
-                            alert(err instanceof Error ? err.message : 'Gagal menyalin analisis.');
-                          }
-                        }}
-                        className="h-8.5 px-3 rounded-md border border-line bg-white text-xs font-medium text-muted hover:text-ink hover:bg-panel flex items-center justify-center transition"
-                      >
-                        Salin transkrip
-                      </button>
+                    <div className="mt-4 space-y-2">
                       {isReady ? (
                         <Link
                           href={`/business/analysis?analysisId=${encodeURIComponent(analysis.id)}`}
-                          className="btn-primary flex-1 h-8.5 rounded-md text-xs font-semibold text-white shadow-2xs flex items-center justify-center gap-1.5 transition"
+                          className="btn-primary flex h-9 w-full items-center justify-center gap-1.5 whitespace-nowrap rounded-md px-4 text-xs font-semibold text-white shadow-2xs transition"
                         >
                           <span>Buka Dasbor Hasil</span>
                           <ArrowRightIcon size={13} />
@@ -286,11 +264,35 @@ function BusinessAnalysesInner() {
                       ) : (
                         <Link
                           href={`/business/analysis/proses?analysisId=${encodeURIComponent(analysis.id)}`}
-                          className="flex-1 h-8.5 rounded-md border border-line bg-panel text-xs font-medium text-ink flex items-center justify-center gap-1.5 hover:bg-white transition"
+                          className="flex h-9 w-full items-center justify-center gap-1.5 whitespace-nowrap rounded-md border border-line bg-panel px-4 text-xs font-medium text-ink transition hover:bg-white"
                         >
                           <span>Lihat Status Proses AI</span>
                         </Link>
                       )}
+                      <div className="grid grid-cols-2 gap-2">
+                        <Link
+                          href={`/business/analysis/konteks?analysisId=${encodeURIComponent(analysis.id)}&businessId=${encodeURIComponent(activeBiz.id)}`}
+                          className="flex h-9 items-center justify-center whitespace-nowrap rounded-md border border-line bg-white px-3 text-xs font-medium text-muted transition hover:bg-panel hover:text-ink"
+                        >
+                          Konteks
+                        </Link>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            try {
+                              const cloned = await cloneAnalysisWithTranscript(analysis.id);
+                              router.push(
+                                `/business/analysis/verifikasi?analysisId=${encodeURIComponent(cloned.id)}&businessId=${encodeURIComponent(activeBiz.id)}`,
+                              );
+                            } catch (err) {
+                              alert(err instanceof Error ? err.message : 'Gagal menyalin analisis.');
+                            }
+                          }}
+                          className="flex h-9 items-center justify-center whitespace-nowrap rounded-md border border-line bg-white px-3 text-xs font-medium text-muted transition hover:bg-panel hover:text-ink"
+                        >
+                          Salin transkrip
+                        </button>
+                      </div>
                     </div>
                   </div>
                 );

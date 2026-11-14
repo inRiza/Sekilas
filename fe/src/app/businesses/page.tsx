@@ -7,7 +7,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Dialog } from '@/components/ui/dialog';
 import { Input, Label } from '@/components/ui/form';
-import { ArrowRightIcon, FileTextIcon, PlusIcon, SettingsIcon, StoreIcon } from '@/components/ui/icons';
+import { FileTextIcon, PlusIcon, SettingsIcon, StoreIcon } from '@/components/ui/icons';
 import { Select, type SelectOption } from '@/components/ui/select';
 import {
   createBusiness,
@@ -192,42 +192,39 @@ export default function BusinessesPage() {
                       {biz.address}
                     </p>
 
-                    <div className="mt-4 pt-3 flex items-center justify-between text-xs">
-                      <span className="text-muted">Analisis Utama</span>
-                      <span className="font-mono text-[11px] font-medium text-impact truncate max-w-[220px]">
+                    <div className="mt-4 pt-3 flex items-center justify-between gap-3 text-xs">
+                      <span className="shrink-0 whitespace-nowrap text-muted">Analisis Utama</span>
+                      <span className="min-w-0 truncate font-mono text-[11px] font-medium text-impact">
                         {primaryAnl ? primaryAnl.name : 'Belum ada analisis'}
                       </span>
                     </div>
                   </div>
 
-                  <div className="mt-6 pt-4 flex flex-wrap items-center justify-between gap-2">
+                  <div className="mt-6 space-y-2 pt-4">
                     <Link
-                      href={`/businesses/analyses?businessId=${encodeURIComponent(biz.id)}`}
-                      className="inline-flex h-8.5 items-center gap-1.5 rounded-md border border-line bg-white px-3.5 text-xs font-medium text-ink hover:bg-panel transition"
+                      href={`/business/analysis/konteks?businessId=${encodeURIComponent(biz.id)}&mode=new`}
+                      className="btn-primary flex h-9 w-full items-center justify-center gap-1.5 whitespace-nowrap rounded-md px-4 text-xs font-semibold text-white shadow-2xs transition"
                     >
-                      <FileTextIcon size={13} className="text-muted" />
-                      <span>Lihat Analisis</span>
-                      <ArrowRightIcon size={13} className="text-muted" />
+                      <PlusIcon size={13} />
+                      <span>Analisis Baru</span>
                     </Link>
-
-                    <div className="flex items-center gap-2">
+                    <div className="grid grid-cols-2 gap-2">
+                      <Link
+                        href={`/businesses/analyses?businessId=${encodeURIComponent(biz.id)}`}
+                        className="flex h-9 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border border-line bg-white px-3 text-xs font-medium text-ink transition hover:bg-panel"
+                      >
+                        <FileTextIcon size={13} className="shrink-0 text-muted" />
+                        <span>Lihat Analisis</span>
+                      </Link>
                       <Link
                         href={`/business/analysis/konteks?businessId=${encodeURIComponent(biz.id)}${
                           primaryAnl ? `&analysisId=${encodeURIComponent(primaryAnl.id)}` : ''
                         }`}
-                        className="inline-flex h-8.5 items-center gap-1.5 rounded-md border border-line bg-white px-3 text-xs font-medium text-muted hover:text-ink hover:bg-panel transition"
+                        className="flex h-9 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border border-line bg-white px-3 text-xs font-medium text-muted transition hover:bg-panel hover:text-ink"
                         title="Edit Konteks Usaha"
                       >
-                        <SettingsIcon size={13} />
+                        <SettingsIcon size={13} className="shrink-0" />
                         <span>Konteks</span>
-                      </Link>
-
-                      <Link
-                        href={`/business/analysis/konteks?businessId=${encodeURIComponent(biz.id)}&mode=new`}
-                        className="btn-primary inline-flex h-8.5 items-center gap-1 rounded-md px-3 text-xs font-semibold text-white shadow-2xs transition"
-                      >
-                        <PlusIcon size={13} />
-                        <span>Analisis Baru</span>
                       </Link>
                     </div>
                   </div>
