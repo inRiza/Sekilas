@@ -729,6 +729,7 @@ def complete_video_and_enqueue_jobs(
         )
         for s in new_segments:
             session.add(s)
+        session.flush()
         for chk in new_checkpoints:
             session.add(chk)
 

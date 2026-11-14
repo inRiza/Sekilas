@@ -16,19 +16,19 @@ logger = logging.getLogger(__name__)
 
 VLM_SYSTEM_PROMPT = """Kamu adalah pengamat lapangan yang merekam perjalanan calon pelanggan dari seberang jalan, mendekati pintu masuk, hingga ke meja pesan/kasir sebuah tempat usaha makanan/minuman.
 
-Aturan ketat penulisan transkrip:
+Aturan ketat penulisan transkrip lengkap & mendetail:
 1. Kamu HANYA menerima gambar keyframe yang sudah diburamkan beserta stempel waktunya dan satu kalimat jenis usaha.
-2. Jangan menebak data di luar gambar (jangan mengarang menu/harga/jam buka bila tidak terlihat di frame).
-3. Pecah kejadian menjadi segmen-segmen berurutan (~12 sampai 20 segmen untuk 1 video standar) dari sudut pandang 'jalan' -> 'pintu' -> 'dalam'.
-4. Untuk setiap segmen, tuliskan:
-   - timestamp_start & timestamp_end (dalam detik)
-   - frame_indices: daftar nomor urut frame [1..N] yang menjadi bukti segmen ini
+2. Jangan menebak atau mengarang data di luar gambar (jangan mengarang nama menu, harga, atau jam buka bila tidak terlihat jelas di frame). Namun semua yang TERLIHAT di frame wajib dicatat secara menyeluruh dan persis.
+3. Cakup SELURUH durasi video dari detik 0.0 sampai akhir tanpa celah waktu, dan pastikan SEMUA frame [1..N] terpetakan ke dalam segmen berurutan (~15 sampai 20 segmen untuk 1 video standar) dari sudut pandang 'jalan' -> 'pintu' -> 'dalam'.
+4. Untuk setiap segmen, tuliskan secara lengkap dan teliti:
+   - timestamp_start & timestamp_end (dalam detik, berkesinambungan dari segmen sebelumnya)
+   - frame_indices: daftar nomor urut frame [1..N] yang menjadi bukti segmen ini (minimal 1 frame per segmen)
    - vantage: 'jalan' | 'pintu' | 'dalam'
-   - zone_id: pengenal zona singkat (mis. 'trotoar_seberang', 'depan_fasad', 'parkiran', 'tangga_masuk', 'ambang_pintu', 'meja_kasir')
-   - narrative: deskripsi detail apa yang terlihat (ukuran tulisan papan nama, pencahayaan, penghalang parkir, kondisi pintu/tangga, keterbacaan daftar menu & harga, kejelasan titik pesan).
-   - not_visible: hal penting yang TIDAK terlihat atau TIDAK terbaca pada titik ini (wajib diisi!).
-   - confidence: 'stabil' atau 'tidak_pasti' (tandai 'tidak_pasti' bila gambar buram/gelap/cepat).
-5. Jangan menulis ciri pribadi orang (wajah, pakaian spesifik); sebut hanya sebagai keramaian jika ada.
+   - zone_id: pengenal zona singkat (mis. 'trotoar_seberang', 'bahu_jalan', 'depan_fasad', 'area_parkir', 'akses_tangga', 'ambang_pintu', 'area_tunggu', 'meja_kasir')
+   - narrative: deskripsi LENGKAP & MENDETAIL (2-4 kalimat kaya observasi) mencakup: posisi/jarak pandang kamera, bentuk & warna fasad/bangunan, keberadaan & keterbacaan papan nama/spanduk/neon box (tuliskan teks yang terbaca apa adanya), tanda BUKA/TUTUP & jam buka, kondisi trotoar/parkiran/penghalang (motor, mobil, gerobak, tiang), kondisi pintu/tangga/anak tangga/pegangan, tingkat pencahayaan/silau kaca, visibilitas daftar menu & angka harga, suasana dalam ruangan, serta kejelasan letak meja pesan/kasir, papan QRIS/pembayaran, dan alur antrean.
+   - not_visible: daftar spesifik semua isyarat penting yang TIDAK terlihat atau TIDAK terbaca pada titik pandang ini (mis. nama menu, angka harga, tanda buka/tutup, jam operasional, petunjuk arah masuk, area kasir, metode pembayaran). Wajib diisi dengan jelas!
+   - confidence: 'stabil' atau 'tidak_pasti' (tandai 'tidak_pasti' bila gambar buram, terlalu gelap, terhalang, atau bergerak terlalu cepat).
+5. Jangan menulis ciri pribadi orang (wajah, pelat nomor, pakaian spesifik); sebut hanya sebagai tingkat keramaian jika ada.
 6. Kembalikan JSON dengan struktur:
    {
      "segments": [...],
@@ -158,13 +158,14 @@ def extract_transcript_with_gemini(
         user_prompt = (
             f"Ini tempat makan berjenis {btype}. "
             f"Total durasi video {duration_s:.1f} detik, titik pesan/kasir tercapai pada {cashier_at_s:.1f} detik. "
-            f"Analisis semua {len(keyframes)} keyframe berurutan berikut dan hasilkan 12 sampai 20 segmen kejadian yang detail."
+            f"Analisis SEMUA {len(keyframes)} keyframe berurutan berikut secara menyeluruh dan hasilkan 15 sampai 20 segmen kejadian yang sangat detail (2-4 kalimat per segmen, tanpa melewatkan satu frame pun, mencakup seluruh durasi 0.0 hingga {duration_s:.1f} detik)."
         )
         try:
             res = router.generate_multimodal_json(
                 system_prompt=VLM_SYSTEM_PROMPT,
                 user_prompt=user_prompt,
                 keyframes=keyframes,
+                max_output_tokens=8192,
             )
             if res and isinstance(res.data, dict) and isinstance(res.data.get("segments"), list):
                 parsed_segments: list[TranscriptSegment] = []

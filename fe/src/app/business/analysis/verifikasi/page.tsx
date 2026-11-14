@@ -241,7 +241,9 @@ function VerifikasiTranskripInner() {
   const analysisId = searchParams.get('analysisId') || 'selasar-kopi';
   const businessId = searchParams.get('businessId');
 
-  const [segments, setSegments] = useState<TranscriptSegment[]>(MOCK_TRANSCRIPT);
+  const [segments, setSegments] = useState<TranscriptSegment[]>(
+    analysisId === 'selasar-kopi' ? MOCK_TRANSCRIPT : [],
+  );
   const [showAddForm, setShowAddForm] = useState(false);
   const [newStart, setNewStart] = useState('15');
   const [newEnd, setNewEnd] = useState('25');
