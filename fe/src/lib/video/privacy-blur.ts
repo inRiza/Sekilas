@@ -470,6 +470,10 @@ export function renderSelectivePrivacyBlur(
  * Ekspor video baru yang sudah diburamkan hanya pada area wajah & plat nomor menggunakan
  * `<canvas>.captureStream()` + `MediaRecorder` sehingga video mentah tidak pernah dikirim ke server.
  */
+/** Sisi pendek video hasil ekspor (px) dan frame rate rekaman. */
+const EXPORT_SHORT_SIDE = 720;
+const EXPORT_FPS = 30;
+
 export async function exportRedactedVideoFile(
   file: File,
   onProgress?: (ratio: number) => void,
@@ -494,16 +498,18 @@ export async function exportRedactedVideoFile(
       URL.revokeObjectURL(objectUrl);
     };
 
-    // Jika rekaman ulang lebih lama dari 18 detik atau gagal, kembalikan hasil yang sudah terekam atau file
-    const safetyTimeout = window.setTimeout(() => {
-      cleanup();
-      resolve(file);
-    }, 25000);
+    // Batas waktu dipasang setelah durasi diketahui (lihat onloadedmetadata). Bila terlewat,
+    // rekaman terburam yang sudah jadi dipakai; video mentah tidak pernah dikembalikan dari sini.
+    let safetyTimeout = 0;
 
     video.onloadedmetadata = () => {
-      const targetH = Math.min(720, video.videoHeight || 720);
-      const scale = targetH / Math.max(1, video.videoHeight || 720);
-      const targetW = Math.round((video.videoWidth || 1280) * scale);
+      // Sisi pendek maksimal 720 px (720x1280 untuk video tegak): cukup detail untuk transkrip
+      // dan rekonstruksi 3D, masih ringan untuk diburamkan di browser.
+      const srcW = video.videoWidth || 1280;
+      const srcH = video.videoHeight || 720;
+      const scale = Math.min(1, EXPORT_SHORT_SIDE / Math.max(1, Math.min(srcW, srcH)));
+      const targetW = Math.round(srcW * scale);
+      const targetH = Math.round(srcH * scale);
 
       const canvas = document.createElement('canvas');
       canvas.width = targetW;
@@ -531,11 +537,16 @@ export async function exportRedactedVideoFile(
         return;
       }
 
-      const stream = canvas.captureStream(24);
+      const stream = canvas.captureStream(EXPORT_FPS);
       const recorder = new MediaRecorder(stream, {
         mimeType,
-        videoBitsPerSecond: 2_500_000,
+        videoBitsPerSecond: 6_000_000,
       });
+      const durationMs = Number.isFinite(video.duration) && video.duration > 0 ? video.duration * 1000 : 180_000;
+      safetyTimeout = window.setTimeout(() => {
+        // Terlalu lama (tab di latar belakang, perangkat lambat): simpan yang sudah terburam.
+        if (recorder.state === 'recording') recorder.stop();
+      }, durationMs * 1.6 + 20_000);
       const chunks: BlobPart[] = [];
 
       recorder.ondataavailable = (ev) => {
@@ -558,8 +569,10 @@ export async function exportRedactedVideoFile(
         resolve(redactedFile);
       };
 
-      // Jalankan pemutaran dipercepat dan gunakan Web Worker + OffscreenCanvas agar UI tetap mulus
-      video.playbackRate = 3.5;
+      // Putar dengan kecepatan normal. MediaRecorder merekam dengan jam dinding, jadi pemutaran
+      // dipercepat akan memampatkan durasi (62 dtk jadi 18 dtk) dan membuang frame yang
+      // dibutuhkan transkrip dan Visual Twin. Web Worker + OffscreenCanvas menjaga UI tetap mulus.
+      video.playbackRate = 1;
       let lastBoxes: PrivacyBox[] = [];
       let frameIdx = 0;
       let workerBusy = false;
