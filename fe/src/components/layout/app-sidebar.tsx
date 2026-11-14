@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import React, { useEffect, useState } from 'react';
 
 import { SekilasLogo, SekilasLogoIcon } from '@/components/brand/logo';
@@ -26,7 +26,8 @@ import {
   getLocalBusinesses,
   subscribeCrudChanges,
 } from '@/lib/api/crud';
-import { CURRENT_USER, MOCK_BUSINESSES } from '@/lib/mock/business';
+import { signOutUser, useAuthUser } from '@/lib/auth/use-auth';
+import { MOCK_BUSINESSES } from '@/lib/mock/business';
 import type { Analysis, Business } from '@/types/api';
 
 const NEW_ANALYSIS_HREF = '/business/analysis/konteks';
@@ -160,6 +161,8 @@ function BusinessNode({
 
 export function AppSidebar() {
   const pathname = usePathname();
+  const router = useRouter();
+  const { user: currentUser } = useAuthUser();
   const [businesses, setBusinesses] = useState<Business[]>(() => getLocalBusinesses());
   const [analyses, setAnalyses] = useState<Analysis[]>(() => getLocalAnalyses());
   const [expanded, setExpanded] = useState<Record<string, boolean>>({
@@ -255,22 +258,26 @@ export function AppSidebar() {
         <div className="flex items-center gap-2.5 rounded-xl px-1.5 py-1.5 group-data-[collapsible=icon]/sidebar:justify-center group-data-[collapsible=icon]/sidebar:px-0">
           <span
             className="grid size-8 shrink-0 place-items-center rounded-full bg-primary-40 text-[12px] font-semibold text-white"
-            title={CURRENT_USER.name}
+            title={currentUser.name}
           >
-            {CURRENT_USER.name.charAt(0)}
+            {currentUser.name.charAt(0).toUpperCase()}
           </span>
           <span className="min-w-0 flex-1 group-data-[collapsible=icon]/sidebar:hidden">
-            <span className="block truncate text-[13px] font-medium text-ink">{CURRENT_USER.name}</span>
-            <span className="block truncate text-[11px] text-muted">{CURRENT_USER.email}</span>
+            <span className="block truncate text-[13px] font-medium text-ink">{currentUser.name}</span>
+            <span className="block truncate text-[11px] text-muted">{currentUser.email}</span>
           </span>
-          <Link
-            href="/masuk"
+          <button
+            type="button"
+            onClick={async () => {
+              await signOutUser();
+              router.push('/masuk');
+            }}
             title="Keluar"
             aria-label="Keluar"
             className="rounded-md p-1.5 text-muted transition-colors hover:bg-friction-10 hover:text-friction group-data-[collapsible=icon]/sidebar:hidden"
           >
             <LogOutIcon size={15} />
-          </Link>
+          </button>
         </div>
       </SidebarFooter>
     </Sidebar>

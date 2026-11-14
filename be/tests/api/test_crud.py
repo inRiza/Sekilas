@@ -32,6 +32,14 @@ def client() -> Iterator[TestClient]:
     app.dependency_overrides.clear()
 
 
+def test_auth_me_endpoint(client: TestClient) -> None:
+    res = client.get("/api/v1/auth/me", headers={"X-User-Id": "usr_test_auth"})
+    assert res.status_code == 200
+    data = res.json()
+    assert data["id"] == "usr_test_auth"
+    assert data["daily_run_quota"] == 10
+
+
 def test_business_and_analysis_crud_flow(client: TestClient) -> None:
     # 1. Create a business
     res = client.post(

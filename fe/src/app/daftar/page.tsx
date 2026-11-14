@@ -1,11 +1,13 @@
 'use client';
 
-import React, { useState } from 'react';
+import { ArrowLeft } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { ArrowLeft } from 'lucide-react';
+import React, { useState } from 'react';
+
 import { SekilasLogo } from '@/components/brand/logo';
 import { SekilasMascot } from '@/components/brand/mascot';
+import { signUpWithEmailPassword } from '@/lib/auth/use-auth';
 
 const HIGHLIGHTS = [
   'Cukup rekam trotoar depan hingga kasir, sekali saja',
@@ -21,14 +23,37 @@ export default function RegisterPage() {
   const [password, setPassword] = useState('');
   const [agreed, setAgreed] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [confirmationSent, setConfirmationSent] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!agreed) return;
+    setErrorMessage(null);
     setIsLoading(true);
-    setTimeout(() => {
+    try {
+      const { needsEmailConfirmation, error } = await signUpWithEmailPassword({
+        name,
+        businessName,
+        email,
+        password,
+      });
+
+      if (error) {
+        setErrorMessage(error);
+        return;
+      }
+
+      if (needsEmailConfirmation) {
+        setConfirmationSent(true);
+        return;
+      }
+
       router.push('/businesses?baru=1');
-    }, 450);
+      router.refresh();
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (
@@ -58,90 +83,115 @@ export default function RegisterPage() {
             Simulasikan perilaku pelanggan di ruang fisik usaha Anda.
           </p>
 
-          <form onSubmit={handleSubmit} className="mt-7 space-y-4">
-            <div>
-              <label htmlFor="name" className="mb-1.5 block text-[13px] font-medium text-ink-soft">
-                Nama lengkap
-              </label>
-              <input
-                id="name"
-                type="text"
-                required
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="Budi Pratama"
-                className="h-11 w-full rounded-md border border-line bg-white px-3 text-sm text-ink shadow-xs transition placeholder:text-subtle focus:border-primary-40 focus:outline-none"
-              />
-            </div>
-
-            <div>
-              <label htmlFor="business" className="mb-1.5 block text-[13px] font-medium text-ink-soft">
-                Nama usaha
-              </label>
-              <input
-                id="business"
-                type="text"
-                required
-                value={businessName}
-                onChange={(e) => setBusinessName(e.target.value)}
-                placeholder="Kopi Sejahtera, Toko Berkah..."
-                className="h-11 w-full rounded-md border border-line bg-white px-3 text-sm text-ink shadow-xs transition placeholder:text-subtle focus:border-primary-40 focus:outline-none"
-              />
-            </div>
-
-            <div>
-              <label htmlFor="email" className="mb-1.5 block text-[13px] font-medium text-ink-soft">
-                Email kerja
-              </label>
-              <input
-                id="email"
-                type="email"
-                required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="nama@usaha.com"
-                className="h-11 w-full rounded-md border border-line bg-white px-3 text-sm text-ink shadow-xs transition placeholder:text-subtle focus:border-primary-40 focus:outline-none"
-              />
-            </div>
-
-            <div>
-              <label htmlFor="password" className="mb-1.5 block text-[13px] font-medium text-ink-soft">
-                Kata sandi
-              </label>
-              <input
-                id="password"
-                type="password"
-                required
-                minLength={8}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="Minimal 8 karakter"
-                className="h-11 w-full rounded-md border border-line bg-white px-3 text-sm text-ink shadow-xs transition placeholder:text-subtle focus:border-primary-40 focus:outline-none"
-              />
-            </div>
-
-            <div className="flex items-start gap-2.5 pt-1">
-              <input
-                type="checkbox"
-                id="terms"
-                checked={agreed}
-                onChange={(e) => setAgreed(e.target.checked)}
-                className="mt-0.5 size-4 cursor-pointer rounded accent-primary-40"
-              />
-              <label htmlFor="terms" className="cursor-pointer text-xs leading-5 text-muted">
-                Saya menyetujui Syarat & Ketentuan serta Kebijakan Privasi Sekilas (termasuk pemburaman otomatis wajah
-                & plat nomor).
-              </label>
-            </div>
-
-            <button
-              type="submit"
-              disabled={isLoading || !agreed}
-              className="btn-primary flex h-11 w-full items-center justify-center rounded-md text-sm font-medium text-white shadow-xs transition disabled:opacity-70"
+          {errorMessage && (
+            <div
+              role="alert"
+              className="mt-5 rounded-md border border-friction/30 bg-friction-10 px-3.5 py-2.5 text-xs leading-relaxed text-friction"
             >
-              {isLoading ? 'Menyiapkan akun...' : 'Buat Akun'}
-            </button>
-          </form>
+              {errorMessage}
+            </div>
+          )}
+
+          {confirmationSent ? (
+            <div className="mt-7 space-y-4 rounded-xl border border-line bg-panel p-5">
+              <p className="text-sm font-medium text-ink">Periksa kotak masuk email Anda</p>
+              <p className="text-xs leading-relaxed text-muted">
+                Kami telah mengirimkan tautan konfirmasi ke <span className="font-medium text-ink">{email}</span>.
+                Klik tautan tersebut untuk mengaktifkan akun dan langsung membuka daftar tempat usaha Anda.
+              </p>
+              <Link
+                href="/masuk"
+                className="btn-primary inline-flex h-10 w-full items-center justify-center rounded-md text-xs font-medium text-white"
+              >
+                Lanjut ke Halaman Masuk
+              </Link>
+            </div>
+          ) : (
+            <form onSubmit={handleSubmit} className="mt-7 space-y-4">
+              <div>
+                <label htmlFor="name" className="mb-1.5 block text-[13px] font-medium text-ink-soft">
+                  Nama lengkap
+                </label>
+                <input
+                  id="name"
+                  type="text"
+                  required
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="Budi Pratama"
+                  className="h-11 w-full rounded-md border border-line bg-white px-3 text-sm text-ink shadow-xs transition placeholder:text-subtle focus:border-primary-40 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label htmlFor="business" className="mb-1.5 block text-[13px] font-medium text-ink-soft">
+                  Nama usaha
+                </label>
+                <input
+                  id="business"
+                  type="text"
+                  required
+                  value={businessName}
+                  onChange={(e) => setBusinessName(e.target.value)}
+                  placeholder="Kopi Sejahtera, Toko Berkah..."
+                  className="h-11 w-full rounded-md border border-line bg-white px-3 text-sm text-ink shadow-xs transition placeholder:text-subtle focus:border-primary-40 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label htmlFor="email" className="mb-1.5 block text-[13px] font-medium text-ink-soft">
+                  Email kerja
+                </label>
+                <input
+                  id="email"
+                  type="email"
+                  required
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="nama@usaha.com"
+                  className="h-11 w-full rounded-md border border-line bg-white px-3 text-sm text-ink shadow-xs transition placeholder:text-subtle focus:border-primary-40 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label htmlFor="password" className="mb-1.5 block text-[13px] font-medium text-ink-soft">
+                  Kata sandi
+                </label>
+                <input
+                  id="password"
+                  type="password"
+                  required
+                  minLength={8}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="Minimal 8 karakter"
+                  className="h-11 w-full rounded-md border border-line bg-white px-3 text-sm text-ink shadow-xs transition placeholder:text-subtle focus:border-primary-40 focus:outline-none"
+                />
+              </div>
+
+              <div className="flex items-start gap-2.5 pt-1">
+                <input
+                  type="checkbox"
+                  id="terms"
+                  checked={agreed}
+                  onChange={(e) => setAgreed(e.target.checked)}
+                  className="mt-0.5 size-4 cursor-pointer rounded accent-primary-40"
+                />
+                <label htmlFor="terms" className="cursor-pointer text-xs leading-5 text-muted">
+                  Saya menyetujui Syarat & Ketentuan serta Kebijakan Privasi Sekilas (termasuk pemburaman otomatis wajah
+                  & plat nomor).
+                </label>
+              </div>
+
+              <button
+                type="submit"
+                disabled={isLoading || !agreed}
+                className="btn-primary flex h-11 w-full items-center justify-center rounded-md text-sm font-medium text-white shadow-xs transition disabled:opacity-70"
+              >
+                {isLoading ? 'Menyiapkan akun...' : 'Buat Akun'}
+              </button>
+            </form>
+          )}
 
           <p className="mt-8 text-center text-[13px] text-muted">
             Sudah punya akun?{' '}

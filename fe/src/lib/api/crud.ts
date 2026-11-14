@@ -1,6 +1,7 @@
 import { MOCK_ANALYSES } from '@/lib/mock/analyses';
 import { MOCK_BUSINESSES } from '@/lib/mock/business';
 import { MOCK_CONTEXT } from '@/lib/mock/context';
+import { createClient } from '@/lib/supabase/client';
 import type { Analysis, Business, BusinessContext, BusinessType, PriceLevel } from '@/types/api';
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000').replace(/\/$/, '') + '/api/v1';
@@ -129,10 +130,19 @@ function setLocalContext(analysisId: string, ctx: BusinessContext) {
 
 async function tryApiFetch<T>(path: string, init?: RequestInit): Promise<T | null> {
   try {
+    let authHeader: Record<string, string> = {};
+    if (typeof window !== 'undefined') {
+      const supabase = createClient();
+      const { data } = await supabase.auth.getSession();
+      if (data.session?.access_token) {
+        authHeader = { Authorization: `Bearer ${data.session.access_token}` };
+      }
+    }
     const res = await fetch(`${API_BASE}${path}`, {
       ...init,
       headers: {
         'Content-Type': 'application/json',
+        ...authHeader,
         ...(init?.headers ?? {}),
       },
     });
