@@ -392,3 +392,75 @@ def test_dashboard_aligns_main_cause_detail_and_dynamic_key_insights(client: Tes
     # Insight 03 tidak boleh hardcoded type="positive" saat 0/4 agen memesan di kasir
     assert dash["key_insights"][2]["type"] == "friction"
     assert "Kasir" in dash["key_insights"][0]["title"] or "Dalam" in dash["key_insights"][0]["title"]
+
+
+def test_dynamic_waypoints_stage_counts_and_measurement_plan_targets(client: TestClient) -> None:
+    biz_res = client.post(
+        "/api/v1/businesses",
+        json={"name": "Kopi Lantai Satu", "branch_name": "Cabang A", "category": "kedai"},
+    )
+    assert biz_res.status_code == 201
+    anl_res = client.post(
+        f"/api/v1/businesses/{biz_res.json()['id']}/analyses",
+        json={"name": "Uji P2"},
+    )
+    assert anl_res.status_code == 201
+    anl_id = anl_res.json()["id"]
+
+    # Hanya buat segmen 'jalan' & 'dalam' (tanpa segmen 'pintu'/tangga)
+    assert (
+        client.post(
+            f"/api/v1/analyses/{anl_id}/transcript/segments",
+            json={
+                "timestamp_start": 0.0,
+                "timestamp_end": 12.0,
+                "vantage": "jalan",
+                "narrative": "Trotoar depan kedai.",
+                "not_visible": "Papan nama belum terlihat.",
+            },
+        ).status_code
+        == 201
+    )
+    assert (
+        client.post(
+            f"/api/v1/analyses/{anl_id}/transcript/segments",
+            json={
+                "timestamp_start": 12.0,
+                "timestamp_end": 25.0,
+                "vantage": "dalam",
+                "narrative": "Masuk ke meja kasir di lantai dasar.",
+                "not_visible": "Menu dan harga belum terlihat.",
+            },
+        ).status_code
+        == 201
+    )
+
+    # Panggil measurement-plan sebelum simulasi -> terbuat versi awal
+    mp_before = client.get(f"/api/v1/analyses/{anl_id}/measurement-plan")
+    assert mp_before.status_code == 200
+
+    # Jalankan simulasi mock (20 agen) lalu periksa dashboard + refresh measurement-plan
+    assert client.post(f"/api/v1/analyses/{anl_id}/simulation", json={"n_agents": 20, "seed": 42}).status_code == 202
+    dash = client.get(f"/api/v1/analyses/{anl_id}/dashboard?require_existing=true").json()
+
+    # 1. Waypoints hanya memuat 'jalan' & 'kasir' (tidak mengarang 'tangga')
+    wp_ids = [w["id"] for w in dash["waypoints"]]
+    assert wp_ids == ["jalan", "kasir"]
+    assert "tangga" not in wp_ids
+
+    # 2. WhatIfStageComparisonOut mengirim baseline_count & projected_count integer langsung
+    stages = dash["what_if_projection"]["stages_comparison"]
+    assert len(stages) == 4
+    for s in stages:
+        assert isinstance(s["baseline_count"], int)
+        assert isinstance(s["projected_count"], int)
+    assert stages[-1]["baseline_count"] == dash["what_if_projection"]["buyers_baseline"]
+    assert stages[-1]["projected_count"] == dash["what_if_projection"]["buyers_projected"]
+
+    # 3. MeasurementPlan tersinkron dengan target pasca-perbaikan (tidak terkunci statis 20, 14, 9, 7)
+    mp_after = client.get(f"/api/v1/analyses/{anl_id}/measurement-plan").json()
+    targets = [m["target_count"] for m in mp_after["metrics"]]
+    assert len(targets) == 4
+    assert targets[0] >= targets[1] >= targets[2] >= targets[3]
+    assert targets[0] == 20
+    assert targets[3] == dash["what_if_projection"]["buyers_projected"]

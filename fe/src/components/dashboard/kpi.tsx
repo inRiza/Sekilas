@@ -63,6 +63,13 @@ export function KpiCard({
   );
 }
 
+/** Ambang kebocoran tinggi dibedakan per tahap corong karena wajarnya tingkat lewat jalan berbeda dengan batal di kasir. */
+const STAGE_HIGH_FRICTION_PCT: Record<string, number> = {
+  Melihat: 60,
+  Berhenti: 35,
+  Masuk: 25,
+};
+
 /** Penurunan terbesar: kerangka sama dengan KPI lain; lokasi dan penjelasan di kotak bawah. */
 export function HeroCard({
   value,
@@ -77,9 +84,17 @@ export function HeroCard({
   location: string;
   description: string;
 }) {
-  // ponytail: ambang 30% adalah tebakan kasar; angka yang tak terbaca dianggap parah.
   const rate = parseFloat(value.replace(',', '.'));
-  const negative = !(rate < 30);
+  const threshold = STAGE_HIGH_FRICTION_PCT[from] ?? 35;
+  const isHigh = !Number.isFinite(rate) || rate >= threshold;
+  const isZero = Number.isFinite(rate) && rate <= 0;
+  const tone: keyof typeof KPI_TONE = isZero ? 'impact' : isHigh ? 'friction' : 'neutral';
+  const badgeText = isZero ? 'Tidak ada bocor' : isHigh ? 'Bocor tinggi' : 'Perlu dicermati';
+  const badgeClass = isZero
+    ? 'bg-impact-10 text-impact'
+    : isHigh
+      ? 'bg-friction-10 text-friction'
+      : 'bg-soft text-ink-soft';
 
   return (
     <KpiCard
@@ -87,15 +102,11 @@ export function HeroCard({
       info={description}
       value={value}
       sub={`Agen batal antara tahap ${from} ke ${to}`}
-      icon={negative ? ArrowDownRight : ArrowUpRight}
-      tone={negative ? 'friction' : 'impact'}
+      icon={isZero ? ArrowUpRight : ArrowDownRight}
+      tone={tone}
       badge={
-        <span
-          className={`shrink-0 rounded-md px-2 py-0.5 text-[11px] font-semibold ${
-            negative ? 'bg-friction-10 text-friction' : 'bg-impact-10 text-impact'
-          }`}
-        >
-          {negative ? 'Perlu perhatian' : 'Terkendali'}
+        <span className={`shrink-0 rounded-md px-2 py-0.5 text-[11px] font-semibold ${badgeClass}`}>
+          {badgeText}
         </span>
       }
     >
