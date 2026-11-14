@@ -90,6 +90,14 @@ flowchart LR
 
 ## Dokumentasi Penggunaan AI
 
+### A. AI Agentic Assistant dalam Proses Pengembangan
+Selama pengembangan proyek ini, tim menggunakan **AI coding assistant berbasis agent** (**Google Antigravity**) sebagai alat bantu pengembangan dengan pengawasan dan verifikasi penuh dari tim pengembang:
+- **Perancangan & Audit Teknis:** membantu meninjau arsitektur, keamanan akses media (migrasi bucket privat `videos` + Signed URL + RLS Supabase Storage), serta merancang checklist perbaikan bertahap.
+- **Implementasi & Refaktor Kode:** membantu penulisan dan pembaruan kode pada backend FastAPI (`be/`), komponen antarmuka Next.js (`fe/`), migrasi SQL (`supabase/migrations/`), serta skrip pipeline Visual Twin 3D (`twin/scripts/local_twin.sh`).
+- **Pengujian, Debugging & Dokumentasi:** membantu penulisan test (`pytest` & `vitest`), penelusuran error runtime/deployment/CI, verifikasi linter & build (`ruff`, `tsc`, `eslint`, `next build`), serta penyusunan dokumentasi `README.md`.
+- **Kontrol & Validasi Manusia:** seluruh rancangan fitur, keputusan arsitektur, kredensial, pengujian fungsional end-to-end di aplikasi, serta review akhir kode dan commit tetap dilakukan dan divalidasi langsung oleh anggota tim.
+
+### B. Komponen AI di Dalam Aplikasi Web
 1. **Ekstraksi Transkrip Video (VLM):** menggunakan model multimodal Gemini (`gemini-3.8-flash` dengan fallback `gemini-3.6-flash`, `gemini-3.5-flash`) untuk membaca frame video dan mengidentifikasi segmen perjalanan pelanggan, timestamp checkpoint, serta isu visual fisik toko.
 2. **Simulasi Multi-Agent LLM:** memodelkan populasi agen virtual (default `500` agen dengan seed deterministik, atau `LLM_MODE=mock` untuk pengujian tanpa panggilan API eksternal) yang mengevaluasi tiap segmen toko dan menghasilkan alasan *drop-off* serta proyeksi dampak perbaikan (Mode 2).
 3. **Deteksi Wajah / Privacy Blur (Edge AI di Browser):** menggunakan `@mediapipe/tasks-vision` untuk menyamarkan wajah pengunjung/staf secara lokal sebelum file meninggalkan perangkat pengguna.
