@@ -917,10 +917,12 @@ export async function runWhatIfProjection(
   analysisId: string,
   checkedRecommendationIds: string[],
   mode: 'estimasi_cepat' | 'terverifikasi_simulasi' = 'estimasi_cepat',
+  signal?: AbortSignal,
 ): Promise<WhatIfProjectionData> {
   const authHeader = await getAuthHeaders();
   const res = await fetch(`${API_BASE}/analyses/${analysisId}/dashboard/what-if`, {
     method: 'POST',
+    signal,
     headers: {
       'Content-Type': 'application/json',
       ...authHeader,

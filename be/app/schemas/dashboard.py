@@ -96,6 +96,9 @@ class ParetoRecommendationOut(BaseModel):
     effort: str  # Rendah | Sedang | Tinggi
     estimated_lift_range: str
     location_zone: str
+    cost_rp: int | None = None
+    segment_ids: list[str] = []
+    affected_agents_count: int = 0
 
 
 class VisualTwinMetaOut(BaseModel):
