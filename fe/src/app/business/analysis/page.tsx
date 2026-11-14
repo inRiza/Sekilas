@@ -196,12 +196,9 @@ function DashboardResultInner() {
           <div>
             <div className="mb-2 flex flex-wrap items-center gap-2">
               <span className="text-[13px] text-muted">Hasil analisis video</span>
-              {durationSeconds > 0 && (
-                <Badge variant="primary">{`${durationSeconds} detik rekaman`}</Badge>
-              )}
             </div>
-            <h1 className="text-[28px] font-semibold tracking-[-0.035em] text-ink sm:text-[34px]">
-              Dasbor <span className="text-primary-40">{data.business_name}</span>
+            <h1 className="text-2xl font-normal tracking-[-0.03em] text-ink sm:text-[28px]">
+              Dasbor {data.business_name}
             </h1>
             <p className="mt-1 text-[13px] text-muted">
               Titik gesekan dan peluang konversi dari jalan hingga titik pesan.
@@ -212,14 +209,14 @@ function DashboardResultInner() {
             {data.is_stale && (
               <Link
                 href={`/business/analysis/simulasi${querySuffix}`}
-                className="inline-flex h-10 items-center rounded-full border border-friction/40 bg-friction-10 px-4 text-xs font-medium text-friction transition hover:bg-friction-10/80"
+                className="inline-flex h-10 items-center rounded-md border border-friction/40 bg-friction-10 px-4 text-xs font-medium text-friction transition hover:bg-friction-10/80"
               >
                 Data berubah • Jalankan ulang
               </Link>
             )}
             <Link
               href={`/business/analysis/agents${querySuffix}`}
-              className="inline-flex h-10 items-center rounded-full bg-white px-4 text-xs font-medium text-ink shadow-[0_1px_2px_rgba(16,24,40,0.06)] ring-1 ring-line/70 transition hover:bg-panel"
+              className="inline-flex h-10 items-center rounded-md bg-white px-4 text-xs font-medium text-ink shadow-[0_1px_2px_rgba(16,24,40,0.06)] ring-1 ring-line/70 transition hover:bg-panel"
             >
               Jelajah agen
             </Link>
@@ -236,7 +233,7 @@ function DashboardResultInner() {
                   setWhatIfError(err instanceof Error ? err.message : 'Gagal membuat analisis baru.');
                 }
               }}
-              className="btn-primary inline-flex h-10 items-center gap-1.5 rounded-full px-4 text-xs font-medium text-white shadow-[0_4px_12px_rgba(52,102,229,0.3)]"
+              className="btn-primary inline-flex h-10 items-center gap-1.5 rounded-md px-4 text-xs font-medium text-white shadow-[0_4px_12px_rgba(52,102,229,0.3)]"
             >
               <Plus size={15} /> Analisis baru (transkrip sama)
             </button>
@@ -387,7 +384,7 @@ function DashboardResultInner() {
                 type="button"
                 disabled={isSimulating || checkedFixesCount === 0}
                 onClick={handleRunWhatIf}
-                className="btn-primary flex h-10 w-full items-center justify-center rounded-full px-5 text-[13px] font-medium text-white transition disabled:opacity-50"
+                className="btn-primary flex h-10 w-full items-center justify-center rounded-md px-5 text-[13px] font-medium text-white transition disabled:opacity-50"
               >
                 {isSimulating ? 'Menjalankan Simulasi Ulang...' : 'Jalankan simulasi ulang'}
               </button>

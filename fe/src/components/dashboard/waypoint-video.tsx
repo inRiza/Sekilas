@@ -79,7 +79,7 @@ export function WaypointVideo({
             key={wp.id}
             type="button"
             onClick={() => jump(wp)}
-            className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-left ring-1 transition ${
+            className={`flex items-center gap-3 rounded-md px-3 py-2.5 text-left ring-1 transition ${
               active === wp.id
                 ? 'bg-primary-10/60 ring-2 ring-primary-40'
                 : wp.is_hotspot
