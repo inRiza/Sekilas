@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from dataclasses import dataclass, field
 
 from sqlalchemy import Engine, delete, select
@@ -23,6 +24,9 @@ STAGE_QUEUED = "Menunggu antrean"
 STAGE_READING = "AI membaca frame video"
 STAGE_DONE = "Transkrip VLM selesai diekstrak"
 STAGE_FAILED = "Transkrip gagal dibaca"
+
+# Gemini sering membalas 503 (kelebihan beban) sesaat; coba ulang dengan jeda sebelum menyerah.
+RETRY_DELAYS_S = (8.0, 20.0, 45.0)
 
 
 @dataclass
@@ -66,12 +70,16 @@ def run_transcript_job(engine: Engine, args: TranscriptJobArgs) -> None:
             if analysis is None:
                 raise LookupError("Analisis sudah dihapus.")
 
-            segments, checkpoints = extract_transcript_with_gemini(
-                analysis=analysis,
-                duration_s=args.duration_s,
-                cashier_at_s=args.cashier_at_s,
-                frame_keys=args.frame_keys,
-                timestamps_s=args.timestamps_s,
+            segments, checkpoints = _extract_with_retry(
+                sessions,
+                args,
+                lambda: extract_transcript_with_gemini(
+                    analysis=analysis,
+                    duration_s=args.duration_s,
+                    cashier_at_s=args.cashier_at_s,
+                    frame_keys=args.frame_keys,
+                    timestamps_s=args.timestamps_s,
+                ),
             )
             s.execute(
                 delete(TranscriptCheckpoint).where(TranscriptCheckpoint.analysis_id == analysis.id)
@@ -86,7 +94,43 @@ def run_transcript_job(engine: Engine, args: TranscriptJobArgs) -> None:
             s.commit()
     except Exception as exc:  # job tidak boleh membuat thread mati diam-diam
         log.exception("transcript job %s gagal", args.job_id)
+        # Segmen lama milik video sebelumnya tidak boleh ikut diverifikasi/disimulasikan.
+        with sessions() as s:
+            s.execute(
+                delete(TranscriptCheckpoint).where(
+                    TranscriptCheckpoint.analysis_id == args.analysis_id
+                )
+            )
+            s.execute(
+                delete(TranscriptSegment).where(TranscriptSegment.analysis_id == args.analysis_id)
+            )
+            s.commit()
         _set(sessions, args.job_id, status="gagal", stage=STAGE_FAILED, message=str(exc)[:500])
+
+
+def _extract_with_retry(sessions: sessionmaker[Session], args: TranscriptJobArgs, extract):  # type: ignore[no-untyped-def]
+    """Jalankan ekstraksi; ulangi bila model sedang tidak tersedia (503/429)."""
+    from app.services.llm.router import LLMUnavailableError
+
+    for attempt, delay in enumerate((*RETRY_DELAYS_S, None), start=1):
+        try:
+            return extract()
+        except LLMUnavailableError as exc:
+            if delay is None or exc.status_code not in (429, 500, 502, 503, 504):
+                raise
+            log.warning(
+                "transcript job %s: model sibuk (percobaan %d), ulang %ss",
+                args.job_id,
+                attempt,
+                delay,
+            )
+            _set(
+                sessions,
+                args.job_id,
+                stage=f"AI sedang sibuk, mencoba lagi ({attempt}/{len(RETRY_DELAYS_S)})",
+            )
+            time.sleep(delay)
+    raise RuntimeError("unreachable")
 
 
 def start_transcript_job(session: Session, args: TranscriptJobArgs) -> None:
