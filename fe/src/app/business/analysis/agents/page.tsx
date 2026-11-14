@@ -86,7 +86,11 @@ function AgentItem({ agent, open, onToggle }: { agent: AgentDecision; open: bool
             <p className="mb-2 text-[12px] font-medium text-muted">Alasan keputusan</p>
             <p className="text-[13px] leading-relaxed text-ink">{agent.deciding_factor}</p>
             <div className="mt-3 flex flex-wrap gap-1.5">
-              <Badge>{`Keraguan ${agent.hesitation_score} dari 5`}</Badge>
+              {agent.attributions?.slice(0, 2).map((attr) => (
+                <Badge key={attr.cue_code}>
+                  {`${attr.cue_code} (${attr.direction} · ${attr.relevance_score}/3)`}
+                </Badge>
+              ))}
               <Badge variant="primary">
                 {agent.stopped_at_segment_id ? `Berhenti di segmen ${agent.stopped_at_segment_id.replace('seg_', '')}` : 'Sampai kasir'}
               </Badge>

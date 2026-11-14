@@ -42,6 +42,7 @@ export interface VideoMetadata {
   blurred_faces_count?: number;
   blurred_plates_count?: number;
   frame_keys?: string[];
+  frame_timestamps_s?: number[];
 }
 
 export interface CreateBusinessPayload {
@@ -680,7 +681,7 @@ export async function uploadKeyframesToStorage(
     try {
       const res = await fetch(dataUrl);
       const blob = await res.blob();
-      const key = `${analysisId}/frames/${versionTag}_frame_0${i + 1}.jpg`;
+      const key = `${analysisId}/frames/${versionTag}_frame_${String(i + 1).padStart(2, '0')}.jpg`;
       const { error } = await supabase.storage.from('videos').upload(key, blob, {
         cacheControl: '3600',
         upsert: true,
@@ -716,6 +717,7 @@ export async function completeVideoUpload(
       blurred_faces_count: saved.blurred_faces_count,
       blurred_plates_count: saved.blurred_plates_count,
       frame_keys: payload.frame_keys,
+      frame_timestamps_s: payload.frame_timestamps_s,
     }),
   });
   return saved;
@@ -858,10 +860,11 @@ export async function fetchDashboardData(analysisId?: string | null): Promise<Da
 export async function runWhatIfProjection(
   analysisId: string,
   checkedRecommendationIds: string[],
+  mode: 'estimasi_cepat' | 'terverifikasi_simulasi' = 'estimasi_cepat',
 ): Promise<WhatIfProjectionData | null> {
   return await tryApiFetch<WhatIfProjectionData>(`/analyses/${analysisId}/dashboard/what-if`, {
     method: 'POST',
-    body: JSON.stringify({ checked_recommendation_ids: checkedRecommendationIds }),
+    body: JSON.stringify({ checked_recommendation_ids: checkedRecommendationIds, mode }),
   });
 }
 

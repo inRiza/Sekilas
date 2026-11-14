@@ -141,6 +141,19 @@ export type FinalDecision =
   | 'masuk_tanpa_memesan'
   | 'memesan';
 
+export interface CueAttribution {
+  cue_code: string;
+  direction: 'menghambat' | 'mendorong' | 'netral';
+  relevance_score: number; // 0..3
+  evidence: string;
+}
+
+export interface AgentSegmentTrace {
+  segment_id: string;
+  monologue: string;
+  action: 'lanjut' | 'berhenti';
+}
+
 export interface AgentDecision {
   agent_id: number;
   persona: PersonaSpec;
@@ -149,7 +162,8 @@ export interface AgentDecision {
   stopped_at_segment_id: string | null;
   deciding_factor: string;
   factor_segment_ids: string[];
-  hesitation_score: number; // 1-5
+  segment_traces?: AgentSegmentTrace[];
+  attributions?: CueAttribution[];
 }
 
 // ---------------- F6. Agregasi & Dasbor ----------------
@@ -217,6 +231,9 @@ export interface WhatIfProjectionData {
     delta_label: string;
   }>;
   model_conclusion: string;
+  mode?: 'estimasi_cepat' | 'terverifikasi_simulasi';
+  low_accuracy_early_edit?: boolean;
+  accuracy_note?: string | null;
 }
 
 export interface DashboardData {
