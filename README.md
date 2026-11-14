@@ -3,7 +3,7 @@
 > **Kategori:** Aplikasi Web (*Web Application*)
 > **Nama Aplikasi:** Sekilas
 
-Simulator calon pelanggan berbasis *Multi-Agent LLM* dan *Visual Twin 3D* untuk membantu UMKM kuliner memetakan titik gesekan (*friction points*) fisik toko dari satu rekaman video ponsel. Spesifikasi lengkap: [context/PRD.md](context/PRD.md) (v1.4) & [context/design.md](context/design.md).
+Simulator calon pelanggan berbasis *Multi-Agent LLM* dan *Visual Twin 3D* untuk membantu UMKM kuliner memetakan titik gesekan (*friction points*) fisik toko dari satu rekaman video ponsel.
 
 ---
 
