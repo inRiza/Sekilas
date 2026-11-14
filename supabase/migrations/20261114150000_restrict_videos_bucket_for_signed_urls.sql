@@ -33,6 +33,11 @@ DROP POLICY IF EXISTS "Authenticated and anon users can update videos bucket" ON
 
 -- 4. Kebijakan RLS berbasis kepemilikan analisis untuk pengguna `authenticated`
 -- Format object key: `<analysis_id>/<filename>` atau `<analysis_id>/frames/<filename>`
+DROP POLICY IF EXISTS "Analysis owners can read own private videos" ON storage.objects;
+DROP POLICY IF EXISTS "Analysis owners can upload own private videos" ON storage.objects;
+DROP POLICY IF EXISTS "Analysis owners can update own private videos" ON storage.objects;
+DROP POLICY IF EXISTS "Analysis owners can delete own private videos" ON storage.objects;
+
 CREATE POLICY "Analysis owners can read own private videos"
 ON storage.objects FOR SELECT
 TO authenticated
@@ -42,7 +47,7 @@ USING (
         SELECT 1
         FROM public.analyses a
         JOIN public.businesses b ON b.id = a.business_id
-        WHERE a.id = (storage.foldername(name))[1]
+        WHERE a.id = (storage.foldername(storage.objects.name))[1]
           AND b.user_id = (select auth.uid())::text
     )
 );
@@ -56,7 +61,7 @@ WITH CHECK (
         SELECT 1
         FROM public.analyses a
         JOIN public.businesses b ON b.id = a.business_id
-        WHERE a.id = (storage.foldername(name))[1]
+        WHERE a.id = (storage.foldername(storage.objects.name))[1]
           AND b.user_id = (select auth.uid())::text
     )
 );
@@ -70,7 +75,7 @@ USING (
         SELECT 1
         FROM public.analyses a
         JOIN public.businesses b ON b.id = a.business_id
-        WHERE a.id = (storage.foldername(name))[1]
+        WHERE a.id = (storage.foldername(storage.objects.name))[1]
           AND b.user_id = (select auth.uid())::text
     )
 )
@@ -80,7 +85,7 @@ WITH CHECK (
         SELECT 1
         FROM public.analyses a
         JOIN public.businesses b ON b.id = a.business_id
-        WHERE a.id = (storage.foldername(name))[1]
+        WHERE a.id = (storage.foldername(storage.objects.name))[1]
           AND b.user_id = (select auth.uid())::text
     )
 );
@@ -94,7 +99,7 @@ USING (
         SELECT 1
         FROM public.analyses a
         JOIN public.businesses b ON b.id = a.business_id
-        WHERE a.id = (storage.foldername(name))[1]
+        WHERE a.id = (storage.foldername(storage.objects.name))[1]
           AND b.user_id = (select auth.uid())::text
     )
 );

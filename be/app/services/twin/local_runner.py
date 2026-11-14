@@ -147,7 +147,7 @@ def _update_job(job_id: str, **fields: object) -> None:
 
 
 def upload_to_storage(name: str) -> str | None:
-    """Unggah hasil 3D (<name>.json/.path.json/.ply/.splat) ke bucket `videos` di `twins/<name>/`.
+    """Unggah hasil 3D (<name>.json/.path.json/.ply/.splat) ke bucket `twins` di `twins/<name>/`.
 
     Mengembalikan URL publik folder itu, atau None bila Supabase tidak terjangkau (aset lalu
     dilayani lokal dari /samples). Berkas JSON ikut diunggah agar viewer bisa membaca arah atas
@@ -155,12 +155,13 @@ def upload_to_storage(name: str) -> str | None:
     """
     settings = get_settings()
     base = settings.supabase_url.rstrip("/")
-    if not base or not settings.supabase_publishable_key:
+    token = settings.effective_supabase_secret_key or settings.supabase_publishable_key
+    if not base or not token:
         return None
     headers = {
-        "apikey": settings.supabase_publishable_key,
+        "apikey": token,
+        "Authorization": f"Bearer {token}",
         "x-upsert": "true",
-        # Bucket hanya menerima tipe video/gambar; berkas 3D dikirim sebagai biner.
         "content-type": "application/octet-stream",
     }
     folder = f"twins/{name}"
@@ -171,7 +172,7 @@ def upload_to_storage(name: str) -> str | None:
                 if not path.exists():
                     continue
                 res = client.post(
-                    f"{base}/storage/v1/object/videos/{folder}/{path.name}",
+                    f"{base}/storage/v1/object/twins/{folder}/{path.name}",
                     content=path.read_bytes(),
                     headers=headers,
                 )
@@ -179,7 +180,7 @@ def upload_to_storage(name: str) -> str | None:
     except httpx.HTTPError:
         log.exception("Gagal mengunggah aset 3D %s ke Supabase Storage", name)
         return None
-    return f"{base}/storage/v1/object/public/videos/{folder}"
+    return f"{base}/storage/v1/object/public/twins/{folder}"
 
 
 def publish_asset(session: Session, analysis_id: str, name: str) -> TwinAsset:

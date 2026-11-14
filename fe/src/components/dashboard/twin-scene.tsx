@@ -277,7 +277,10 @@ const NO_ROTATION: Orientation = { quaternion: new THREE.Quaternion(), up: new T
 // Berkas pendamping (<nama>.json, <nama>.path.json) ada di folder yang sama: /samples lokal
 // atau folder twins/<nama>/ di Supabase Storage.
 function siblingUrl(url: string, suffix: ".json" | ".path.json"): string | null {
-  const fromPipeline = url.startsWith("/samples/") || url.includes("/storage/v1/object/public/videos/twins/");
+  const fromPipeline =
+    url.startsWith("/samples/") ||
+    url.includes("/storage/v1/object/public/twins/") ||
+    url.includes("/storage/v1/object/public/videos/twins/");
   return fromPipeline ? url.replace(/\.(ply|splat)(\?.*)?$/, suffix) : null;
 }
 
