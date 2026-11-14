@@ -53,7 +53,7 @@ export function TwinViewer({
   const activeMode = MODES.find((m) => m.mode === active)!;
 
   return (
-    <div className="overflow-hidden rounded-md border border-line bg-white">
+    <div className="flex h-full flex-col overflow-hidden rounded-2xl border border-line/70 bg-white shadow-[0_1px_2px_rgba(16,24,40,0.04)]">
       {/* Kepala: judul, info, tab mode */}
       <div className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5">
         <div className="flex flex-wrap items-center gap-2">
@@ -92,7 +92,7 @@ export function TwinViewer({
       </div>
 
       {/* Kanvas */}
-      <div className="relative h-[420px] lg:h-[520px]">
+      <div className="relative h-[420px] flex-1 lg:h-auto lg:min-h-[420px]">
         <TwinScene
           source={source}
           onLoadError={() => setSource({ kind: "demo" })}

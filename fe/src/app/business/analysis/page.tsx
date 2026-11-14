@@ -3,10 +3,22 @@
 import React, { useEffect, useState, Suspense } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { LoaderCircle, TrendingDown, TrendingUp, TriangleAlert, Wallet, type LucideIcon } from 'lucide-react';
-import { InfoIcon, TrendingUpIcon } from '@/components/ui/icons';
+import {
+  CircleCheck,
+  Info,
+  LoaderCircle,
+  Plus,
+  TrendingDown,
+  TrendingUp,
+  TriangleAlert,
+  Wallet,
+} from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { TwinViewer } from '@/components/dashboard/twin-viewer';
+import { FunnelChart } from '@/components/dashboard/funnel-chart';
+import { CueRanking } from '@/components/dashboard/cue-ranking';
+import { Card, CardHeader } from '@/components/dashboard/card';
+import { AgentDots, CauseCard, HeroCard, KpiCard, ProjectionStat } from '@/components/dashboard/kpi';
 import {
   cloneAnalysisWithTranscript,
   fetchDashboardData,
@@ -15,83 +27,18 @@ import {
   subscribeCrudChanges,
 } from '@/lib/api/crud';
 import { MOCK_DASHBOARD, MOCK_WHAT_IF_PROJECTION, WhatIfFix } from '@/lib/mock/dashboard';
-import type { DashboardData, WaypointData, WhatIfProjectionData } from '@/types/api';
+import type { DashboardData, KeyInsight, WaypointData, WhatIfProjectionData } from '@/types/api';
 
-const KPI_TONE = {
-  impact: 'bg-impact-10 text-impact',
-  friction: 'bg-friction-10 text-friction',
-  neutral: 'bg-soft text-ink-soft',
-} as const;
-
-/** Metrik ringkas proyeksi: format sama dengan KPI (angka hitam, warna di ikon). */
-function ProjectionStat({
-  label,
-  value,
-  sub,
-  icon: Icon,
-  tone,
-}: {
-  label: string;
-  value: string;
-  sub: string;
-  icon: LucideIcon;
-  tone: keyof typeof KPI_TONE;
-}) {
-  return (
-    <div className="flex h-full flex-col rounded-lg border border-line bg-white p-3.5">
-      <div className="flex items-center gap-2">
-        <span className={`grid size-6 shrink-0 place-items-center rounded-md ${KPI_TONE[tone]}`}>
-          <Icon size={13} strokeWidth={2} />
-        </span>
-        <span className="truncate text-[12px] text-muted">{label}</span>
-      </div>
-      <span className="mt-3 text-[22px] font-semibold leading-none tracking-[-0.02em] text-ink tabular-nums">{value}</span>
-      <span className="mt-1.5 text-[12px] text-muted">{sub}</span>
-    </div>
-  );
+function insightIcon(type: KeyInsight['type']) {
+  if (type === 'positive') return <CircleCheck size={16} />;
+  if (type === 'friction') return <TriangleAlert size={16} />;
+  return <Info size={16} />;
 }
 
-/** Kartu KPI seragam: angka hitam dengan ukuran & ketebalan sama; warna hanya pada ikon. */
-function KpiCard({
-  label,
-  info,
-  value,
-  unit,
-  sub,
-  icon: Icon,
-  tone,
-}: {
-  label: string;
-  info: string;
-  value: string;
-  unit?: string;
-  sub: string;
-  icon: LucideIcon;
-  tone: keyof typeof KPI_TONE;
-}) {
-  return (
-    <div className="flex h-full flex-col rounded-xl border border-line bg-white p-4 sm:p-5">
-      <div className="flex items-center gap-2.5">
-        <span className={`grid size-8 shrink-0 place-items-center rounded-lg ${KPI_TONE[tone]}`}>
-          <Icon size={16} strokeWidth={2} />
-        </span>
-        <span className="min-w-0 flex-1 truncate text-[13px] text-muted">{label}</span>
-        <div className="group/tip relative cursor-help">
-          <InfoIcon size={15} className="text-subtle transition-colors hover:text-ink" />
-          <div className="pointer-events-none absolute right-0 top-5 z-30 hidden w-56 rounded-md bg-ink p-2.5 text-[11px] leading-relaxed text-white shadow-lg group-hover/tip:block">
-            {info}
-          </div>
-        </div>
-      </div>
-      <div className="mt-4 flex items-baseline gap-1.5">
-        <span className="truncate text-[26px] font-semibold leading-none tracking-[-0.02em] text-ink tabular-nums">
-          {value}
-        </span>
-        {unit && <span className="text-[13px] text-muted">{unit}</span>}
-      </div>
-      <p className="mt-2 text-[12px] leading-snug text-muted">{sub}</p>
-    </div>
-  );
+function insightTone(type: KeyInsight['type']) {
+  if (type === 'positive') return 'bg-impact-10 text-impact';
+  if (type === 'friction') return 'bg-friction-10 text-friction';
+  return 'bg-soft text-ink-soft';
 }
 
 function DashboardResultInner() {
@@ -199,7 +146,7 @@ function DashboardResultInner() {
   if (loadError) {
     return (
       <div className="flex min-h-full items-center justify-center bg-white px-4 py-16">
-        <div className="max-w-md rounded-xl border border-friction/40 bg-friction-10 p-6 text-center text-friction">
+        <div className="max-w-md rounded-2xl border border-friction/40 bg-friction-10 p-6 text-center text-friction">
           <p className="text-sm font-semibold">Gagal memuat dasbor analisis</p>
           <p className="mt-1 text-xs">{loadError}</p>
         </div>
@@ -216,7 +163,7 @@ function DashboardResultInner() {
           : 'Meranking Katalog Isyarat dan menyusun rekomendasi perbaikan...';
     return (
       <div className="flex min-h-full items-center justify-center bg-white px-4 py-16">
-        <div className="max-w-md rounded-xl border border-line bg-white p-6 text-center shadow-sm">
+        <div className="max-w-md rounded-2xl border border-line bg-white p-6 text-center shadow-sm">
           <div className="mx-auto flex size-10 items-center justify-center rounded-full bg-primary-10 text-primary-40">
             <LoaderCircle size={20} className="animate-spin" />
           </div>
@@ -230,6 +177,7 @@ function DashboardResultInner() {
 
   const checkedFixesCount = fixes.filter((f) => f.is_checked).length;
   const durationSeconds = Math.max(1, Math.round(data.twin_meta?.path_duration_seconds || 48));
+  const totalAgents = data.total_agents || 20;
   const waypoints: WaypointData[] =
     data.waypoints && data.waypoints.length > 0
       ? data.waypoints
@@ -240,33 +188,38 @@ function DashboardResultInner() {
         ];
 
   return (
-    <div className="flex min-h-full flex-col justify-between bg-white">
-      {/* Main Full-Width Page Container (Ujung Kiri ke Kanan) */}
-      <main className="flex-1 py-6 sm:py-8 w-full px-4 sm:px-8 lg:px-12 space-y-8">
-        {/* Top Header Title & Actions */}
-        <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 pb-3">
+    <div className="flex min-h-full flex-col bg-white">
+      <main className="w-full flex-1 space-y-6 px-4 py-6 sm:px-8 sm:py-8 lg:px-10">
+        {/* Judul & aksi */}
+        <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
           <div>
-            <div className="flex flex-wrap items-center gap-2 mb-2">
+            <div className="mb-2 flex flex-wrap items-center gap-2">
               <span className="text-[13px] text-muted">Hasil analisis video</span>
-              <Badge>{`${durationSeconds} detik rekaman`}</Badge>
+              <Badge variant="primary">{`${durationSeconds} detik rekaman`}</Badge>
             </div>
-            <h1 className="text-2xl sm:text-[32px] font-normal tracking-[-0.035em] text-ink">
-              Dasbor Titik Gesekan & Peluang Konversi
+            <h1 className="text-[28px] font-semibold tracking-[-0.035em] text-ink sm:text-[34px]">
+              Dasbor <span className="text-primary-40">{data.business_name}</span>
             </h1>
-            <p className="text-xs sm:text-[13px] text-muted mt-0.5">
-              Pemetaan jalur calon pelanggan dari jalan hingga titik pesan untuk {data.business_name}.
+            <p className="mt-1 text-[13px] text-muted">
+              Titik gesekan dan peluang konversi dari jalan hingga titik pesan.
             </p>
           </div>
 
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex flex-wrap items-center gap-2">
             {data.is_stale && (
               <Link
                 href={`/business/analysis/simulasi${querySuffix}`}
-                className="inline-flex h-9 items-center rounded-md border border-friction/40 bg-friction-10 px-3 text-xs font-medium text-friction hover:bg-friction-10/80 transition"
+                className="inline-flex h-10 items-center rounded-full border border-friction/40 bg-friction-10 px-4 text-xs font-medium text-friction transition hover:bg-friction-10/80"
               >
                 Data berubah • Jalankan ulang
               </Link>
             )}
+            <Link
+              href={`/business/analysis/agents${querySuffix}`}
+              className="inline-flex h-10 items-center rounded-full bg-white px-4 text-xs font-medium text-ink shadow-[0_1px_2px_rgba(16,24,40,0.06)] ring-1 ring-line/70 transition hover:bg-panel"
+            >
+              Jelajah agen
+            </Link>
             <button
               type="button"
               onClick={async () => {
@@ -280,46 +233,33 @@ function DashboardResultInner() {
                   setWhatIfError(err instanceof Error ? err.message : 'Gagal membuat analisis baru.');
                 }
               }}
-              className="inline-flex h-9 items-center rounded-md border border-line bg-white px-3.5 text-xs font-medium text-ink hover:bg-panel transition"
+              className="btn-primary inline-flex h-10 items-center gap-1.5 rounded-full px-4 text-xs font-medium text-white shadow-[0_4px_12px_rgba(52,102,229,0.3)]"
             >
-              Analisis baru (transkrip sama)
+              <Plus size={15} /> Analisis baru (transkrip sama)
             </button>
-            <Link
-              href={`/business/analysis/agents${querySuffix}`}
-              className="inline-flex h-9 items-center rounded-md border border-line bg-white px-3.5 text-xs font-medium text-ink hover:bg-panel transition"
-            >
-              Jelajah agen
-            </Link>
           </div>
         </div>
 
-        {/* 4 KPI: ukuran & ketebalan angka seragam (hitam); warna hanya di ikon arah/status */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {/* KPI satu baris: tinggi baris mengikuti kartu tertinggi */}
+        <div className="grid grid-cols-1 items-stretch gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <HeroCard
+            value={data.kpi.drop_off_rate_text}
+            from={data.kpi.drop_off_from_stage}
+            to={data.kpi.drop_off_to_stage}
+            location={data.kpi.drop_off_location}
+            description={data.kpi.drop_off_description}
+          />
           <KpiCard
             label="Agen membeli"
             info={data.kpi.buyers_description}
             value={String(data.kpi.buyers_count)}
-            unit="agen"
+            unit={`dari ${totalAgents} agen`}
             sub={data.kpi.buyers_rate_text}
             icon={TrendingUp}
             tone="impact"
-          />
-          <KpiCard
-            label="Penurunan terbesar"
-            info={data.kpi.drop_off_description}
-            value={data.kpi.drop_off_rate_text}
-            sub={`Dari ${data.kpi.drop_off_from_stage} ke ${data.kpi.drop_off_to_stage}`}
-            icon={TrendingDown}
-            tone="friction"
-          />
-          <KpiCard
-            label="Penyebab utama batal"
-            info={data.kpi.main_cause_detail}
-            value={data.kpi.main_cause_title || 'Menu & Harga'}
-            sub={data.kpi.main_cause_cue_rank}
-            icon={TriangleAlert}
-            tone="friction"
-          />
+          >
+            <AgentDots total={totalAgents} filled={data.kpi.buyers_count} />
+          </KpiCard>
           <KpiCard
             label="Potensi omzet lepas"
             info={data.kpi.potential_loss_detail}
@@ -328,292 +268,242 @@ function DashboardResultInner() {
             icon={TrendingDown}
             tone="friction"
           />
+          <CauseCard title={data.kpi.main_cause_title || 'Menu & Harga'} rank={data.kpi.main_cause_cue_rank} />
         </div>
 
-        {/* Middle Section: Visual Twin 3D Viewport (Kiri) & Temuan/Rekomendasi (Kanan) */}
-        <div id="twin" className="space-y-6">
-          {/* Visual Twin 3D: selebar layar, dengan tab Putar / Jalan / Tur */}
-          <div className="space-y-4">
-            <TwinViewer
-              source={{ kind: 'ply', url: '/samples/goffee-depan-kasir.ply', name: 'goffee-depan-kasir' }}
-              meta={[`${durationSeconds} detik`, `${waypoints.length} zona`]}
-              activeWaypoint={activeWaypoint}
-              onSelectWaypoint={setActiveWaypoint}
+        {/* Alur perilaku agen & peringkat semua alasan batal */}
+        <div className="grid grid-cols-1 items-stretch gap-4 lg:grid-cols-2">
+          <Card className="p-5">
+            <CardHeader
+              title="Alur perilaku agen"
+              hint="Berapa agen yang bertahan di tiap tahap"
+              right={<span className="rounded-full bg-panel px-2.5 py-1 font-mono text-[11px] text-muted ring-1 ring-line/70">{totalAgents} agen</span>}
             />
-            <div className="rounded-xl border border-line bg-white overflow-hidden">
-              {/* 2D Waypoint Progression Bar */}
-              <div className="p-4 bg-white">
-                <p className="font-mono text-[11px] uppercase tracking-wider text-subtle mb-3">
-                  Titik Pantau Lintasan Video (Klik untuk detail)
-                </p>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  {waypoints.map((wp) => (
-                    <button
-                      key={wp.id}
-                      type="button"
-                      onClick={() => setActiveWaypoint(wp.id)}
-                      className={`text-left rounded-md border p-2.5 transition text-xs ${
-                        activeWaypoint === wp.id
-                          ? 'border-primary-40 bg-primary-10/40 ring-1 ring-primary-40'
-                          : 'border-line hover:bg-panel'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between font-mono text-[10px] text-muted mb-1">
-                        <span>{wp.time}</span>
-                        {wp.is_hotspot && (
-                          <span className="text-friction font-bold">Titik Friksi</span>
-                        )}
-                      </div>
-                      <p className="font-medium text-ink truncate">{wp.name}</p>
-                      <p className={`font-mono text-[11px] mt-0.5 ${wp.is_hotspot ? 'text-friction font-medium' : 'text-subtle'}`}>
-                        {wp.status}
-                      </p>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
+            <FunnelChart stages={data.funnel_stages} />
+          </Card>
+
+          <Card className="p-5">
+            <CardHeader
+              title="Alasan agen batal membeli"
+              hint="Skor = porsi suara agen yang batal. Lift di atas 1 berarti alasan ini lebih sering muncul pada yang batal."
+              right={<span className="rounded-full bg-panel px-2.5 py-1 font-mono text-[11px] text-muted ring-1 ring-line/70">{data.cue_ranking?.length ?? 0} alasan</span>}
+            />
+            <CueRanking cues={data.cue_ranking ?? []} />
+          </Card>
+        </div>
+
+        {/* Bento: Visual Twin 3D di kiri; titik pantau dan temuan utama bertumpuk di kanan */}
+        <div id="twin" className="grid grid-cols-1 items-stretch gap-4 lg:grid-cols-12">
+          <div className="lg:col-span-8">
+          <TwinViewer
+            source={{ kind: 'ply', url: '/samples/goffee-depan-kasir.ply', name: 'goffee-depan-kasir' }}
+            meta={[`${durationSeconds} detik`, `${waypoints.length} zona`]}
+            activeWaypoint={activeWaypoint}
+            onSelectWaypoint={setActiveWaypoint}
+          />
           </div>
 
-          {/* Temuan Utama & Rekomendasi Prioritas: dua kolom sejajar, tinggi sama */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-stretch">
-            {/* Card 3 Temuan Utama */}
-            <div className="flex h-full flex-col rounded-xl border border-line bg-white p-5">
-              <div className="flex items-center justify-between pb-3 mb-4">
-                <h3 className="text-sm font-semibold text-ink">3 Temuan Utama Simulasi</h3>
-                <span className="font-mono text-[11px] text-subtle">Berdasarkan simulasi</span>
-              </div>
-
-              <div className="flex flex-1 flex-col justify-between gap-4">
-                {data.key_insights.map((ins) => (
-                  <div key={ins.id} className="flex items-start gap-3 text-xs">
-                    <span className="font-mono text-[12px] font-semibold text-primary-40 shrink-0 mt-0.5">
-                      {ins.number}
-                    </span>
-                    <div>
-                      <p className="font-medium text-ink">{ins.title}</p>
-                      <p className="text-muted mt-1 leading-relaxed">{ins.description}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Card Rekomendasi Perbaikan Prioritas */}
-            <div className="h-full rounded-xl border border-line bg-white p-5">
-              <div className="flex items-center justify-between pb-3 mb-3">
-                <div>
-                  <h3 className="text-sm font-semibold text-ink">Rekomendasi Perbaikan Prioritas</h3>
-                  <p className="text-[11px] text-muted mt-0.5">Dampak tertinggi dengan biaya termudah</p>
-                </div>
-                <span className="font-mono text-[10px] font-bold text-impact bg-impact/10 px-2 py-0.5 rounded">
-                  Dianjurkan
-                </span>
-              </div>
-
-              <div className="space-y-3">
-                {data.recommendations.map((rec) => (
-                  <div
-                    key={rec.id}
-                    className="rounded-md border border-line bg-panel/40 p-3 text-xs hover:bg-panel transition"
+          <div className="flex flex-col gap-4 lg:col-span-4">
+            <Card className="p-4">
+              <CardHeader title="Titik pantau lintasan" hint="Klik untuk melihat di Visual Twin" />
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-3 lg:grid-cols-1">
+                {waypoints.map((wp) => (
+                  <button
+                    key={wp.id}
+                    type="button"
+                    onClick={() => setActiveWaypoint(wp.id)}
+                    className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-left ring-1 transition ${
+                      activeWaypoint === wp.id
+                        ? 'bg-primary-10/60 ring-2 ring-primary-40'
+                        : wp.is_hotspot
+                          ? 'bg-friction-10/60 ring-friction/30 hover:bg-friction-10'
+                          : 'bg-panel ring-line/70 hover:bg-hover'
+                    }`}
                   >
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="font-mono text-[10px] uppercase font-semibold text-primary-40">
-                        {rec.priority_tag} #{rec.rank}
+                    <span className="w-9 shrink-0 font-mono text-[11px] text-muted">{wp.time}</span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-[13px] font-semibold leading-tight text-ink">{wp.name}</span>
+                      <span className={`block text-[12px] ${wp.is_hotspot ? 'font-medium text-friction' : 'text-muted'}`}>
+                        {wp.status}
                       </span>
-                      <span className="font-mono text-[11px] font-semibold text-impact">
-                        <span className="inline-flex items-center gap-1"><TrendingUpIcon size={13} strokeWidth={2.25} />{rec.estimated_lift_range}</span>
+                    </span>
+                    {wp.is_hotspot && (
+                      <span className="shrink-0 rounded-full bg-friction px-2 py-0.5 text-[10px] font-semibold text-white">
+                        Friksi
                       </span>
-                    </div>
-                    <h4 className="font-medium text-ink leading-snug">{rec.title}</h4>
-                    <p className="text-muted mt-1 leading-relaxed text-[11px]">{rec.description}</p>
-                  </div>
+                    )}
+                  </button>
                 ))}
               </div>
-            </div>
+            </Card>
+
+            <Card className="flex-1 p-4">
+              <CardHeader title="3 temuan utama" hint="Berdasarkan perilaku agen" />
+              <ul className="divide-y divide-hairline">
+                {data.key_insights.map((ins) => (
+                  <li key={ins.id} className="flex items-start gap-3 py-3 first:pt-0 last:pb-0">
+                    <span className={`grid size-7 shrink-0 place-items-center rounded-lg ${insightTone(ins.type)}`}>
+                      {insightIcon(ins.type)}
+                    </span>
+                    <div className="min-w-0">
+                      <p className="text-[13px] font-semibold leading-snug text-ink">{ins.title}</p>
+                      <p className="mt-0.5 text-[12px] leading-relaxed text-muted">{ins.description}</p>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </Card>
           </div>
         </div>
 
-        {/* ==================================================================== */}
-        {/* SECTION BAWAH: SIMULASI HIPOTESIS (What-If Simulator Sesuai Figma)   */}
-        {/* ==================================================================== */}
-        <div className="pt-4 space-y-4">
+        {/* Simulasi hipotesis (what-if) */}
+        <div className="space-y-4 pt-2">
           <div className="flex items-center justify-between">
-            <span className="font-mono text-[11px] uppercase tracking-wider text-muted font-semibold">
-              SIMULASI HIPOTESIS
-            </span>
-            <span className="font-mono text-[11px] text-subtle">
-              Terakhir dijalankan {projection.last_run_timestamp}
-            </span>
+            <h2 className="text-[17px] font-semibold tracking-[-0.02em] text-ink">Simulasi hipotesis</h2>
+            <span className="font-mono text-[11px] text-subtle">Terakhir dijalankan {projection.last_run_timestamp}</span>
           </div>
 
-          <div className="space-y-6">
-            {/* "Pilih perbaikan" (~5 Kolom) */}
-            <div className="rounded-xl border border-line bg-white p-5 sm:p-6">
-              <div>
-                <h3 className="text-base font-semibold text-ink">Pilih perbaikan</h3>
-                <p className="text-xs text-muted mt-1 leading-relaxed">
-                  Centang yang ingin dicoba, lalu jalankan simulasi ulang. Hipotesis, bukan janji omzet.
-                </p>
+          <div className="grid grid-cols-1 items-stretch gap-4 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
+          <Card className="flex flex-col p-5 sm:p-6">
+            <CardHeader
+              title="Pilih perbaikan"
+              hint="Centang yang ingin dicoba, lalu jalankan simulasi ulang. Hipotesis, bukan janji omzet."
+            />
+            <div className="grid grid-cols-1 gap-3">
+              {fixes.map((fix) => (
+                <div
+                  key={fix.id}
+                  onClick={() => toggleFix(fix.id)}
+                  className={`flex h-full cursor-pointer select-none items-start gap-3 rounded-xl p-3.5 ring-1 transition-colors ${
+                    fix.is_checked ? 'bg-primary-10/50 ring-2 ring-primary-40/70' : 'bg-white ring-line hover:bg-panel'
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={fix.is_checked}
+                    onChange={() => {}} // handled by parent div click
+                    className="mt-0.5 size-4 cursor-pointer rounded text-primary-40 focus:ring-primary-40"
+                  />
+                  <div className="flex-1">
+                    <p className="text-xs font-semibold leading-snug text-ink">{fix.title}</p>
+                    <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                      <Badge variant="impact">{fix.impact_label}</Badge>
+                      <Badge>{fix.effort_label}</Badge>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
 
-                {/* List Checkbox Perbaikan: berjajar selebar kartu */}
-                <div className="mt-5 grid grid-cols-1 gap-3 md:grid-cols-3">
-                  {fixes.map((fix) => (
-                    <div
-                      key={fix.id}
-                      onClick={() => toggleFix(fix.id)}
-                      className={`cursor-pointer rounded-lg border p-3 transition-colors flex h-full items-start gap-3 select-none ${
-                        fix.is_checked
-                          ? 'border-primary-40/60 bg-primary-10/40'
-                          : 'border-line bg-white hover:bg-panel'
+            <div className="mt-auto flex flex-col gap-2 pt-5">
+              <p className="text-center text-[12px] text-subtle">Sekitar 2 menit, memakai agen yang sama</p>
+              <button
+                type="button"
+                disabled={isSimulating || checkedFixesCount === 0}
+                onClick={handleRunWhatIf}
+                className="btn-primary flex h-10 w-full items-center justify-center rounded-full px-5 text-[13px] font-medium text-white transition disabled:opacity-50"
+              >
+                {isSimulating ? 'Menjalankan Simulasi Ulang...' : 'Jalankan simulasi ulang'}
+              </button>
+            </div>
+          </Card>
+
+          <Card className="space-y-5 p-5 sm:p-6">
+            <CardHeader
+              title="Proyeksi pasca simulasi"
+              hint={`Perbandingan perilaku ${totalAgents} agen yang sama, sebelum dan sesudah perbaikan (contoh awal).`}
+              right={
+                <div className="flex flex-col items-end gap-2">
+                  <Badge variant={projection.mode === 'terverifikasi_simulasi' ? 'impact' : 'neutral'}>
+                    {projection.mode === 'terverifikasi_simulasi' ? 'Terverifikasi simulasi' : 'Estimasi cepat'}
+                  </Badge>
+                  <div className="flex items-center gap-3 text-xs font-medium text-ink-soft">
+                    <span className="flex items-center gap-1.5">
+                      <span className="size-2.5 rounded-full bg-subtle/80" /> Saat ini
+                    </span>
+                    <span className="flex items-center gap-1.5">
+                      <span className="size-2.5 rounded-full bg-primary-40" /> Simulasi
+                    </span>
+                  </div>
+                </div>
+              }
+            />
+
+            {whatIfError && (
+              <div className="rounded-xl border border-friction/40 bg-friction-10 px-4 py-2.5 text-xs text-friction">
+                {whatIfError}
+              </div>
+            )}
+
+            {projection.low_accuracy_early_edit && projection.accuracy_note && (
+              <div className="flex items-start gap-2.5 rounded-xl border border-friction/40 bg-friction-10 px-4 py-3 text-xs text-friction">
+                <TriangleAlert size={15} className="mt-0.5 shrink-0" />
+                <p className="leading-relaxed">{projection.accuracy_note}</p>
+              </div>
+            )}
+
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <ProjectionStat label="Pembeli" value={`${projection.buyers_projected} agen`} sub={`Naik dari ${projection.buyers_baseline} agen`} icon={TrendingUp} tone="impact" />
+              <ProjectionStat label="Penurunan" value={projection.drop_rate_projected} sub={`Sebelumnya ${projection.drop_rate_baseline}`} icon={TrendingDown} tone="impact" />
+              <ProjectionStat label="Perkiraan omzet" value={projection.revenue_lift} sub="Rupiah per hari" icon={TrendingUp} tone="impact" />
+              <ProjectionStat label="Modal" value={projection.cost_estimate} sub={`${checkedFixesCount} perbaikan dipilih`} icon={Wallet} tone="neutral" />
+            </div>
+
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+              {projection.stages_comparison.map((stage, idx) => (
+                <div key={stage.id} className="space-y-2.5 rounded-xl bg-panel p-3.5 ring-1 ring-line/70">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-semibold text-ink">
+                      {idx + 1}&nbsp;&nbsp;{stage.name}
+                    </span>
+                    <span
+                      className={`rounded-full px-2 py-0.5 font-mono text-[10px] font-semibold ${
+                        stage.delta_label === 'Tetap' ? 'bg-white text-muted ring-1 ring-line' : 'bg-impact-10 text-impact'
                       }`}
                     >
-                      <input
-                        type="checkbox"
-                        checked={fix.is_checked}
-                        onChange={() => {}} // handled by parent div click
-                        className="mt-0.5 rounded text-primary-40 focus:ring-primary-40 size-4 cursor-pointer"
+                      {stage.delta_label}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-3 text-xs">
+                    <span className="w-14 shrink-0 font-mono text-[11px] text-muted">Saat ini</span>
+                    <div className="h-2 flex-1 overflow-hidden rounded-full bg-hairline">
+                      <div
+                        className="h-full rounded-full bg-subtle/80 transition-all duration-500"
+                        style={{ width: `${stage.baseline_pct}%` }}
                       />
-                      <div className="flex-1">
-                        <p className="text-xs font-semibold text-ink leading-snug">
-                          {fix.title}
-                        </p>
-                        <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                          <Badge variant="impact">{fix.impact_label}</Badge>
-                          <Badge>{fix.effort_label}</Badge>
-                        </div>
-                      </div>
                     </div>
-                  ))}
-                </div>
-              </div>
+                    <span className="w-12 shrink-0 text-right font-mono text-[11px] text-muted">
+                      {Math.round((stage.baseline_pct / 100) * totalAgents)}/{totalAgents}
+                    </span>
+                  </div>
 
-              {/* Action Button & Meta */}
-              <div className="mt-5 flex flex-col items-center gap-3 sm:flex-row sm:justify-end">
-                <button
-                  type="button"
-                  disabled={isSimulating || checkedFixesCount === 0}
-                  onClick={handleRunWhatIf}
-                  className="btn-primary order-2 flex h-10 w-full items-center justify-center rounded-lg px-5 text-[13px] font-medium text-white transition disabled:opacity-50 sm:w-auto"
-                >
-                  {isSimulating ? 'Menjalankan Simulasi Ulang...' : 'Jalankan simulasi ulang'}
-                </button>
-                <p className="order-1 text-[12px] text-subtle">
-                  Sekitar 2 menit, memakai agen yang sama
-                </p>
-              </div>
+                  <div className="flex items-center gap-3 text-xs">
+                    <span className="w-14 shrink-0 font-mono text-[11px] font-medium text-primary-40">Simulasi</span>
+                    <div className="h-2 flex-1 overflow-hidden rounded-full bg-hairline">
+                      <div
+                        className="h-full rounded-full bg-primary-40 transition-all duration-500"
+                        style={{ width: `${stage.projected_pct}%` }}
+                      />
+                    </div>
+                    <span className="w-12 shrink-0 text-right font-mono text-[11px] font-semibold text-primary-40">
+                      {Math.round((stage.projected_pct / 100) * totalAgents)}/{totalAgents}
+                    </span>
+                  </div>
+                </div>
+              ))}
             </div>
 
-            {/* "Proyeksi pasca simulasi" */}
-            <div className="rounded-xl border border-line bg-white p-5 sm:p-6 space-y-5">
-              {/* Header & Legend */}
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3">
-                <div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h3 className="text-base font-semibold text-ink">Proyeksi pasca simulasi</h3>
-                    <Badge variant={projection.mode === 'terverifikasi_simulasi' ? 'impact' : 'neutral'}>
-                      {projection.mode === 'terverifikasi_simulasi' ? 'Terverifikasi simulasi' : 'Estimasi cepat'}
-                    </Badge>
-                  </div>
-                  <p className="text-xs text-muted mt-0.5">
-                    Perbandingan perilaku {data.total_agents || 20} agen yang sama, sebelum dan sesudah perbaikan (contoh awal).
-                  </p>
-                </div>
-                <div className="flex items-center gap-3 text-xs font-medium text-ink-soft shrink-0">
-                  <span className="flex items-center gap-1.5">
-                    <span className="size-2.5 rounded-[2px] bg-subtle/80" /> Saat ini
-                  </span>
-                  <span className="flex items-center gap-1.5">
-                    <span className="size-2.5 rounded-[2px] bg-primary-40" /> Simulasi
-                  </span>
-                </div>
-              </div>
-
-              {whatIfError && (
-                <div className="rounded-md border border-friction/40 bg-friction-10 px-4 py-2.5 text-xs text-friction">
-                  {whatIfError}
-                </div>
-              )}
-
-              {projection.low_accuracy_early_edit && projection.accuracy_note && (
-                <div className="flex items-start gap-2.5 rounded-md border border-friction/40 bg-friction-10 px-4 py-3 text-xs text-friction">
-                  <TriangleAlert size={15} className="mt-0.5 shrink-0" />
-                  <p className="leading-relaxed">{projection.accuracy_note}</p>
-                </div>
-              )}
-
-              {/* 4 metrik ringkas: angka hitam seragam, arah perubahan lewat ikon berwarna */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                <ProjectionStat label="Pembeli" value={`${projection.buyers_projected} agen`} sub={`Naik dari ${projection.buyers_baseline} agen`} icon={TrendingUp} tone="impact" />
-                <ProjectionStat label="Penurunan" value={projection.drop_rate_projected} sub={`Sebelumnya ${projection.drop_rate_baseline}`} icon={TrendingDown} tone="impact" />
-                <ProjectionStat label="Perkiraan omzet" value={projection.revenue_lift} sub="Rupiah per hari" icon={TrendingUp} tone="impact" />
-                <ProjectionStat label="Modal" value={projection.cost_estimate} sub={`${checkedFixesCount} perbaikan dipilih`} icon={Wallet} tone="neutral" />
-              </div>
-
-              {/* 4 Bar Perbandingan (Saat ini vs Simulasi) */}
-              <div className="space-y-4 pt-2">
-                {projection.stages_comparison.map((stage, idx) => (
-                  <div key={stage.id} className="rounded-md border border-line bg-white p-3.5 space-y-2">
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="font-semibold text-ink">
-                        {idx + 1} &nbsp;{stage.name}
-                      </span>
-                      <span
-                        className={`font-mono text-[10px] font-semibold px-2 py-0.5 rounded-full ${
-                          stage.delta_label === 'Tetap'
-                            ? 'bg-panel text-muted border border-line'
-                            : 'bg-impact/10 text-impact'
-                        }`}
-                      >
-                        {stage.delta_label}
-                      </span>
-                    </div>
-
-                    {/* Bar 1: Saat ini (Abu-abu) */}
-                    <div className="flex items-center gap-3 text-xs">
-                      <span className="font-mono text-[11px] text-muted w-14 shrink-0">Saat ini</span>
-                      <div className="flex-1 h-2 rounded-full bg-hairline overflow-hidden">
-                        <div
-                          className="h-full bg-subtle/80 rounded-full transition-all duration-500"
-                          style={{ width: `${stage.baseline_pct}%` }}
-                        />
-                      </div>
-                      <span className="font-mono text-[11px] text-muted w-12 text-right shrink-0">
-                        {Math.round((stage.baseline_pct / 100) * (data.total_agents || 20))}/{data.total_agents || 20}
-                      </span>
-                    </div>
-
-                    {/* Bar 2: Simulasi (Biru) */}
-                    <div className="flex items-center gap-3 text-xs">
-                      <span className="font-mono text-[11px] text-primary-40 font-medium w-14 shrink-0">Simulasi</span>
-                      <div className="flex-1 h-2 rounded-full bg-hairline overflow-hidden">
-                        <div
-                          className="h-full bg-primary-40 rounded-full transition-all duration-500"
-                          style={{ width: `${stage.projected_pct}%` }}
-                        />
-                      </div>
-                      <span className="font-mono text-[11px] text-primary-40 font-semibold w-12 text-right shrink-0">
-                        {Math.round((stage.projected_pct / 100) * (data.total_agents || 20))}/{data.total_agents || 20}
-                      </span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              {/* KESIMPULAN MODEL Box */}
-              <div className="rounded-md bg-panel p-3.5 border border-line text-xs">
-                <span className="font-mono text-[10px] uppercase text-muted tracking-wider block font-semibold">
-                  KESIMPULAN MODEL
-                </span>
-                <p className="text-ink-soft mt-1 leading-relaxed">
-                  {projection.model_conclusion}
-                </p>
-              </div>
+            <div className="rounded-xl bg-primary-10/60 p-4 text-xs ring-1 ring-primary-20">
+              <span className="block font-mono text-[10px] font-semibold uppercase tracking-wider text-primary-40">
+                Kesimpulan model
+              </span>
+              <p className="mt-1 leading-relaxed text-ink-soft">{projection.model_conclusion}</p>
             </div>
+          </Card>
           </div>
         </div>
       </main>
-
     </div>
   );
 }
