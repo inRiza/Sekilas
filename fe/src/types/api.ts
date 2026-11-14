@@ -192,6 +192,33 @@ export interface VisualTwinMeta {
   path_duration_seconds: number;
 }
 
+export interface WaypointData {
+  id: string;
+  time: string;
+  name: string;
+  status: string;
+  is_hotspot?: boolean;
+}
+
+export interface WhatIfProjectionData {
+  total_agents: number;
+  last_run_timestamp: string;
+  buyers_projected: number;
+  buyers_baseline: number;
+  drop_rate_projected: string;
+  drop_rate_baseline: string;
+  revenue_lift: string;
+  cost_estimate: string;
+  stages_comparison: Array<{
+    id: string;
+    name: string;
+    baseline_pct: number;
+    projected_pct: number;
+    delta_label: string;
+  }>;
+  model_conclusion: string;
+}
+
 export interface DashboardData {
   analysis_id: string;
   business_id?: string;
@@ -227,6 +254,8 @@ export interface DashboardData {
   key_insights: KeyInsight[];
   recommendations: ParetoRecommendation[];
   twin_meta: VisualTwinMeta;
+  waypoints?: WaypointData[];
+  what_if_projection?: WhatIfProjectionData | null;
 }
 
 // ---------------- F6-G. Rencana Pengukuran Cetak ----------------

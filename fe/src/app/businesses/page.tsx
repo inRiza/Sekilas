@@ -78,10 +78,10 @@ export default function BusinessesPage() {
     e.preventDefault();
     if (!newBizName.trim()) return;
     await createBusiness({
-      name: newBizName,
-      branch_name: newBranchName || 'Pusat',
+      name: newBizName.trim(),
+      branch_name: newBranchName.trim() || 'Pusat',
       category: newCategory,
-      address: newAddress || 'Alamat tempat usaha baru',
+      address: newAddress.trim(),
     });
     closeAddModal();
   };

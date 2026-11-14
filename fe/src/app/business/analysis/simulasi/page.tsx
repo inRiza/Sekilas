@@ -34,13 +34,10 @@ const SEGMENT_LABEL = (s: string) => {
   return t.charAt(0).toUpperCase() + t.slice(1);
 };
 
-/** Urutan animasi: tiap tick memajukan satu langkah. Tahap 2 sekaligus menampilkan monolog agen satu per satu. */
-const AGENT_TICKS = MOCK_AGENTS.length;
-const TOTAL_TICKS = 1 + AGENT_TICKS + 2; // persona, agen..., rangkum, dasbor
-
-function stageStatus(stage: number, tick: number): 'done' | 'running' | 'waiting' {
-  const start = [0, 1, 1 + AGENT_TICKS, 2 + AGENT_TICKS][stage]!;
-  const end = [1, 1 + AGENT_TICKS, 2 + AGENT_TICKS, TOTAL_TICKS][stage]!;
+function stageStatus(stage: number, tick: number, agentTicks: number): 'done' | 'running' | 'waiting' {
+  const totalTicks = 1 + agentTicks + 2;
+  const start = [0, 1, 1 + agentTicks, 2 + agentTicks][stage]!;
+  const end = [1, 1 + agentTicks, 2 + agentTicks, totalTicks][stage]!;
   if (tick >= end) return 'done';
   return tick >= start ? 'running' : 'waiting';
 }
@@ -64,24 +61,38 @@ function SimulasiAgenInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const analysisId = searchParams.get('analysisId') || 'selasar-kopi';
-  const querySuffix = `?analysisId=${encodeURIComponent(analysisId)}`;
+  const businessId = searchParams.get('businessId');
+  const querySuffix = `?analysisId=${encodeURIComponent(analysisId)}${
+    businessId ? `&businessId=${encodeURIComponent(businessId)}` : ''
+  }`;
 
   const [agents, setAgents] = useState<AgentDecision[]>(MOCK_AGENTS);
   const [tick, setTick] = useState(0);
   const feedRef = useRef<HTMLDivElement>(null);
 
+  const agentTicks = Math.max(1, agents.length);
+  const totalTicks = 1 + agentTicks + 2; // persona, agen..., rangkum, dasbor
+
   useEffect(() => {
-    void triggerSimulationRun(analysisId);
-    void fetchAgentDecisions(analysisId).then((list) => {
-      if (list.length > 0) setAgents(list);
-    });
+    let active = true;
+    const run = async () => {
+      await triggerSimulationRun(analysisId);
+      const list = await fetchAgentDecisions(analysisId);
+      if (active && list.length > 0) {
+        setAgents(list);
+      }
+    };
+    void run();
+    return () => {
+      active = false;
+    };
   }, [analysisId]);
 
   useEffect(() => {
-    if (tick >= TOTAL_TICKS) return;
+    if (tick >= totalTicks) return;
     const t = setTimeout(() => setTick((n) => n + 1), TICK_MS);
     return () => clearTimeout(t);
-  }, [tick]);
+  }, [tick, totalTicks]);
 
   // Gulir kotak monolog saja (bukan seluruh halaman) ke entri terbaru.
   useEffect(() => {
@@ -89,9 +100,9 @@ function SimulasiAgenInner() {
     if (box) box.scrollTo({ top: box.scrollHeight, behavior: 'smooth' });
   }, [tick]);
 
-  const done = tick >= TOTAL_TICKS;
-  const progress = Math.round((tick / TOTAL_TICKS) * 100);
-  const agentsShown = Math.max(0, Math.min(AGENT_TICKS, tick - 1));
+  const done = tick >= totalTicks;
+  const progress = Math.min(100, Math.round((tick / totalTicks) * 100));
+  const agentsShown = Math.max(0, Math.min(agentTicks, tick - 1));
 
   return (
     <div className="flex min-h-full flex-col bg-white">
@@ -129,7 +140,7 @@ function SimulasiAgenInner() {
                 </div>
                 <ul className="space-y-2">
                   {STAGES.map((st, i) => {
-                    const status = stageStatus(i, tick);
+                    const status = stageStatus(i, tick, agentTicks);
                     const Icon = st.icon;
                     return (
                       <li key={st.title} className="flex items-center gap-3 rounded-md border border-line px-4 py-3">
@@ -197,7 +208,7 @@ function SimulasiAgenInner() {
                   {!done && agentsShown > 0 && (
                     <div className="flex items-center gap-3 px-3 py-2.5 text-[13px] text-muted">
                       <LoaderCircle size={14} className="animate-spin text-primary-40" />
-                      {agentsShown < AGENT_TICKS ? 'Agen berikutnya sedang menelusuri jalur…' : 'Merangkum alasan dan menyusun dasbor…'}
+                      {agentsShown < agentTicks ? 'Agen berikutnya sedang menelusuri jalur…' : 'Merangkum alasan dan menyusun dasbor…'}
                     </div>
                   )}
                 </div>

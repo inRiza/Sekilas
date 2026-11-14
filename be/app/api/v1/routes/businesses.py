@@ -50,7 +50,7 @@ def create_business(
     ctx = body.context or default_context_for_business(
         name=body.name.strip(),
         category=body.category,
-        address=body.address.strip() or "Alamat tempat usaha baru",
+        address=body.address.strip(),
     )
     biz = BusinessModel(
         id=biz_id,

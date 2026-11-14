@@ -124,6 +124,39 @@ class DashboardKpiOut(BaseModel):
     potential_loss_detail: str
 
 
+class WaypointOut(BaseModel):
+    id: str
+    time: str
+    name: str
+    status: str
+    is_hotspot: bool = False
+
+
+class WhatIfStageComparisonOut(BaseModel):
+    id: str
+    name: str
+    baseline_pct: int
+    projected_pct: int
+    delta_label: str
+
+
+class WhatIfProjectionOut(BaseModel):
+    total_agents: int
+    last_run_timestamp: str
+    buyers_projected: int
+    buyers_baseline: int
+    drop_rate_projected: str
+    drop_rate_baseline: str
+    revenue_lift: str
+    cost_estimate: str
+    stages_comparison: list[WhatIfStageComparisonOut]
+    model_conclusion: str
+
+
+class WhatIfRequest(BaseModel):
+    checked_recommendation_ids: list[str] = []
+
+
 class DashboardDataOut(BaseModel):
     analysis_id: str
     business_id: str | None = None
@@ -137,3 +170,5 @@ class DashboardDataOut(BaseModel):
     key_insights: list[KeyInsightOut]
     recommendations: list[ParetoRecommendationOut]
     twin_meta: VisualTwinMetaOut
+    waypoints: list[WaypointOut] = []
+    what_if_projection: WhatIfProjectionOut | None = None

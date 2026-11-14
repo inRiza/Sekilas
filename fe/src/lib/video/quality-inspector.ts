@@ -14,7 +14,11 @@
  * - Pencahayaan: rata-rata luminansi frame sampel < 38 -> terlalu gelap (ditolak)
  */
 
-import { detectPrivacyBoxesOnFrame, ensurePrivacyDetectors } from '@/lib/video/privacy-blur';
+import {
+  detectPrivacyBoxesOnFrame,
+  ensurePrivacyDetectors,
+  renderSelectivePrivacyBlur,
+} from '@/lib/video/privacy-blur';
 
 export type CheckStatus = 'pass' | 'warn' | 'fail';
 
@@ -51,6 +55,7 @@ export interface VideoInspectionResult {
   brightness: number; // 0..255
   blurredFacesCount: number;
   blurredPlatesCount: number;
+  sampledFrameDataUrls: string[];
   accepted: boolean;
   checks: VideoCheckItem[];
   rejectionReasons: string[];
@@ -233,6 +238,7 @@ export async function inspectVideoFile(file: File): Promise<VideoInspectionResul
       brightness: number,
       detectedFaces?: number,
       detectedPlates?: number,
+      sampledFrameDataUrls: string[] = [],
     ) => {
       const faces =
         detectedFaces !== undefined
@@ -259,6 +265,7 @@ export async function inspectVideoFile(file: File): Promise<VideoInspectionResul
         brightness,
         blurredFacesCount: faces,
         blurredPlatesCount: plates,
+        sampledFrameDataUrls,
         accepted,
         checks,
         rejectionReasons,
@@ -282,6 +289,7 @@ export async function inspectVideoFile(file: File): Promise<VideoInspectionResul
       let lumCount = 0;
       let totalFacesDetected = 0;
       let totalPlatesDetected = 0;
+      const capturedFrames: string[] = [];
 
       const seekNext = () => {
         if (sampleIdx >= samplePoints.length) {
@@ -295,6 +303,7 @@ export async function inspectVideoFile(file: File): Promise<VideoInspectionResul
             avgLum,
             totalFacesDetected,
             totalPlatesDetected,
+            capturedFrames,
           );
           return;
         }
@@ -323,6 +332,19 @@ export async function inspectVideoFile(file: File): Promise<VideoInspectionResul
           const boxes = detectPrivacyBoxesOnFrame(video, detectors);
           totalFacesDetected += boxes.filter((b) => b.kind === 'face').length;
           totalPlatesDetected += boxes.filter((b) => b.kind === 'plate').length;
+
+          // Tangkap thumbnail terburam (320x180) untuk dijadikan frame bukti di Verifikasi Transkrip
+          const thumbCanvas = document.createElement('canvas');
+          thumbCanvas.width = 320;
+          thumbCanvas.height = 180;
+          const thumbCtx = thumbCanvas.getContext('2d');
+          if (thumbCtx) {
+            renderSelectivePrivacyBlur(thumbCtx, video, boxes, {
+              blurEnabled: true,
+              showIndicators: false,
+            });
+            capturedFrames.push(thumbCanvas.toDataURL('image/jpeg', 0.75));
+          }
         } catch {
           // Lanjut ke sampel berikutnya
         }

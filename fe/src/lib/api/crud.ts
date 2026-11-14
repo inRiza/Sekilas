@@ -1,7 +1,6 @@
 import { MOCK_AGENTS } from '@/lib/mock/agents';
 import { MOCK_ANALYSES } from '@/lib/mock/analyses';
 import { MOCK_BUSINESSES } from '@/lib/mock/business';
-import { MOCK_CONTEXT } from '@/lib/mock/context';
 import { MOCK_DASHBOARD } from '@/lib/mock/dashboard';
 import { MOCK_TRANSCRIPT } from '@/lib/mock/transcript';
 import { createClient } from '@/lib/supabase/client';
@@ -13,8 +12,10 @@ import type {
   BusinessType,
   DashboardData,
   MeasurementPlanData,
+  MenuItem,
   PriceLevel,
   TranscriptSegment,
+  WhatIfProjectionData,
 } from '@/types/api';
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000').replace(/\/$/, '') + '/api/v1';
@@ -31,6 +32,7 @@ export interface VideoMetadata {
   analysis_id?: string;
   original_filename: string;
   storage_key?: string | null;
+  public_url?: string | null;
   duration_s: number;
   cashier_at_s: number;
   width?: number | null;
@@ -39,6 +41,7 @@ export interface VideoMetadata {
   quality_checks?: Record<string, string>;
   blurred_faces_count?: number;
   blurred_plates_count?: number;
+  frame_keys?: string[];
 }
 
 export interface CreateBusinessPayload {
@@ -96,6 +99,29 @@ export function calculateMedianPriceLevel(prices: number[]): PriceLevel {
   if (median < 25000) return 'hemat';
   if (median <= 60000) return 'sedang';
   return 'premium';
+}
+
+export function createEmptyContext(
+  businessName = '',
+  businessType: BusinessType = 'kedai',
+  address = '',
+): BusinessContext {
+  return {
+    business_type: businessType,
+    business_name: businessName,
+    location_name: address,
+    location_description: '',
+    surroundings_type: 'jalan_utama',
+    surroundings: ['jalan_utama'],
+    passersby: ['mahasiswa', 'pekerja_kantor'],
+    business_goal: 'lebih_banyak_pembeli_baru',
+    fixed_constraints: [],
+    menu_items: [],
+    calculated_price_level: 'hemat',
+    opening_hours: { open: '08:00', close: '22:00' },
+    rush_hours: [{ start: '12:00', end: '14:00' }],
+    parking: [],
+  };
 }
 
 /* ---------------- Local Fallback Store ---------------- */
@@ -158,16 +184,23 @@ function setLocalContext(analysisId: string, ctx: BusinessContext) {
   notifyCrudChanged();
 }
 
+async function getAuthHeaders(): Promise<Record<string, string>> {
+  if (typeof window === 'undefined') return {};
+  try {
+    const supabase = createClient();
+    const { data } = await supabase.auth.getSession();
+    if (data.session?.access_token) {
+      return { Authorization: `Bearer ${data.session.access_token}` };
+    }
+  } catch {
+    // Fallback
+  }
+  return {};
+}
+
 async function tryApiFetch<T>(path: string, init?: RequestInit): Promise<T | null> {
   try {
-    let authHeader: Record<string, string> = {};
-    if (typeof window !== 'undefined') {
-      const supabase = createClient();
-      const { data } = await supabase.auth.getSession();
-      if (data.session?.access_token) {
-        authHeader = { Authorization: `Bearer ${data.session.access_token}` };
-      }
-    }
+    const authHeader = await getAuthHeaders();
     const res = await fetch(`${API_BASE}${path}`, {
       ...init,
       headers: {
@@ -188,11 +221,22 @@ async function tryApiFetch<T>(path: string, init?: RequestInit): Promise<T | nul
 
 export async function fetchBusinesses(): Promise<Business[]> {
   const remote = await tryApiFetch<Business[]>('/businesses');
-  if (remote && remote.length > 0) {
+  if (remote !== null) {
     setLocalBusinesses(remote);
     return remote;
   }
   return getLocalBusinesses();
+}
+
+export async function fetchBusinessById(businessId: string): Promise<Business | null> {
+  const remote = await tryApiFetch<Business>(`/businesses/${encodeURIComponent(businessId)}`);
+  if (remote) {
+    const list = getLocalBusinesses();
+    const exists = list.some((b) => b.id === remote.id);
+    setLocalBusinesses(exists ? list.map((b) => (b.id === remote.id ? remote : b)) : [...list, remote]);
+    return remote;
+  }
+  return getLocalBusinesses().find((b) => b.id === businessId) ?? null;
 }
 
 export async function createBusiness(payload: CreateBusinessPayload): Promise<Business> {
@@ -212,24 +256,9 @@ export async function createBusiness(payload: CreateBusinessPayload): Promise<Bu
     name: payload.name.trim(),
     branch_name: payload.branch_name?.trim() || 'Pusat',
     category: payload.category,
-    address: payload.address?.trim() || 'Alamat tempat usaha baru',
+    address: payload.address?.trim() || '',
     primary_analysis_id: null,
-    context: {
-      ...MOCK_CONTEXT,
-      business_name: payload.name.trim(),
-      business_type: payload.category,
-      location_name: payload.address?.trim() || 'Alamat tempat usaha baru',
-      location_description: 'Akses masuk dari jalan raya',
-      surroundings_type: 'jalan_utama',
-      surroundings: ['jalan_utama'],
-      passersby: ['mahasiswa', 'pekerja_kantor'],
-      business_goal: 'lebih_banyak_pembeli_baru',
-      calculated_price_level: 'hemat',
-      fixed_constraints: [],
-      menu_items: [],
-      opening_hours: { open: '08:00', close: '22:00' },
-      rush_hours: [{ start: '12:00', end: '14:00' }],
-    },
+    context: createEmptyContext(payload.name.trim(), payload.category, payload.address?.trim() || ''),
     created_at: new Date().toISOString(),
   };
   const list = getLocalBusinesses();
@@ -269,7 +298,6 @@ export async function updateBusiness(businessId: string, payload: UpdateBusiness
   };
   setLocalBusinesses(list.map((b) => (b.id === businessId ? updated : b)));
 
-  // Sync business_name / branch_name on local analyses
   const analyses = getLocalAnalyses().map((a) =>
     a.business_id === businessId
       ? {
@@ -298,7 +326,7 @@ export async function deleteBusiness(businessId: string): Promise<void> {
 export async function fetchAnalyses(businessId?: string): Promise<Analysis[]> {
   const query = businessId ? `?business_id=${encodeURIComponent(businessId)}` : '';
   const remote = await tryApiFetch<Analysis[]>(`/analyses${query}`);
-  if (remote && remote.length > 0) {
+  if (remote !== null) {
     if (!businessId) {
       setLocalAnalyses(remote);
     }
@@ -332,7 +360,7 @@ export async function createAnalysis(payload: CreateAnalysisPayload): Promise<An
     status: payload.status ?? 'draft',
     quality_label: 'Kualitas baik',
     total_agents: payload.total_agents ?? 20,
-    context: payload.context ?? biz?.context ?? MOCK_CONTEXT,
+    context: payload.context ?? biz?.context ?? createEmptyContext(biz?.name ?? '', biz?.category ?? 'kedai', biz?.address ?? ''),
   };
   const list = getLocalAnalyses();
   setLocalAnalyses([newAnl, ...list]);
@@ -403,9 +431,12 @@ export async function deleteAnalysis(analysisId: string): Promise<void> {
 
 /* ---------------- Context & Menu CRUD ---------------- */
 
-export async function fetchAnalysisContext(analysisId?: string | null, businessId?: string | null): Promise<BusinessContext> {
+export async function fetchAnalysisContext(
+  analysisId?: string | null,
+  businessId?: string | null,
+): Promise<BusinessContext> {
   if (analysisId) {
-    const remote = await tryApiFetch<BusinessContext>(`/analyses/${analysisId}/context`);
+    const remote = await tryApiFetch<BusinessContext>(`/analyses/${encodeURIComponent(analysisId)}/context`);
     if (remote) {
       setLocalContext(analysisId, remote);
       return remote;
@@ -414,14 +445,64 @@ export async function fetchAnalysisContext(analysisId?: string | null, businessI
     if (localMap[analysisId]) return localMap[analysisId]!;
     const anl = getLocalAnalyses().find((a) => a.id === analysisId);
     if (anl?.context) return anl.context;
-    const biz = getLocalBusinesses().find((b) => b.id === anl?.business_id);
-    if (biz?.context) return biz.context;
   }
+
   if (businessId) {
-    const biz = getLocalBusinesses().find((b) => b.id === businessId);
+    const biz = await fetchBusinessById(businessId);
     if (biz?.context) return biz.context;
   }
-  return MOCK_CONTEXT;
+
+  return createEmptyContext();
+}
+
+export async function parseMenuFile(file: File, analysisId?: string | null): Promise<MenuItem[]> {
+  const targetId = analysisId || 'new';
+  try {
+    const authHeader = await getAuthHeaders();
+    const formData = new FormData();
+    formData.append('file', file);
+    const res = await fetch(`${API_BASE}/analyses/${encodeURIComponent(targetId)}/context/menu-file`, {
+      method: 'POST',
+      headers: authHeader,
+      body: formData,
+    });
+    if (res.ok) {
+      const data = (await res.json()) as MenuItem[];
+      if (Array.isArray(data) && data.length > 0) {
+        return data;
+      }
+    }
+  } catch {
+    // Fallback client-side parser
+  }
+
+  // Client-side CSV / TSV / text fallback
+  try {
+    const text = await file.text();
+    const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
+    const items: MenuItem[] = [];
+    for (let i = 0; i < lines.length; i += 1) {
+      const line = lines[i]!;
+      const parts = line.includes(';')
+        ? line.split(';')
+        : line.includes('\t')
+          ? line.split('\t')
+          : line.split(',');
+      if (parts.length >= 2) {
+        const name = (parts[0] ?? '').replace(/^["']|["']$/g, '').trim();
+        const priceStr = (parts[1] ?? '').replace(/\D/g, '');
+        if (i === 0 && /nama|menu|item/i.test(name)) continue;
+        let price = Number(priceStr);
+        if (price > 0 && price < 500) price *= 1000;
+        if (name && price > 0) {
+          items.push({ id: `mi_${i + 1}`, name, price });
+        }
+      }
+    }
+    return items;
+  } catch {
+    return [];
+  }
 }
 
 export async function saveAnalysisContext(
@@ -502,22 +583,30 @@ export async function fetchVideoMetadata(analysisId?: string | null): Promise<Vi
   const id = analysisId || 'selasar-kopi';
   const remote = await tryApiFetch<VideoMetadata>(`/analyses/${id}/video`);
   if (remote) {
-    setLocalVideo(id, remote);
-    return remote;
+    const normalized: VideoMetadata = {
+      ...remote,
+      original_filename: remote.original_filename ?? '',
+      duration_s: remote.duration_s ?? 0,
+      cashier_at_s: remote.cashier_at_s ?? remote.duration_s ?? 0,
+    };
+    if (normalized.original_filename) {
+      setLocalVideo(id, normalized);
+    }
+    return normalized;
   }
   const local = getLocalVideoMap()[id];
   if (local) return local;
   return {
     id: `vid_${id}`,
     analysis_id: id,
-    original_filename: 'video_rekaman_selasar.mp4',
-    duration_s: 48,
-    cashier_at_s: 48,
+    original_filename: '',
+    duration_s: 0,
+    cashier_at_s: 0,
     width: 1920,
     height: 1080,
-    accepted: true,
-    blurred_faces_count: 14,
-    blurred_plates_count: 6,
+    accepted: false,
+    blurred_faces_count: 0,
+    blurred_plates_count: 0,
   };
 }
 
@@ -529,7 +618,7 @@ export async function saveVideoMetadata(
   const merged: VideoMetadata = {
     ...current,
     ...payload,
-    original_filename: payload.original_filename ?? current.original_filename ?? 'video_rekaman_selasar.mp4',
+    original_filename: payload.original_filename ?? current.original_filename ?? 'video_rekaman_toko.mp4',
     duration_s: payload.duration_s ?? current.duration_s ?? 48,
     cashier_at_s: payload.cashier_at_s ?? current.cashier_at_s ?? 48,
   };
@@ -577,6 +666,38 @@ export async function uploadVideoToSupabaseStorage(
   return { storageKey, publicUrl: null };
 }
 
+export async function uploadKeyframesToStorage(
+  analysisId: string,
+  dataUrls: string[],
+): Promise<string[]> {
+  if (!dataUrls.length || typeof window === 'undefined') return dataUrls;
+  const uploadedUrls: string[] = [];
+  const supabase = createClient();
+
+  for (let i = 0; i < dataUrls.length; i += 1) {
+    const dataUrl = dataUrls[i]!;
+    try {
+      const res = await fetch(dataUrl);
+      const blob = await res.blob();
+      const key = `${analysisId}/frames/frame_0${i + 1}.jpg`;
+      const { error } = await supabase.storage.from('videos').upload(key, blob, {
+        cacheControl: '3600',
+        upsert: true,
+        contentType: 'image/jpeg',
+      });
+      if (!error) {
+        const { data } = supabase.storage.from('videos').getPublicUrl(key);
+        uploadedUrls.push(data.publicUrl);
+      } else {
+        uploadedUrls.push(dataUrl);
+      }
+    } catch {
+      uploadedUrls.push(dataUrl);
+    }
+  }
+  return uploadedUrls;
+}
+
 export async function completeVideoUpload(
   analysisId: string,
   payload: Partial<VideoMetadata> & { cashier_at_s: number },
@@ -593,6 +714,7 @@ export async function completeVideoUpload(
       height: saved.height,
       blurred_faces_count: saved.blurred_faces_count,
       blurred_plates_count: saved.blurred_plates_count,
+      frame_keys: payload.frame_keys,
     }),
   });
   return saved;
@@ -621,14 +743,13 @@ function setLocalTranscript(analysisId: string, segments: TranscriptSegment[]) {
 export async function fetchTranscriptSegments(analysisId?: string | null): Promise<TranscriptSegment[]> {
   const id = analysisId || 'selasar-kopi';
   const remote = await tryApiFetch<TranscriptSegment[]>(`/analyses/${id}/transcript`);
-  if (remote && remote.length > 0) {
+  if (remote !== null) {
     setLocalTranscript(id, remote);
     return remote;
   }
   const local = getLocalTranscriptMap()[id];
   if (local && local.length > 0) return local;
-  setLocalTranscript(id, MOCK_TRANSCRIPT);
-  return MOCK_TRANSCRIPT;
+  return id === 'selasar-kopi' ? MOCK_TRANSCRIPT : [];
 }
 
 export async function createTranscriptSegment(
@@ -712,7 +833,7 @@ export async function deleteTranscriptSegment(analysisId: string, segmentId: str
   );
 }
 
-/* ---------------- Dashboard, Agent Decisions & Measurement Plan (F5, F6, F7) ---------------- */
+/* ---------------- Dashboard, Agent Decisions, What-If & Measurement Plan (F5, F6, F7) ---------------- */
 
 export async function fetchDashboardData(analysisId?: string | null): Promise<DashboardData> {
   const id = analysisId || 'selasar-kopi';
@@ -733,10 +854,20 @@ export async function fetchDashboardData(analysisId?: string | null): Promise<Da
   return MOCK_DASHBOARD;
 }
 
+export async function runWhatIfProjection(
+  analysisId: string,
+  checkedRecommendationIds: string[],
+): Promise<WhatIfProjectionData | null> {
+  return await tryApiFetch<WhatIfProjectionData>(`/analyses/${analysisId}/dashboard/what-if`, {
+    method: 'POST',
+    body: JSON.stringify({ checked_recommendation_ids: checkedRecommendationIds }),
+  });
+}
+
 export async function fetchAgentDecisions(analysisId?: string | null): Promise<AgentDecision[]> {
   const id = analysisId || 'selasar-kopi';
   const remote = await tryApiFetch<AgentDecision[]>(`/analyses/${id}/simulation/agents`);
-  if (remote && remote.length > 0) return remote;
+  if (remote !== null) return remote;
   return MOCK_AGENTS;
 }
 
@@ -744,7 +875,7 @@ export async function triggerSimulationRun(analysisId?: string | null): Promise<
   const id = analysisId || 'selasar-kopi';
   await tryApiFetch(`/analyses/${id}/simulation`, {
     method: 'POST',
-    body: JSON.stringify({ n_agents: 200, seed: 42 }),
+    body: JSON.stringify({ n_agents: 20, seed: 42 }),
   });
   await updateAnalysis(id, { status: 'ready', stale: false });
 }

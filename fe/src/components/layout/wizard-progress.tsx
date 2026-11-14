@@ -2,8 +2,8 @@
 
 import { Check, ClipboardList, Cpu, ListChecks, type LucideIcon, Users, Video } from 'lucide-react';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
-import React from 'react';
+import { usePathname, useSearchParams } from 'next/navigation';
+import React, { Suspense } from 'react';
 
 type Step = { step: number; label: string; href: string; icon: LucideIcon };
 
@@ -20,7 +20,7 @@ export const WIZARD_STEPS: Step[] = [
  * Progress bertahap: lingkaran per langkah dihubungkan garis.
  * Selesai = centang biru muda, aktif = lingkaran biru dengan cincin putus-putus, berikutnya = abu-abu.
  */
-export function WizardProgress({ current }: { current: number }) {
+export function WizardProgress({ current, querySuffix = '' }: { current: number; querySuffix?: string }) {
   return (
     <ol className="flex w-full items-start">
       {WIZARD_STEPS.map((s, idx) => {
@@ -85,7 +85,7 @@ export function WizardProgress({ current }: { current: number }) {
           <li key={s.step} className="flex min-w-0 flex-1 flex-col items-center">
             {done ? (
               <Link
-                href={s.href}
+                href={`${s.href}${querySuffix}`}
                 title={`Kembali ke ${s.label.toLowerCase()}`}
                 className="group flex w-full flex-col items-center rounded-lg transition-opacity hover:opacity-80"
               >
@@ -109,17 +109,34 @@ export function WizardProgress({ current }: { current: number }) {
 
 const STEP_BY_SEGMENT: Record<string, number> = { konteks: 1, video: 2, proses: 3, verifikasi: 4, simulasi: 5 };
 
+function WizardProgressSectionInner() {
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const step = STEP_BY_SEGMENT[pathname.split('/').filter(Boolean).pop() ?? ''];
+  if (!step) return null;
+
+  const params = new URLSearchParams();
+  const analysisId = searchParams.get('analysisId');
+  const businessId = searchParams.get('businessId');
+  if (analysisId) params.set('analysisId', analysisId);
+  if (businessId) params.set('businessId', businessId);
+  const querySuffix = params.toString() ? `?${params.toString()}` : '';
+
+  return (
+    <div className="mx-auto w-full max-w-4xl px-4 pt-8 sm:px-6">
+      <WizardProgress current={step} querySuffix={querySuffix} />
+    </div>
+  );
+}
+
 /**
  * Progress untuk halaman alur analisis baru. Diletakkan di atas konten halaman (bukan di topbar),
  * sehingga ikut bergulir bersama halaman. Tidak tampil di halaman lain.
  */
 export function WizardProgressSection() {
-  const pathname = usePathname();
-  const step = STEP_BY_SEGMENT[pathname.split('/').filter(Boolean).pop() ?? ''];
-  if (!step) return null;
   return (
-    <div className="mx-auto w-full max-w-4xl px-4 pt-8 sm:px-6">
-      <WizardProgress current={step} />
-    </div>
+    <Suspense fallback={null}>
+      <WizardProgressSectionInner />
+    </Suspense>
   );
 }

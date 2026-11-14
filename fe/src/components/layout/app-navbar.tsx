@@ -1,8 +1,15 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { Suspense, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { usePathname, useRouter } from 'next/navigation';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import {
+  fetchAnalyses,
+  fetchBusinesses,
+  getLocalAnalyses,
+  getLocalBusinesses,
+  subscribeCrudChanges,
+} from '@/lib/api/crud';
 import { signOutUser, useAuthUser } from '@/lib/auth/use-auth';
 import { SidebarTrigger } from '@/components/ui/sidebar';
 import {
@@ -14,6 +21,7 @@ import {
   BreadcrumbSeparator,
   BreadcrumbText,
 } from '@/components/ui/breadcrumb';
+import type { Analysis, Business } from '@/types/api';
 
 export interface BreadcrumbCrumb {
   label: string;
@@ -26,12 +34,34 @@ interface AppNavbarProps {
   breadcrumbs?: BreadcrumbCrumb[];
 }
 
-/** Topbar aplikasi: tombol sidebar, breadcrumb, dan menu akun. Dirender sekali di AppShell. */
-export function AppNavbar({ businessName = 'Selasar Kopi & Roti', breadcrumbs }: AppNavbarProps) {
+function AppNavbarInner({ businessName, breadcrumbs }: AppNavbarProps) {
   const pathname = usePathname();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const analysisIdParam = searchParams.get('analysisId');
+  const businessIdParam = searchParams.get('businessId');
+
   const { user } = useAuthUser();
   const [showUserMenu, setShowUserMenu] = useState(false);
+  const [businesses, setBusinesses] = useState<Business[]>(() => getLocalBusinesses());
+  const [analyses, setAnalyses] = useState<Analysis[]>(() => getLocalAnalyses());
+
+  useEffect(() => {
+    let active = true;
+    void Promise.all([fetchBusinesses(), fetchAnalyses()]).then(([bizList, anlList]) => {
+      if (!active) return;
+      setBusinesses(bizList);
+      setAnalyses(anlList);
+    });
+    const unsubscribe = subscribeCrudChanges(() => {
+      setBusinesses(getLocalBusinesses());
+      setAnalyses(getLocalAnalyses());
+    });
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, []);
 
   const handleSignOut = async () => {
     setShowUserMenu(false);
@@ -39,18 +69,31 @@ export function AppNavbar({ businessName = 'Selasar Kopi & Roti', breadcrumbs }:
     router.push('/masuk');
   };
 
-  // Setiap tingkat breadcrumb menunjuk ke halamannya SENDIRI (bukan ke halaman tingkat berikutnya):
-  //   Daftar bisnis        -> /businesses
-  //   <nama usaha>         -> /businesses/analyses   (halaman usaha = daftar analisisnya)
-  //   Analisis <tanggal>   -> /business/analysis     (halaman analisis = dasbornya)
-  //   Jelajah agen         -> /business/analysis/agents
-  // Saat membuat analisis baru, "Analisis baru" tidak punya halaman sendiri, jadi berupa teks.
+  const activeAnalysis =
+    (analysisIdParam ? analyses.find((a) => a.id === analysisIdParam) : undefined) ??
+    analyses.find((a) => a.status === 'ready') ??
+    analyses[0];
+
+  const activeBusiness =
+    (businessIdParam ? businesses.find((b) => b.id === businessIdParam) : undefined) ??
+    (activeAnalysis ? businesses.find((b) => b.id === activeAnalysis.business_id) : undefined) ??
+    businesses[0];
+
+  const resolvedBusinessName = businessName ?? activeBusiness?.name ?? 'Tempat Usaha';
+  const resolvedBusinessHref = activeBusiness
+    ? `/businesses/analyses?businessId=${encodeURIComponent(activeBusiness.id)}`
+    : '/businesses/analyses';
+  const resolvedAnalysisName = activeAnalysis?.name ?? 'Analisis';
+  const resolvedAnalysisHref = activeAnalysis
+    ? `/business/analysis?analysisId=${encodeURIComponent(activeAnalysis.id)}`
+    : '/business/analysis';
+
   const getCrumbs = (): BreadcrumbCrumb[] => {
     if (breadcrumbs) return breadcrumbs;
 
     const root: BreadcrumbCrumb = { label: 'Daftar bisnis', href: '/businesses' };
-    const business: BreadcrumbCrumb = { label: businessName, href: '/businesses/analyses' };
-    const analysis: BreadcrumbCrumb = { label: 'Analisis 13 Nov 2026', href: '/business/analysis' };
+    const business: BreadcrumbCrumb = { label: resolvedBusinessName, href: resolvedBusinessHref };
+    const analysis: BreadcrumbCrumb = { label: resolvedAnalysisName, href: resolvedAnalysisHref };
 
     if (pathname === '/businesses') {
       return [{ ...root, isCurrent: true }];
@@ -74,8 +117,9 @@ export function AppNavbar({ businessName = 'Selasar Kopi & Roti', breadcrumbs }:
     };
     const stepLabel = STEP_LABEL[pathname.split('/').filter(Boolean).pop() ?? ''];
     if (stepLabel) {
-      // Detail langkah sudah ditampilkan oleh progress di halaman, jadi breadcrumb cukup "Analisis baru".
-      return [root, business, { label: 'Analisis baru', isCurrent: true }];
+      const wizardCrumbLabel =
+        analysisIdParam && activeAnalysis ? activeAnalysis.name : 'Analisis baru';
+      return [root, business, { label: wizardCrumbLabel, isCurrent: true }];
     }
 
     return [{ ...root, isCurrent: true }];
@@ -93,7 +137,7 @@ export function AppNavbar({ businessName = 'Selasar Kopi & Roti', breadcrumbs }:
             <div className="flex items-center gap-3 sm:gap-4 min-w-0">
               <SidebarTrigger className="-ml-1.5 shrink-0" />
 
-              {/* Breadcrumbs Navigasi (Menggantikan Dropdown Navbar & Submenu Sidebar) */}
+              {/* Breadcrumbs Navigasi */}
               <Breadcrumb className="hidden sm:flex min-w-0">
                 <BreadcrumbList>
                   {crumbs.map((crumb, idx) => {
@@ -117,9 +161,8 @@ export function AppNavbar({ businessName = 'Selasar Kopi & Roti', breadcrumbs }:
               </Breadcrumb>
             </div>
 
-            {/* Sisi Kanan: profil (tombol Analisis baru ada di sidebar) */}
+            {/* Sisi Kanan: profil */}
             <div className="flex items-center gap-2 sm:gap-3 shrink-0">
-              {/* User Avatar Menu */}
               <div className="relative">
                 <button
                   type="button"
@@ -144,7 +187,7 @@ export function AppNavbar({ businessName = 'Selasar Kopi & Roti', breadcrumbs }:
                       Daftar Bisnis
                     </Link>
                     <Link
-                      href="/businesses/analyses"
+                      href={resolvedBusinessHref}
                       onClick={() => setShowUserMenu(false)}
                       className="w-full text-left flex items-center gap-2 rounded-md px-2.5 py-1.5 text-xs text-ink hover:bg-hover transition"
                     >
@@ -165,9 +208,16 @@ export function AppNavbar({ businessName = 'Selasar Kopi & Roti', breadcrumbs }:
             </div>
           </div>
         </div>
-
-        {/* Wizard Stepper (Hanya Muncul saat Mode Wizard, 4 Langkah) */}
       </header>
     </>
+  );
+}
+
+/** Topbar aplikasi: tombol sidebar, breadcrumb, dan menu akun. Dirender sekali di AppShell. */
+export function AppNavbar(props: AppNavbarProps) {
+  return (
+    <Suspense fallback={<header className="sticky top-0 z-40 h-14 w-full shrink-0 border-b border-line bg-white/90" />}>
+      <AppNavbarInner {...props} />
+    </Suspense>
   );
 }

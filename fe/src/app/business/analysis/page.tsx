@@ -7,9 +7,9 @@ import { TrendingDown, TrendingUp, TriangleAlert, Wallet, type LucideIcon } from
 import { InfoIcon, TrendingUpIcon } from '@/components/ui/icons';
 import { Badge } from '@/components/ui/badge';
 import { TwinViewer } from '@/components/dashboard/twin-viewer';
-import { fetchDashboardData, subscribeCrudChanges } from '@/lib/api/crud';
+import { fetchDashboardData, runWhatIfProjection, subscribeCrudChanges } from '@/lib/api/crud';
 import { MOCK_DASHBOARD, MOCK_WHAT_IF_PROJECTION, WhatIfFix } from '@/lib/mock/dashboard';
-import type { DashboardData } from '@/types/api';
+import type { DashboardData, WaypointData, WhatIfProjectionData } from '@/types/api';
 
 const KPI_TONE = {
   impact: 'bg-impact-10 text-impact',
@@ -91,47 +91,46 @@ function KpiCard({
 function DashboardResultInner() {
   const searchParams = useSearchParams();
   const analysisId = searchParams.get('analysisId') || 'selasar-kopi';
-  const querySuffix = `?analysisId=${encodeURIComponent(analysisId)}`;
+  const businessId = searchParams.get('businessId');
+  const querySuffix = `?analysisId=${encodeURIComponent(analysisId)}${
+    businessId ? `&businessId=${encodeURIComponent(businessId)}` : ''
+  }`;
 
   const [data, setData] = useState<DashboardData>(MOCK_DASHBOARD);
-  const projection = MOCK_WHAT_IF_PROJECTION;
+  const [projection, setProjection] = useState<WhatIfProjectionData>(
+    MOCK_DASHBOARD.what_if_projection ?? MOCK_WHAT_IF_PROJECTION,
+  );
+  const [activeWaypoint, setActiveWaypoint] = useState<string>('tangga');
+  const [fixes, setFixes] = useState<WhatIfFix[]>([]);
+  const [isSimulating, setIsSimulating] = useState(false);
 
   useEffect(() => {
     const load = () => {
-      void fetchDashboardData(analysisId).then((res) => setData(res));
+      void fetchDashboardData(analysisId).then((res) => {
+        setData(res);
+        if (res.what_if_projection) {
+          setProjection(res.what_if_projection);
+        }
+        if (res.recommendations && res.recommendations.length > 0) {
+          setFixes(
+            res.recommendations.map((rec, idx) => ({
+              id: rec.id,
+              title: rec.title,
+              impact_label: idx === 0 ? 'Dampak tinggi' : 'Dampak sedang',
+              effort_label: rec.rank === 1 ? 'Usaha rendah' : 'Usaha sedang',
+              is_checked: true,
+            })),
+          );
+        }
+        if (res.waypoints && res.waypoints.length > 0) {
+          const hotspot = res.waypoints.find((w) => w.is_hotspot) ?? res.waypoints[0];
+          if (hotspot) setActiveWaypoint(hotspot.id);
+        }
+      });
     };
     load();
     return subscribeCrudChanges(load);
   }, [analysisId]);
-
-  const [activeWaypoint, setActiveWaypoint] = useState<string>('tangga');
-
-  // State untuk What-If Simulator (Simulasi Hipotesis)
-  const [fixes, setFixes] = useState<WhatIfFix[]>([
-    {
-      id: 'fix_1',
-      title: 'Pasang papan menu & harga di depan etalase',
-      impact_label: 'Dampak tinggi',
-      effort_label: 'Usaha rendah',
-      is_checked: true,
-    },
-    {
-      id: 'fix_2',
-      title: 'Putar papan nama menghadap trotoar',
-      impact_label: 'Dampak sedang',
-      effort_label: 'Usaha sedang',
-      is_checked: true,
-    },
-    {
-      id: 'fix_3',
-      title: 'Tanda "Buka" dan singkap sedikit tirai',
-      impact_label: 'Dampak sedang',
-      effort_label: 'Usaha minimal',
-      is_checked: true,
-    },
-  ]);
-
-  const [isSimulating, setIsSimulating] = useState(false);
 
   const toggleFix = (id: string) => {
     setFixes((prev) =>
@@ -139,14 +138,29 @@ function DashboardResultInner() {
     );
   };
 
-  const handleRunWhatIf = () => {
+  const handleRunWhatIf = async () => {
     setIsSimulating(true);
-    setTimeout(() => {
+    try {
+      const checkedIds = fixes.filter((f) => f.is_checked).map((f) => f.id);
+      const updated = await runWhatIfProjection(analysisId, checkedIds);
+      if (updated) {
+        setProjection(updated);
+      }
+    } finally {
       setIsSimulating(false);
-    }, 1200);
+    }
   };
 
   const checkedFixesCount = fixes.filter((f) => f.is_checked).length;
+  const durationSeconds = Math.max(1, Math.round(data.twin_meta?.path_duration_seconds || 48));
+  const waypoints: WaypointData[] =
+    data.waypoints && data.waypoints.length > 0
+      ? data.waypoints
+      : [
+          { id: 'jalan', time: '00:04', name: 'Trotoar Depan', status: 'Daya Tarik Baik', is_hotspot: false },
+          { id: 'tangga', time: '00:18', name: 'Akses Pintu / Tangga', status: `${data.kpi.drop_off_rate_text} bocor`, is_hotspot: true },
+          { id: 'kasir', time: '00:36', name: 'Titik Pesan / Kasir', status: 'Konversi Solid', is_hotspot: false },
+        ];
 
   return (
     <div className="flex min-h-full flex-col justify-between bg-white">
@@ -157,13 +171,13 @@ function DashboardResultInner() {
           <div>
             <div className="flex flex-wrap items-center gap-2 mb-2">
               <span className="text-[13px] text-muted">Hasil analisis video</span>
-              <Badge>48 detik rekaman</Badge>
+              <Badge>{`${durationSeconds} detik rekaman`}</Badge>
             </div>
             <h1 className="text-2xl sm:text-[32px] font-normal tracking-[-0.035em] text-ink">
               Dasbor Titik Gesekan & Peluang Konversi
             </h1>
             <p className="text-xs sm:text-[13px] text-muted mt-0.5">
-              Pemetaan jalur dari trotoar depan hingga kasir lantai 2 untuk {data.business_name}.
+              Pemetaan jalur calon pelanggan dari jalan hingga titik pesan untuk {data.business_name}.
             </p>
           </div>
 
@@ -207,7 +221,7 @@ function DashboardResultInner() {
           <KpiCard
             label="Penyebab utama batal"
             info={data.kpi.main_cause_detail}
-            value="Menu & Harga"
+            value={data.kpi.main_cause_title || 'Menu & Harga'}
             sub={data.kpi.main_cause_cue_rank}
             icon={TriangleAlert}
             tone="friction"
@@ -228,7 +242,7 @@ function DashboardResultInner() {
           <div className="space-y-4">
             <TwinViewer
               source={{ kind: 'ply', url: '/samples/goffee-depan-kasir.ply', name: 'goffee-depan-kasir' }}
-              meta={['48 detik', '3 zona']}
+              meta={[`${durationSeconds} detik`, `${waypoints.length} zona`]}
             />
             <div className="rounded-xl border border-line bg-white overflow-hidden">
               {/* 2D Waypoint Progression Bar */}
@@ -237,11 +251,7 @@ function DashboardResultInner() {
                   Titik Pantau Lintasan Video (Klik untuk detail)
                 </p>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  {[
-                    { id: 'jalan', time: '00:04', name: 'Trotoar Depan', status: 'Daya Tarik Baik' },
-                    { id: 'tangga', time: '00:18', name: 'Akses Kaki Tangga', status: '65,5% bocor', isHotspot: true },
-                    { id: 'kasir', time: '00:36', name: 'Meja Kasir Lantai 2', status: 'Konversi Solid' },
-                  ].map((wp) => (
+                  {waypoints.map((wp) => (
                     <button
                       key={wp.id}
                       type="button"
@@ -254,12 +264,12 @@ function DashboardResultInner() {
                     >
                       <div className="flex items-center justify-between font-mono text-[10px] text-muted mb-1">
                         <span>{wp.time}</span>
-                        {wp.isHotspot && (
+                        {wp.is_hotspot && (
                           <span className="text-friction font-bold">Titik Friksi</span>
                         )}
                       </div>
                       <p className="font-medium text-ink truncate">{wp.name}</p>
-                      <p className={`font-mono text-[11px] mt-0.5 ${wp.isHotspot ? 'text-friction font-medium' : 'text-subtle'}`}>
+                      <p className={`font-mono text-[11px] mt-0.5 ${wp.is_hotspot ? 'text-friction font-medium' : 'text-subtle'}`}>
                         {wp.status}
                       </p>
                     </button>
@@ -423,7 +433,7 @@ function DashboardResultInner() {
                 <ProjectionStat label="Pembeli" value={`${projection.buyers_projected} agen`} sub={`Naik dari ${projection.buyers_baseline} agen`} icon={TrendingUp} tone="impact" />
                 <ProjectionStat label="Penurunan" value={projection.drop_rate_projected} sub={`Sebelumnya ${projection.drop_rate_baseline}`} icon={TrendingDown} tone="impact" />
                 <ProjectionStat label="Perkiraan omzet" value={projection.revenue_lift} sub="Rupiah per hari" icon={TrendingUp} tone="impact" />
-                <ProjectionStat label="Modal" value={projection.cost_estimate} sub="Tiga perbaikan" icon={Wallet} tone="neutral" />
+                <ProjectionStat label="Modal" value={projection.cost_estimate} sub={`${checkedFixesCount} perbaikan dipilih`} icon={Wallet} tone="neutral" />
               </div>
 
               {/* 4 Bar Perbandingan (Saat ini vs Simulasi) */}

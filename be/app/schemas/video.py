@@ -56,6 +56,7 @@ class VideoCompleteRequest(BaseModel):
     height: int | None = None
     blurred_faces_count: int | None = None
     blurred_plates_count: int | None = None
+    frame_keys: list[str] | None = None
 
 
 class VideoCompleteResponse(BaseModel):
@@ -85,11 +86,12 @@ class VideoMetadataOut(BaseModel):
     analysis_id: str
     original_filename: str | None = None
     storage_key: str | None = None
-    duration_s: float = 48.0
+    public_url: str | None = None
+    duration_s: float = 0.0
     cashier_at_s: float | None = None
     width: int | None = None
     height: int | None = None
-    accepted: bool = True
+    accepted: bool = False
     quality_checks: dict[str, str] = {}
     blurred_faces_count: int = 0
     blurred_plates_count: int = 0

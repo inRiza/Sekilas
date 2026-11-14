@@ -12,11 +12,13 @@ import { TimeSelect, isWithinHours, toMinutes } from '@/components/ui/time-selec
 import {
   calculateMedianPriceLevel,
   createAnalysis,
+  createEmptyContext,
   fetchAnalysisContext,
+  fetchBusinessById,
   getLocalBusinesses,
+  parseMenuFile,
   saveAnalysisContext,
 } from '@/lib/api/crud';
-import { MOCK_CONTEXT } from '@/lib/mock/context';
 import { BusinessGoal, BusinessType, FixedConstraint, PasserbyType, SurroundingsType } from '@/types/api';
 
 /* ---------------- Menu ---------------- */
@@ -28,10 +30,10 @@ type MenuFile = { name: string; previewUrl?: string };
 const MENU_SOURCES: Record<MenuSource, { label: string; icon: typeof Keyboard; accept?: string; hint?: string }> = {
   manual: { label: 'Ketik manual', icon: Keyboard },
   excel: {
-    label: 'File Excel',
+    label: 'File Excel / CSV',
     icon: FileSpreadsheet,
-    accept: '.xlsx,.xls,.csv',
-    hint: 'Kolom: nama menu, harga porsi. Format .xlsx, .xls, atau .csv.',
+    accept: '.xlsx,.xls,.csv,.txt',
+    hint: 'Kolom: nama menu, harga porsi. Format .csv, .xlsx, atau .xls.',
   },
   foto: {
     label: 'Foto menu',
@@ -43,9 +45,6 @@ const MENU_SOURCES: Record<MenuSource, { label: string; icon: typeof Keyboard; a
 
 let rowSeq = 0;
 const newRow = (name = '', price = ''): MenuRow => ({ id: `r${++rowSeq}`, name, price });
-
-/** Contoh "hasil baca" file/foto (UI saja, belum terhubung ke backend). */
-const SAMPLE_READ = MOCK_CONTEXT.menu_items.map((m) => ({ name: m.name, price: String(m.price) }));
 
 const formatRupiah = (digits: string) => (digits ? Number(digits).toLocaleString('id-ID') : '');
 const onlyDigits = (v: string) => v.replace(/\D/g, '').slice(0, 9);
@@ -96,10 +95,19 @@ function MenuTable({ rows, onChange }: { rows: MenuRow[]; onChange: (rows: MenuR
 }
 
 /** Menu: ketik manual, atau unggah file Excel/foto lalu koreksi hasil bacanya di tabel yang sama. */
-function MenuInput({ rows, onRows }: { rows: MenuRow[]; onRows: (rows: MenuRow[]) => void }) {
+function MenuInput({
+  rows,
+  onRows,
+  analysisId,
+}: {
+  rows: MenuRow[];
+  onRows: (rows: MenuRow[]) => void;
+  analysisId?: string | null;
+}) {
   const [source, setSource] = useState<MenuSource>('manual');
   const [file, setFile] = useState<MenuFile | null>(null);
   const [dragging, setDragging] = useState(false);
+  const [reading, setReading] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const config = MENU_SOURCES[source];
 
@@ -109,10 +117,20 @@ function MenuInput({ rows, onRows }: { rows: MenuRow[]; onRows: (rows: MenuRow[]
     if (inputRef.current) inputRef.current.value = '';
   };
 
-  const pick = (f: File | undefined) => {
+  const pick = async (f: File | undefined) => {
     if (!f) return;
     setFile({ name: f.name, previewUrl: f.type.startsWith('image/') ? URL.createObjectURL(f) : undefined });
-    onRows(SAMPLE_READ.map((r) => newRow(r.name, r.price)));
+    setReading(true);
+    try {
+      const parsed = await parseMenuFile(f, analysisId);
+      if (parsed.length > 0) {
+        onRows(parsed.map((r) => newRow(r.name, String(r.price))));
+      } else {
+        onRows([newRow()]);
+      }
+    } finally {
+      setReading(false);
+    }
   };
 
   return (
@@ -143,7 +161,7 @@ function MenuInput({ rows, onRows }: { rows: MenuRow[]; onRows: (rows: MenuRow[]
 
       {source !== 'manual' && !file && (
         <>
-          <input ref={inputRef} type="file" accept={config.accept} className="hidden" onChange={(e) => pick(e.target.files?.[0])} />
+          <input ref={inputRef} type="file" accept={config.accept} className="hidden" onChange={(e) => void pick(e.target.files?.[0])} />
           <button
             type="button"
             onClick={() => inputRef.current?.click()}
@@ -155,7 +173,7 @@ function MenuInput({ rows, onRows }: { rows: MenuRow[]; onRows: (rows: MenuRow[]
             onDrop={(e) => {
               e.preventDefault();
               setDragging(false);
-              pick(e.dataTransfer.files?.[0]);
+              void pick(e.dataTransfer.files?.[0]);
             }}
             className={`flex w-full flex-col items-center justify-center gap-2 rounded-md border border-dashed px-4 py-8 text-center transition-colors ${
               dragging ? 'border-primary-40 bg-primary-10' : 'border-[#c9ced6] bg-panel hover:bg-hover'
@@ -185,7 +203,11 @@ function MenuInput({ rows, onRows }: { rows: MenuRow[]; onRows: (rows: MenuRow[]
             )}
             <div className="min-w-0 flex-1">
               <p className="truncate text-[13px] font-medium text-ink">{file.name}</p>
-              <p className="mt-0.5 text-[12px] text-muted">Hasil baca ada di tabel di bawah. Periksa dan koreksi bila perlu.</p>
+              <p className="mt-0.5 text-[12px] text-muted">
+                {reading
+                  ? 'Membaca daftar menu & harga dari file...'
+                  : 'Hasil baca ada di tabel di bawah. Periksa dan koreksi bila perlu.'}
+              </p>
             </div>
             <button
               type="button"
@@ -256,27 +278,28 @@ function KonteksUsahaInner() {
   const searchParams = useSearchParams();
   const analysisIdParam = searchParams.get('analysisId');
   const businessIdParam = searchParams.get('businessId');
+  const modeParam = searchParams.get('mode');
 
-  // 1. Informasi dasar
-  const [businessType, setBusinessType] = useState<BusinessType | null>(MOCK_CONTEXT.business_type);
-  const [businessName, setBusinessName] = useState(MOCK_CONTEXT.business_name);
-  const [locationName, setLocationName] = useState(MOCK_CONTEXT.location_name);
-  const [locationDescription, setLocationDescription] = useState(MOCK_CONTEXT.location_description);
+  // 1. Informasi dasar (awal kosong agar tidak bocor data usaha contoh saat buka usaha baru)
+  const [businessType, setBusinessType] = useState<BusinessType | null>('kedai');
+  const [businessName, setBusinessName] = useState('');
+  const [locationName, setLocationName] = useState('');
+  const [locationDescription, setLocationDescription] = useState('');
 
   // 2. Pelanggan & tujuan
-  const [surroundings, setSurroundings] = useState<string[]>(['dekat_kampus', 'jalan_utama']);
+  const [surroundings, setSurroundings] = useState<string[]>(['jalan_utama']);
   const [surroundingsOther, setSurroundingsOther] = useState('');
-  const [passersby, setPassersby] = useState<PasserbyType[]>(MOCK_CONTEXT.passersby);
-  const [businessGoal, setBusinessGoal] = useState<BusinessGoal>(MOCK_CONTEXT.business_goal);
-  const [fixedConstraints, setFixedConstraints] = useState<FixedConstraint[]>(MOCK_CONTEXT.fixed_constraints);
+  const [passersby, setPassersby] = useState<PasserbyType[]>(['pekerja_kantor']);
+  const [businessGoal, setBusinessGoal] = useState<BusinessGoal>('lebih_banyak_pembeli_baru');
+  const [fixedConstraints, setFixedConstraints] = useState<FixedConstraint[]>(['lokasi']);
 
   // 3. Menu & harga
-  const [menuRows, setMenuRows] = useState<MenuRow[]>(() => MOCK_CONTEXT.menu_items.map((m) => newRow(m.name, String(m.price))));
+  const [menuRows, setMenuRows] = useState<MenuRow[]>(() => [newRow()]);
 
   // 4. Jam operasional
-  const [openHour, setOpenHour] = useState(MOCK_CONTEXT.opening_hours.open);
-  const [closeHour, setCloseHour] = useState(MOCK_CONTEXT.opening_hours.close);
-  const [rushRanges, setRushRanges] = useState<Range[]>(() => MOCK_CONTEXT.rush_hours.map((r) => newRange(r.start, r.end)));
+  const [openHour, setOpenHour] = useState('08:00');
+  const [closeHour, setCloseHour] = useState('22:00');
+  const [rushRanges, setRushRanges] = useState<Range[]>(() => [newRange('12:00', '14:00')]);
 
   // 5. Penjualan & fasilitas (opsional)
   const [dailySales, setDailySales] = useState('');
@@ -288,7 +311,58 @@ function KonteksUsahaInner() {
 
   useEffect(() => {
     let active = true;
-    void fetchAnalysisContext(analysisIdParam, businessIdParam).then((ctx) => {
+
+    const load = async () => {
+      // Jika mode=new dan belum ada analysisId, mulai dari profil dasar cabang usaha tersebut
+      if (modeParam === 'new' && !analysisIdParam && businessIdParam) {
+        const biz = await fetchBusinessById(businessIdParam);
+        const existingCtx = await fetchAnalysisContext(null, businessIdParam);
+        if (!active) return;
+
+        // Jika konteks yang kembali punya nama yang cocok dengan usaha ini, gunakan; jika tidak, mulai dari identitas usaha baru
+        const ctxMatchesBiz =
+          biz && existingCtx.business_name.trim().toLowerCase() === biz.name.trim().toLowerCase();
+        const ctx = ctxMatchesBiz
+          ? existingCtx
+          : {
+              ...createEmptyContext(biz?.id),
+              business_type: biz?.category ?? 'kedai',
+              business_name: biz?.name ?? '',
+              location_name: biz?.address ?? '',
+            };
+
+        setBusinessType(ctx.business_type);
+        setBusinessName(ctx.business_name);
+        setLocationName(ctx.location_name);
+        setLocationDescription(ctx.location_description);
+        setSurroundings(
+          ctx.surroundings && ctx.surroundings.length > 0
+            ? ctx.surroundings
+            : [ctx.surroundings_type || 'jalan_utama'],
+        );
+        setSurroundingsOther(ctx.surroundings_other ?? '');
+        setPassersby(ctx.passersby ?? []);
+        setBusinessGoal(ctx.business_goal);
+        setFixedConstraints(ctx.fixed_constraints ?? []);
+        setMenuRows(
+          ctx.menu_items && ctx.menu_items.length > 0
+            ? ctx.menu_items.map((m) => newRow(m.name, String(m.price)))
+            : [newRow()],
+        );
+        setOpenHour(ctx.opening_hours?.open ?? '08:00');
+        setCloseHour(ctx.opening_hours?.close ?? '22:00');
+        setRushRanges(
+          ctx.rush_hours && ctx.rush_hours.length > 0
+            ? ctx.rush_hours.map((r) => newRange(r.start, r.end))
+            : [newRange('12:00', '14:00')],
+        );
+        setDailySales(ctx.daily_sales_rp ? String(ctx.daily_sales_rp) : '');
+        setDailyVisitors(ctx.daily_visitors ? String(ctx.daily_visitors) : '');
+        setParking(ctx.parking ?? []);
+        return;
+      }
+
+      const ctx = await fetchAnalysisContext(analysisIdParam, businessIdParam);
       if (!active) return;
       setBusinessType(ctx.business_type);
       setBusinessName(ctx.business_name);
@@ -297,7 +371,7 @@ function KonteksUsahaInner() {
       setSurroundings(
         ctx.surroundings && ctx.surroundings.length > 0
           ? ctx.surroundings
-          : [ctx.surroundings_type || 'dekat_kampus'],
+          : [ctx.surroundings_type || 'jalan_utama'],
       );
       setSurroundingsOther(ctx.surroundings_other ?? '');
       setPassersby(ctx.passersby ?? []);
@@ -318,11 +392,13 @@ function KonteksUsahaInner() {
       setDailySales(ctx.daily_sales_rp ? String(ctx.daily_sales_rp) : '');
       setDailyVisitors(ctx.daily_visitors ? String(ctx.daily_visitors) : '');
       setParking(ctx.parking ?? []);
-    });
+    };
+
+    void load();
     return () => {
       active = false;
     };
-  }, [analysisIdParam, businessIdParam]);
+  }, [analysisIdParam, businessIdParam, modeParam]);
 
   const toggle = <T,>(list: T[], val: T) => (list.includes(val) ? list.filter((v) => v !== val) : [...list, val]);
 
@@ -406,7 +482,9 @@ function KonteksUsahaInner() {
         await saveAnalysisContext(targetAnalysisId, contextPayload, resolvedBizId);
       }
 
-      router.push(`/business/analysis/video?analysisId=${encodeURIComponent(targetAnalysisId)}`);
+      router.push(
+        `/business/analysis/video?analysisId=${encodeURIComponent(targetAnalysisId)}&businessId=${encodeURIComponent(resolvedBizId)}`,
+      );
     } finally {
       setIsSaving(false);
     }
@@ -554,7 +632,7 @@ function KonteksUsahaInner() {
                 <SectionTitle n={3} title="Menu & harga" description="Agen mencocokkan harga menu dengan daya belinya." />
                 <Field id="f-menu" missing={err('f-menu')}>
                   <Label requiredText="wajib">Daftar menu & harga porsi</Label>
-                  <MenuInput rows={menuRows} onRows={setMenuRows} />
+                  <MenuInput rows={menuRows} onRows={setMenuRows} analysisId={analysisIdParam} />
                 </Field>
               </section>
 

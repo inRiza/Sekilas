@@ -102,7 +102,10 @@ function ProsesInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const analysisId = searchParams.get('analysisId') || 'selasar-kopi';
-  const querySuffix = `?analysisId=${encodeURIComponent(analysisId)}`;
+  const businessId = searchParams.get('businessId');
+  const querySuffix = `?analysisId=${encodeURIComponent(analysisId)}${
+    businessId ? `&businessId=${encodeURIComponent(businessId)}` : ''
+  }`;
 
   const [segments, setSegments] = useState<TranscriptSegment[]>(MOCK_TRANSCRIPT);
   useEffect(() => {
@@ -128,8 +131,8 @@ function ProsesInner() {
     if (box) box.scrollTo({ top: box.scrollHeight, behavior: 'smooth' });
   }, [shown]);
 
-  const transcriptDone = shown >= log.length;
-  const progress = Math.round((shown / log.length) * 100);
+  const transcriptDone = log.length > 0 && shown >= log.length;
+  const progress = log.length > 0 ? Math.round((shown / log.length) * 100) : 100;
   const segmentsRead = log.slice(0, shown).filter((l) => l.kind === 'segment').length;
 
   return (
@@ -159,7 +162,7 @@ function ProsesInner() {
                   <StageRow
                     icon={FileText}
                     title="Transkrip video"
-                    description={`${segmentsRead} dari ${MOCK_TRANSCRIPT.length} segmen dibaca, lengkap dengan frame bukti.`}
+                    description={`${segmentsRead} dari ${segments.length} segmen dibaca, lengkap dengan frame bukti.`}
                     status={transcriptDone ? 'done' : 'running'}
                   />
                   <StageRow
