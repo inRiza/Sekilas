@@ -10,9 +10,9 @@ import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar';
 /**
  * Kerangka halaman aplikasi: sidebar di kiri, topbar dan konten di panel putih.
  *
- * Sidebar, topbar, dan progress membaca URL (`usePathname`). Pada rute dengan parameter dinamis
- * (misal /analisis/[id]/...) dan cacheComponents aktif, hook itu menunggu sampai request, jadi
- * masing-masing dibungkus <Suspense> dengan fallback seukuran aslinya agar tata letak tidak bergeser.
+ * Sidebar, topbar, dan progress membaca URL (`usePathname`). Dengan `cacheComponents` aktif,
+ * hook itu menunggu sampai request, jadi masing-masing dibungkus <Suspense> dengan fallback
+ * seukuran aslinya agar tata letak tidak bergeser.
  */
 export function AppShell({ children }: { children: React.ReactNode }) {
   return (

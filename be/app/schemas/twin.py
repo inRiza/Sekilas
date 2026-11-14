@@ -44,3 +44,34 @@ class TwinAssets(BaseModel):
 class TwinStatus(BaseModel):
     job: JobState
     assets: TwinAssets | None = None
+
+
+class TwinBuildJob(BaseModel):
+    """Job pembangunan Visual Twin mode lokal (PRD 11.2); `stage` 0..stage_count-1."""
+
+    id: str
+    status: str  # antre | berjalan | selesai | gagal
+    stage: int
+    stage_count: int
+    stage_label: str
+    progress: float
+    message: str | None = None
+
+
+class TwinBuildAssets(BaseModel):
+    mode: TwinMode
+    splat_url: str | None = None
+    ply_url: str | None = None
+    registered_frames: int
+    total_frames: int
+    points_count: int
+    quality_label: str
+    path_duration_seconds: float = 0.0
+    diagnosis_summary: str | None = None
+
+
+class TwinBuild(BaseModel):
+    """GET /analyses/{id}/twin: job twin terbaru + aset bila sudah jadi."""
+
+    job: TwinBuildJob | None = None
+    assets: TwinBuildAssets | None = None

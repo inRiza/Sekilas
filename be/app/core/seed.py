@@ -1,52 +1,43 @@
-"""Data awal untuk demo: satu bisnis demo dengan analisis siap baca (PRD 4.4.5).
+"""Data awal untuk Postgres lokal: isi supabase/seed.sql (analisis demo `selasar-kopi`).
 
-Visual Twin demo memakai hasil pipeline lokal yang sudah ada di fe/public/samples.
+Visual Twin demo diarahkan ke hasil pipeline lokal yang sudah ada di fe/public/samples.
+Di Supabase, seed dijalankan lewat `supabase db reset`, jadi langkah ini dilewati bila
+data demo sudah ada.
 """
 
 import logging
 
-from sqlalchemy import select
-
 from app.core.db import SessionLocal
-from app.models import Analysis, Business
-from app.services.twin.local_runner import SAMPLES_DIR, _publish_asset
+from app.models import Analysis
+from app.services.twin.local_runner import REPO_ROOT, SAMPLES_DIR, publish_asset
 
 log = logging.getLogger(__name__)
 
-DEMO_BUSINESS_ID = "biz_demo"
-DEMO_ANALYSIS_ID = "ana_demo"
+DEMO_ANALYSIS_ID = "selasar-kopi"
+SEED_SQL = REPO_ROOT / "supabase" / "seed.sql"
 # Urutan preferensi hasil 3D contoh (yang pertama tersedia dipakai).
 DEMO_TWINS = ["goffee-depan-kasir", "addison-house", "south-building"]
 
 
 def seed_demo() -> None:
     with SessionLocal() as s:
-        if s.scalars(select(Business).limit(1)).first() is not None:
+        if s.get(Analysis, DEMO_ANALYSIS_ID) is None:
+            if not SEED_SQL.exists():
+                log.warning("supabase/seed.sql tidak ditemukan; data demo dilewati.")
+                return
+            raw = s.connection().connection.driver_connection
+            with raw.cursor() as cur:
+                cur.execute(SEED_SQL.read_text())
+            s.commit()
+
+        demo = s.get(Analysis, DEMO_ANALYSIS_ID)
+        if demo is None or (
+            demo.twin_asset and (demo.twin_asset.splat_url or demo.twin_asset.ply_url)
+        ):
             return
-        business = Business(
-            id=DEMO_BUSINESS_ID,
-            name="Selasar Kopi & Roti",
-            branch_name="Dipatiukur",
-            category="kedai",
-            address="Jl. Dipati Ukur No. 42, Bandung",
-            default_context={"business_type": "kedai", "business_name": "Selasar Kopi & Roti"},
-        )
-        analysis = Analysis(
-            id=DEMO_ANALYSIS_ID,
-            business_id=business.id,
-            name="Analisis contoh (demo)",
-            status="siap",
-            is_demo=True,
-            context=dict(business.default_context),
-        )
-        s.add_all([business, analysis])
-        s.flush()
         twin = next((n for n in DEMO_TWINS if (SAMPLES_DIR / f"{n}.json").exists()), None)
-        if twin:
-            _publish_asset(s, analysis, twin)
-        else:
-            log.warning(
-                "Tidak ada hasil 3D contoh di %s; analisis demo tanpa Visual Twin.", SAMPLES_DIR
-            )
-        business.primary_analysis_id = analysis.id
+        if twin is None:
+            log.warning("Tidak ada hasil 3D contoh di %s; demo tanpa Visual Twin.", SAMPLES_DIR)
+            return
+        publish_asset(s, demo.id, twin)
         s.commit()

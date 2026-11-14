@@ -1,8 +1,57 @@
 from enum import StrEnum
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
 from app.schemas.common import Vec3
+
+VantageType = Literal["jalan", "pintu", "dalam"]
+SegmentConfidenceType = Literal["stabil", "tidak_pasti"]
+
+
+class CameraPoseSchema(BaseModel):
+    position: list[float]
+    look_vector: list[float]
+
+
+class TranscriptSegmentOut(BaseModel):
+    """PRD v1.4 F3/F4: Segmen transkrip kejadian dari VLM + verifikasi pemilik."""
+
+    id: str
+    timestamp_start: float
+    timestamp_end: float
+    frame_keys: list[str] = Field(default_factory=list)
+    vantage: VantageType = "jalan"
+    zone_id: str | None = None
+    narrative: str
+    not_visible: str = ""
+    confidence: SegmentConfidenceType = "stabil"
+    is_confirmed_by_owner: bool = False
+    edited_by_owner: bool = False
+    camera_pose: CameraPoseSchema | None = None
+
+
+class TranscriptSegmentCreate(BaseModel):
+    timestamp_start: float = Field(ge=0)
+    timestamp_end: float = Field(ge=0)
+    vantage: VantageType = "jalan"
+    zone_id: str | None = None
+    narrative: str
+    not_visible: str = ""
+    confidence: SegmentConfidenceType = "stabil"
+    frame_keys: list[str] = Field(default_factory=list)
+    is_confirmed_by_owner: bool = True
+
+
+class TranscriptSegmentUpdate(BaseModel):
+    timestamp_start: float | None = Field(default=None, ge=0)
+    timestamp_end: float | None = Field(default=None, ge=0)
+    vantage: VantageType | None = None
+    zone_id: str | None = None
+    narrative: str | None = None
+    not_visible: str | None = None
+    confidence: SegmentConfidenceType | None = None
+    is_confirmed_by_owner: bool | None = None
 
 
 class CueCategory(StrEnum):

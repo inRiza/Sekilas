@@ -26,7 +26,7 @@
 - Model data bertingkat akun -> bisnis -> analisis, dengan konteks snapshot per analisis dan `primary_analysis_id` di bisnis (4.1).
 - Tabel 4.4 diganti kontrak API lengkap: rute bisnis, analisis dan wizard, hasil, jelajah agen, proyeksi, mode demo, status dan `next_action`, serta aturan lintas endpoint (202 + job, `Idempotency-Key`, galat 409 berkode, versi di setiap respons, paginasi kursor, kuota, kepemilikan) (4.2, 4.4).
 - Checkpoint tidak lagi diketuk pemilik: VLM menandai checkpoint dari video, pemilik hanya mengonfirmasi titik kasir; zona dari checkpoint AI (F2, F3, 4.3, F7).
-- F1 menjadi satu container satu kolom; menu lewat unggah Excel atau foto menu (VLM); isian tetangga terdekat dan opsi "lainnya" dihapus.
+- F1 menjadi satu container satu kolom dengan 5 bagian (Informasi dasar, Pelanggan & tujuan, Menu & harga lewat ketik manual/Excel/foto dengan tabel koreksi, Jam operasional dengan pemilih 24 jam termasuk lewat tengah malam dan multi-rentang jam ramai, serta bagian opsional Penjualan & fasilitas); lingkungan sekitar boleh pilih banyak + "lainnya"; isian tetangga terdekat dihapus.
 - Proyeksi what-if di dasbor dipisah menjadi perkiraan cepat dan hasil terverifikasi simulasi yang dicache (F6-D, 4.4.4).
 - Halaman 10 menjadi Daftar bisnis dan riwayat analisis per bisnis (5.2, 5.3).
 
@@ -414,7 +414,7 @@ Aplikasi berbentuk wizard satu arah (halaman 1 sampai 7), dengan dua halaman lan
 
 **1. Beranda.** Satu kalimat nilai, tombol Mulai Analisis, tautan ke Riwayat.
 
-**2. Konteks Usaha.** Satu container satu kolom dengan empat bagian bernomor (Informasi dasar, Pelanggan & tujuan, Menu & harga, Jam operasional), target selesai di bawah 3 menit. Menu diisi lewat unggah file Excel atau foto menu yang dibaca otomatis menjadi daftar yang bisa dikoreksi. Label memakai badge Wajib/Opsional; status isian wajib dan tombol lanjut ada di kaki container. Semua isian mengalir ke konteks agen dan model persona diskret, tidak dikirim ke VLM (kecuali satu kalimat jenis usaha pada prompt VLM). Detail di F1.
+**2. Konteks Usaha.** Satu container satu kolom dengan lima bagian bernomor (Informasi dasar, Pelanggan & tujuan, Menu & harga, Jam operasional, serta Penjualan & fasilitas sebagai opsional), target selesai di bawah 3 menit. Menu diisi lewat ketik manual, unggah file Excel/CSV, atau foto menu yang dibaca otomatis lalu ditampilkan pada tabel yang sama untuk dikoreksi. Label memakai badge Wajib/Opsional; status isian wajib ("x dari 8 bidang wajib terisi") ada di atas form dan tombol lanjut ada di kaki container. Semua isian mengalir ke konteks agen dan model persona diskret, tidak dikirim ke VLM (kecuali satu kalimat jenis usaha pada prompt VLM). Detail di F1.
 
 **3. Rekam Video.** Rekam atau unggah video, cek kualitas otomatis, dan pratinjau hasil blur. Checkpoint jalur dipilih AI saat transkripsi; pemilik hanya menjawab satu pertanyaan: di menit berapa titik pesan/kasir terlihat (bawaan akhir video). Indikator gerak saat merekam: terlalu cepat, atau jangan hanya berputar tapi sambil berjalan. Video terlalu gelap, goyang, atau pendek ditolak dengan pesan jelas. Otomatis berhenti di durasi maksimum.
 
@@ -481,13 +481,13 @@ Catatan KPI: Hipotesis utama dan porsi dijelaskan diambil dari skor atribusi (F6
 
 ### F1. Konteks Usaha
 
-Form mengumpulkan konteks usaha yang tidak terlihat dari video, dengan target pengisian di bawah 3 menit. Tata letaknya **satu container satu kolom**: empat bagian bernomor dipisah judul bagian, setiap isian selebar penuh, label memakai badge Wajib/Opsional, tanpa petunjuk teks di pojok kanan. Pilihan satu tampil sebagai tombol yang disorot, pilihan banyak sebagai tombol dengan kotak centang; tidak ada opsi "lainnya" dan label tidak memakai pasangan bergaris miring. Semua isian mengalir ke konteks agen dan model persona diskret, tidak dikirim ke VLM (kecuali satu kalimat jenis usaha di prompt VLM). Nilai awal disalin dari profil bisnis (4.1).
+Form mengumpulkan konteks usaha yang tidak terlihat dari video, dengan target pengisian di bawah 3 menit. Tata letaknya **satu container satu kolom**: lima bagian bernomor dipisah judul bagian (empat bagian berisi bidang wajib, bagian kelima opsional), setiap isian selebar penuh, label memakai badge Wajib/Opsional. Pilihan satu tampil sebagai tombol (`role="radio"`) yang disorot, pilihan banyak sebagai tombol dengan kotak centang (`role="checkbox"`). Semua isian mengalir ke konteks agen dan model persona diskret, tidak dikirim ke VLM (kecuali satu kalimat jenis usaha di prompt VLM). Nilai awal disalin dari profil bisnis (4.1).
 
 #### Bagian 1: Informasi dasar
 
 | Isian | Tipe | Wajib | Mengalir ke |
 | --- | --- | --- | --- |
-| Jenis usaha | pilih satu: warung makan, kedai kopi, kafe santai, restoran ruko | ya | model diskret; satu kalimat di prompt VLM |
+| Jenis usaha | pilih satu: warung makan (`warung`), kedai kopi (`kedai`), kafe santai (`kafe`), restoran ruko (`resto_ruko`) | ya | model diskret; satu kalimat di prompt VLM |
 | Nama tempat usaha | teks pendek | ya | konteks agen |
 | Lokasi usaha | alamat atau titik di peta | ya | model diskret (fitur lokasi); konteks agen |
 | Deskripsi letak fisik | teks (misal "lantai 2 ruko, sebelah minimarket"), tinggi tetap | ya | konteks agen (diketahui atau tidak diketahui) |
@@ -496,34 +496,42 @@ Form mengumpulkan konteks usaha yang tidak terlihat dari video, dengan target pe
 
 | Isian | Tipe | Wajib | Mengalir ke |
 | --- | --- | --- | --- |
-| Tipe lingkungan sekitar | pilih satu: dekat kampus, kawasan perkantoran, permukiman warga, jalan utama | ya | model diskret (fitur utama) |
+| Lingkungan sekitar toko | pilih banyak: dekat kampus (`dekat_kampus`), kawasan perkantoran (`perkantoran`), permukiman warga (`permukiman`), jalan utama (`jalan_utama`), lainnya (`lainnya` + input teks wajib jika dipilih) | ya | model diskret (fitur utama) |
 | Siapa yang biasa melintas | pilih banyak: mahasiswa, pekerja kantor, warga sekitar, keluarga, pengendara lewat | tidak | model diskret (menggeser bobot segmen) |
 | Tujuan utama | pilih satu: lebih banyak pembeli baru, naikkan belanja rata-rata, ramaikan jam-jam sepi | tidak | lapisan rekomendasi (urutan dan penilaian dampak), bukan simulasi |
-| Hal yang tidak bisa diubah | pilih banyak: lokasi toko, fasad bangunan, konsep menu inti, standar harga pokok | tidak | lapisan rekomendasi (menyaring saran mustahil dan menyesuaikan penilaian usaha) |
+| Hal yang tidak bisa diubah | pilih banyak: lokasi toko (`lokasi`), struktur bangunan (`fasad`), konsep menu inti (`menu`), standar harga pokok (`harga`) | tidak | lapisan rekomendasi (menyaring saran mustahil dan menyesuaikan penilaian usaha) |
 
 #### Bagian 3: Menu & harga
 
 | Isian | Tipe | Wajib | Mengalir ke |
 | --- | --- | --- | --- |
-| Daftar menu & harga porsi | unggah **file Excel** (.xlsx, .xls, .csv; kolom nama menu dan harga porsi) **atau foto menu** yang dibaca VLM | ya | model diskret (level harga); konteks agen; pencocokan dengan transkrip |
+| Daftar menu & harga porsi | **ketik manual** di tabel baris menu + harga, unggah **file Excel** (.xlsx, .xls, .csv; kolom nama menu dan harga porsi), **atau foto menu** yang dibaca VLM | ya (min. 1 baris valid dengan harga > 0) | model diskret (level harga); konteks agen; pencocokan dengan transkrip |
 
-Unggahan dikirim lewat `POST /analyses/{aid}/menu` (4.4.2). File Excel diparse kode; foto menu dibaca VLM menjadi daftar nama dan harga. Hasilnya ditampilkan sebagai daftar yang bisa dikoreksi sebelum dipakai. Level harga dihitung kode dari harga menu (median per porsi) dan dikategorikan, bukan ditebak model, sehingga baru tersedia setelah menu terbaca.
+Unggahan file/foto dikirim lewat `POST /analyses/{aid}/menu` (4.4.2). File Excel diparse kode; foto menu dibaca VLM menjadi daftar nama dan harga. Hasilnya langsung dimasukkan ke tabel menu yang sama agar bisa dikoreksi, ditambah, atau dihapus barisnya sebelum disimpan (`PUT /analyses/{aid}/context`). Level harga dihitung kode dari harga menu (median per porsi) dan dikategorikan (`hemat`, `sedang`, `premium`), bukan ditebak model.
 
 #### Bagian 4: Jam operasional
 
 | Isian | Tipe | Wajib | Mengalir ke |
 | --- | --- | --- | --- |
-| Jam operasional | rentang jam buka sampai tutup | ya | konteks agen (diketahui atau tidak) |
-| Jam paling ramai | rentang jam | ya | konteks agen; rencana pengukuran (F6-G) |
+| Jam buka | rentang jam buka sampai tutup (pemilih 24 jam tiap 30 menit, mendukung jam tutup lewat tengah malam) | ya | konteks agen (diketahui atau tidak) |
+| Jam paling ramai | satu atau lebih rentang jam (`rush_hours`, bisa tambah/hapus rentang) | ya | konteks agen; rencana pengukuran (F6-G) |
+
+#### Bagian 5: Penjualan & fasilitas (opsional)
+
+| Isian | Tipe | Wajib | Mengalir ke |
+| --- | --- | --- | --- |
+| Rata-rata penjualan per hari | angka Rupiah (`daily_sales_rp`) | tidak | perhitungan perkiraan omzet lepas di dasbor (tanpa isian ini, dasbor tidak menampilkan estimasi omzet) |
+| Jumlah pengunjung per hari | angka orang (`daily_visitors`) | tidak | kalibrasi kasar volume pengunjung harian di laporan |
+| Parkir | pilih banyak: ada untuk motor (`motor`), ada untuk mobil (`mobil`), atau tidak ada (`tidak_ada`, saling eksklusif dengan motor/mobil) | tidak | model diskret (menyesuaikan persona pengendara) dan evaluasi hipotesis parkir (H4) |
 
 Isian "tetangga terdekat" dihapus; keberadaan pesaing tidak lagi menjadi fitur model diskret.
 
 #### Perilaku
 
-- Foto menu yang tidak terbaca memberi pilihan unggah ulang atau beralih ke file Excel.
+- Foto menu yang tidak terbaca memberi pilihan unggah ulang, beralih ke file Excel, atau langsung ketik manual di tabel.
 - Placeholder harus tampil lebih terang daripada teks yang sudah diisi; textarea tidak bisa diubah ukurannya.
-- Validasi: jam buka harus mendahului jam tutup; jam ramai harus berada dalam jam buka; harga hasil bacaan berupa bilangan bulat positif.
-- Status "x dari 7 isian wajib terisi" tampil di atas form; tombol lanjut aktif setelah ketujuh isian wajib terpenuhi.
+- Validasi: jam buka dan jam tutup tidak boleh sama (jam tutup lebih kecil dari jam buka dianggap melewati tengah malam keesokan harinya); setiap rentang jam ramai harus berada di dalam jam buka; minimal satu menu memiliki nama dan harga bilangan bulat positif.
+- Status "x dari 8 bidang wajib terisi" tampil di atas form; jika tombol lanjut ditekan saat belum lengkap, halaman otomatis menggulir ke bidang wajib pertama yang belum valid.
 - Isian disimpan per analisis (`PUT /analyses/{aid}/context`). Mengubah isian setelah simulasi menandai persona dan hasil lama `stale` serta menawarkan simulasi ulang.
 
 #### Aturan pengetahuan agen (kriteria penerimaan)
@@ -531,9 +539,9 @@ Isian "tetangga terdekat" dihapus; keberadaan pesaing tidak lagi menjadi fitur m
 - Setiap isian punya penanda `diketahui_agen`: `selalu`, `jika_terlihat`, atau `tidak`.
 - Menu dan harga: `jika_terlihat`. Agen hanya tahu harga jika menu terbaca di transkrip.
 - Jam buka: `jika_terlihat`. Agen hanya tahu jika ada papan atau tanda buka di transkrip.
-- Deskripsi letak: `jika_terlihat`.
-- Jam ramai, tujuan, hal yang tidak bisa diubah: `tidak`. Hanya dipakai kode (jam ramai untuk rencana pengukuran F6-G; tujuan dan hal yang tidak bisa diubah untuk lapisan rekomendasi Pareto).
-- Tipe sekitar dan siapa yang biasa lewat: `tidak` (tidak masuk sebagai pengetahuan agen, tetapi membentuk persona lewat model diskret).
+- Deskripsi letak dan ketersediaan parkir: `jika_terlihat`.
+- Jam ramai, tujuan, hal yang tidak bisa diubah, rata-rata penjualan harian, jumlah pengunjung harian: `tidak`. Hanya dipakai kode (jam ramai untuk rencana pengukuran F6-G; penjualan & pengunjung untuk kalkulasi omzet dasbor; tujuan dan hal yang tidak bisa diubah untuk lapisan rekomendasi Pareto).
+- Lingkungan sekitar dan siapa yang biasa lewat: `tidak` (tidak masuk sebagai pengetahuan agen, tetapi membentuk persona lewat model diskret).
 - Pencocokan menu: setelah transkrip jadi, kode membandingkan menu form dengan harga yang terbaca di transkrip dan menandai "menu terisi tetapi tidak terbaca dari jalan" sebagai temuan awal.
 - Semua versi isian, versi tabel segmen model diskret, dan seed dicatat di jejak audit.
 

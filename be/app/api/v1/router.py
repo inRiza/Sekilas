@@ -3,6 +3,7 @@ from fastapi import APIRouter
 from app.api.v1.routes import (
     analyses,
     assistant,
+    auth,
     businesses,
     context,
     dashboard,
@@ -15,6 +16,7 @@ from app.api.v1.routes import (
 
 api_router = APIRouter()
 for module in (
+    auth,
     businesses,
     analyses,
     context,

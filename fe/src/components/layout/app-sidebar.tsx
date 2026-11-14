@@ -1,8 +1,8 @@
 'use client';
 
 import Link from 'next/link';
-import { usePathname, useSearchParams } from 'next/navigation';
-import React, { useEffect, useState } from 'react';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import React, { Suspense, useEffect, useState } from 'react';
 
 import { SekilasLogo, SekilasLogoIcon } from '@/components/brand/logo';
 import { Badge } from '@/components/ui/badge';
@@ -19,29 +19,33 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from '@/components/ui/sidebar';
-import { backend, type AnalysisStatus, type AnalysisSummary, type BusinessSummary } from '@/lib/backend';
-import { CURRENT_USER } from '@/lib/mock/business';
+import {
+  fetchAnalyses,
+  fetchBusinesses,
+  getLocalAnalyses,
+  getLocalBusinesses,
+  subscribeCrudChanges,
+} from '@/lib/api/crud';
+import { signOutUser, useAuthUser } from '@/lib/auth/use-auth';
+import { MOCK_BUSINESSES } from '@/lib/mock/business';
+import type { Analysis, Business } from '@/types/api';
 
 const NEW_ANALYSIS_HREF = '/business/analysis/konteks';
 
-const STATUS_LABEL: Record<AnalysisStatus, string> = {
+const STATUS_LABEL: Record<Analysis['status'], string> = {
+  ready: 'selesai',
+  processing: 'diproses',
   draft: 'draf',
-  konteks: 'isi konteks',
-  video: 'menunggu video',
-  memproses: 'diproses',
-  verifikasi: 'verifikasi',
-  simulasi: 'simulasi',
-  siap: 'siap',
+  stale: 'perlu diperbarui',
+  failed: 'gagal',
 };
 
-const STATUS_VARIANT: Record<AnalysisStatus, 'impact' | 'primary' | 'friction' | 'neutral'> = {
+const STATUS_VARIANT: Record<Analysis['status'], 'impact' | 'primary' | 'friction' | 'neutral'> = {
+  ready: 'impact',
+  processing: 'primary',
   draft: 'neutral',
-  konteks: 'neutral',
-  video: 'neutral',
-  memproses: 'primary',
-  verifikasi: 'primary',
-  simulasi: 'primary',
-  siap: 'impact',
+  stale: 'neutral',
+  failed: 'friction',
 };
 
 const shortDate = new Intl.DateTimeFormat('id-ID', { day: 'numeric', month: 'short' });
@@ -55,19 +59,24 @@ function initials(name: string) {
     .join('');
 }
 
-
+/** Analisis selesai membuka dasbor; yang belum selesai membuka langkah pemrosesannya. */
+function analysisHref(a: Analysis) {
+  if (a.status === 'ready') return `/business/analysis?analysisId=${encodeURIComponent(a.id)}`;
+  if (a.status === 'draft') return `/business/analysis/konteks?analysisId=${encodeURIComponent(a.id)}&businessId=${encodeURIComponent(a.business_id)}`;
+  return `/business/analysis/proses?analysisId=${encodeURIComponent(a.id)}`;
+}
 
 /** Satu cabang usaha (induk) dengan daftar analisisnya (anak). */
 function BusinessNode({
   business,
+  analyses,
   expanded,
   onToggle,
-  analyses,
   activeAnalysisId,
   onOpenAnalysis,
 }: {
-  business: BusinessSummary;
-  analyses: AnalysisSummary[];
+  business: Business;
+  analyses: Analysis[];
   expanded: boolean;
   onToggle: () => void;
   activeAnalysisId: string | null;
@@ -115,7 +124,7 @@ function BusinessNode({
             return (
               <li key={a.id}>
                 <Link
-                  href={a.next_action.route}
+                  href={analysisHref(a)}
                   onClick={() => {
                     onOpenAnalysis(a.id);
                     setOpenMobile(false);
@@ -136,7 +145,7 @@ function BusinessNode({
           })}
           <li>
             <Link
-              href={`${NEW_ANALYSIS_HREF}?bid=${business.id}`}
+              href={`${NEW_ANALYSIS_HREF}?businessId=${encodeURIComponent(business.id)}&mode=new`}
               onClick={() => setOpenMobile(false)}
               className="flex items-center gap-2 rounded-lg px-2.5 py-2 text-[12px] text-muted transition-colors hover:bg-hover hover:text-ink"
             >
@@ -150,39 +159,56 @@ function BusinessNode({
   );
 }
 
-export function AppSidebar() {
+function AppSidebarInner() {
   const pathname = usePathname();
+  const router = useRouter();
   const searchParams = useSearchParams();
-  const [businesses, setBusinesses] = useState<BusinessSummary[]>([]);
-  const [analysesByBiz, setAnalysesByBiz] = useState<Record<string, AnalysisSummary[]>>({});
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const analysisIdParam = searchParams.get('analysisId');
+  const businessIdParam = searchParams.get('businessId');
+
+  const { user: currentUser } = useAuthUser();
+  const [businesses, setBusinesses] = useState<Business[]>(() => getLocalBusinesses());
+  const [analyses, setAnalyses] = useState<Analysis[]>(() => getLocalAnalyses());
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({
+    [MOCK_BUSINESSES[0]!.id]: true,
+  });
   const [openedAnalysisId, setOpenedAnalysisId] = useState<string | null>(null);
 
-  // Muat ulang dari backend setiap pindah halaman, agar analisis baru langsung muncul.
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const list = await backend.listBusinesses();
-        const entries = await Promise.all(list.map(async (b) => [b.id, await backend.listAnalyses(b.id)] as const));
-        if (cancelled) return;
-        setBusinesses(list);
-        setAnalysesByBiz(Object.fromEntries(entries));
-        setExpanded((prev) => (Object.keys(prev).length || !list[0] ? prev : { [list[0].id]: true }));
-      } catch {
-        // backend mati: sidebar kosong, halaman menampilkan pesannya sendiri
+    let active = true;
+    void Promise.all([fetchBusinesses(), fetchAnalyses()]).then(([bizList, anlList]) => {
+      if (!active) return;
+      setBusinesses(bizList);
+      setAnalyses(anlList);
+      if (bizList[0]) {
+        setExpanded((prev) => ({ [bizList[0]!.id]: true, ...prev }));
       }
-    })();
+    });
+    const unsubscribe = subscribeCrudChanges(() => {
+      setBusinesses(getLocalBusinesses());
+      setAnalyses(getLocalAnalyses());
+    });
     return () => {
-      cancelled = true;
+      active = false;
+      unsubscribe();
     };
-  }, [pathname]);
+  }, []);
 
-  // Sorot analisis hanya di halaman hasil (dasbor & jelajah agen); halaman alur
-  // (konteks, video, dst.) adalah pembuatan analisis baru, jadi tidak ada yang disorot.
+  // Sorot analisis hanya di halaman hasil (dasbor & jelajah agen) atau saat membuka analisis tertentu
   const onAnalysisPage = pathname === '/business/analysis' || pathname === '/business/analysis/agents';
-  const urlAid = searchParams.get('aid');
-  const activeAnalysisId = urlAid ?? (onAnalysisPage ? (openedAnalysisId ?? 'ana_demo') : null);
+  const latestReady = analyses
+    .filter((a) => a.status === 'ready')
+    .sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
+  const activeAnalysisId =
+    analysisIdParam ?? (onAnalysisPage ? (openedAnalysisId ?? latestReady?.id ?? null) : null);
+  const activeBizFromUrl =
+    businessIdParam ??
+    (analysisIdParam ? analyses.find((a) => a.id === analysisIdParam)?.business_id : undefined);
+  const newAnalysisTargetHref = businessIdParam
+    ? `${NEW_ANALYSIS_HREF}?businessId=${encodeURIComponent(businessIdParam)}&mode=new`
+    : businesses[0]
+      ? `${NEW_ANALYSIS_HREF}?businessId=${encodeURIComponent(businesses[0].id)}&mode=new`
+      : NEW_ANALYSIS_HREF;
 
   return (
     <Sidebar>
@@ -199,7 +225,7 @@ export function AppSidebar() {
           </span>
         </Link>
         <Link
-          href={NEW_ANALYSIS_HREF}
+          href={newAnalysisTargetHref}
           title="Analisis baru"
           className="btn-primary flex h-9 items-center justify-center gap-2 rounded-lg px-3 text-[13px] font-medium text-white group-data-[collapsible=icon]/sidebar:px-0 [&>span]:group-data-[collapsible=icon]/sidebar:hidden"
         >
@@ -223,17 +249,23 @@ export function AppSidebar() {
         <SidebarGroup>
           <SidebarGroupLabel>Bisnis & analisis</SidebarGroupLabel>
           <ul className="flex flex-col gap-0.5">
-            {businesses.map((b) => (
-              <BusinessNode
-                key={b.id}
-                business={b}
-                analyses={analysesByBiz[b.id] ?? []}
-                expanded={!!expanded[b.id]}
-                onToggle={() => setExpanded((prev) => ({ ...prev, [b.id]: !prev[b.id] }))}
-                activeAnalysisId={activeAnalysisId}
-                onOpenAnalysis={setOpenedAnalysisId}
-              />
-            ))}
+            {businesses.map((b) => {
+              const bizAnalyses = analyses
+                .filter((a) => a.business_id === b.id)
+                .sort((x, y) => y.created_at.localeCompare(x.created_at));
+              const isExpanded = expanded[b.id] ?? b.id === activeBizFromUrl;
+              return (
+                <BusinessNode
+                  key={b.id}
+                  business={b}
+                  analyses={bizAnalyses}
+                  expanded={Boolean(isExpanded)}
+                  onToggle={() => setExpanded((prev) => ({ ...prev, [b.id]: !isExpanded }))}
+                  activeAnalysisId={activeAnalysisId}
+                  onOpenAnalysis={setOpenedAnalysisId}
+                />
+              );
+            })}
           </ul>
         </SidebarGroup>
       </SidebarContent>
@@ -242,24 +274,36 @@ export function AppSidebar() {
         <div className="flex items-center gap-2.5 rounded-xl px-1.5 py-1.5 group-data-[collapsible=icon]/sidebar:justify-center group-data-[collapsible=icon]/sidebar:px-0">
           <span
             className="grid size-8 shrink-0 place-items-center rounded-full bg-primary-40 text-[12px] font-semibold text-white"
-            title={CURRENT_USER.name}
+            title={currentUser.name}
           >
-            {CURRENT_USER.name.charAt(0)}
+            {currentUser.name.charAt(0).toUpperCase()}
           </span>
           <span className="min-w-0 flex-1 group-data-[collapsible=icon]/sidebar:hidden">
-            <span className="block truncate text-[13px] font-medium text-ink">{CURRENT_USER.name}</span>
-            <span className="block truncate text-[11px] text-muted">{CURRENT_USER.email}</span>
+            <span className="block truncate text-[13px] font-medium text-ink">{currentUser.name}</span>
+            <span className="block truncate text-[11px] text-muted">{currentUser.email}</span>
           </span>
-          <Link
-            href="/masuk"
+          <button
+            type="button"
+            onClick={async () => {
+              await signOutUser();
+              router.push('/masuk');
+            }}
             title="Keluar"
             aria-label="Keluar"
             className="rounded-md p-1.5 text-muted transition-colors hover:bg-friction-10 hover:text-friction group-data-[collapsible=icon]/sidebar:hidden"
           >
             <LogOutIcon size={15} />
-          </Link>
+          </button>
         </div>
       </SidebarFooter>
     </Sidebar>
+  );
+}
+
+export function AppSidebar() {
+  return (
+    <Suspense fallback={<Sidebar><div /></Sidebar>}>
+      <AppSidebarInner />
+    </Suspense>
   );
 }

@@ -141,56 +141,14 @@ body {
   transform: none;
 }
 
-.funnel-fill {
-  transform-origin: left;
-  transform: scaleX(0);
-  transition: transform 1000ms cubic-bezier(0.22, 1, 0.36, 1) 250ms;
-}
-
-[data-visible="true"] .funnel-fill {
-  transform: scaleX(1);
-}
-
-@keyframes pulse-ring {
-  0% {
-    transform: scale(0.6);
-    opacity: 0.6;
-  }
-  100% {
-    transform: scale(2);
-    opacity: 0;
-  }
-}
-
-.pulse-ring {
-  transform-box: fill-box;
-  transform-origin: center;
-  animation: pulse-ring 2.6s ease-out infinite;
-}
-
-@keyframes dash-move {
-  to {
-    stroke-dashoffset: -20;
-  }
-}
-
-.path-flow {
-  animation: dash-move 1.4s linear infinite;
-}
-
 @media (prefers-reduced-motion: reduce) {
   html {
     scroll-behavior: auto;
   }
-  [data-reveal],
-  .funnel-fill {
+  [data-reveal] {
     opacity: 1;
     transform: none;
     transition: none;
-  }
-  .pulse-ring,
-  .path-flow {
-    animation: none;
   }
 }
 

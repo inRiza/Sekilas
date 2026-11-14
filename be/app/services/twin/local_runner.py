@@ -2,8 +2,11 @@
 
 Job dijalankan di thread latar belakang dalam proses API (cukup untuk demo; produksi memakai
 antrean worker, PRD 4.2). Progres dibaca dari keluaran skrip baris per baris dan ditulis ke
-tabel `jobs`; hasil akhir ditulis ke `twin_assets`. Berkas 3D diterbitkan skrip ke
-fe/public/samples/<nama>.* sehingga dilayani Next.js di /samples/...
+tabel `jobs` (JobRecord.stage = label tahap); hasil akhir ditulis ke `twin_assets`. Berkas 3D
+diterbitkan skrip ke fe/public/samples/<nama>.* sehingga dilayani Next.js di /samples/...
+
+Sumber video: salinan lokal hasil POST /analyses/{id}/video/file, atau bila tidak ada,
+diunduh dari Supabase Storage lewat `videos.storage_key`.
 """
 
 from __future__ import annotations
@@ -13,14 +16,16 @@ import logging
 import re
 import subprocess
 import threading
-from datetime import UTC, datetime
 from pathlib import Path
+from uuid import uuid4
 
+import httpx
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.core.db import SessionLocal
-from app.models import Analysis, Job, TwinAsset
+from app.models import Analysis, JobRecord, TwinAsset, VideoAsset
 
 log = logging.getLogger(__name__)
 
@@ -30,8 +35,9 @@ SAMPLES_DIR = REPO_ROOT / "fe" / "public" / "samples"
 SCRIPT = TWIN_ROOT / "scripts" / "local_twin.sh"
 
 SPLAT_STEPS = 2000
+VIDEO_EXTS = (".mp4", ".mov", ".webm", ".m4v")
 
-# Tahap yang ditampilkan ke pemilik; indeks = Job.stage.
+# Tahap yang ditampilkan ke pemilik (JobRecord.stage menyimpan labelnya).
 STAGES = [
     "Menunggu antrean",
     "Mengambil frame dari video",
@@ -53,6 +59,18 @@ _MARKERS: list[tuple[re.Pattern[str], int]] = [
 ]
 
 
+def stage_index(label: str | None) -> int:
+    return STAGES.index(label) if label in STAGES else 0
+
+
+def quality_label(ratio: float) -> str:
+    if ratio >= 0.8:
+        return "Kualitas baik"
+    if ratio >= 0.5:
+        return "Kualitas cukup"
+    return "Kualitas rendah"
+
+
 def fps_for_duration(duration_s: float | None) -> int:
     """Targetkan sekitar 150 frame: video jalan kaki butuh frame rapat (uji: 2 fps 15%, 5 fps 69%)."""
     if not duration_s or duration_s <= 0:
@@ -61,16 +79,42 @@ def fps_for_duration(duration_s: float | None) -> int:
 
 
 def twin_name(analysis_id: str) -> str:
-    return analysis_id.replace("_", "-")
+    return re.sub(r"[^a-zA-Z0-9-]", "-", analysis_id)
 
 
-def _now() -> datetime:
-    return datetime.now(UTC)
+def local_video_dir() -> Path:
+    return get_settings().storage_dir / "videos"
+
+
+def find_local_video(analysis_id: str) -> Path | None:
+    for ext in VIDEO_EXTS:
+        p = local_video_dir() / f"{analysis_id}{ext}"
+        if p.exists():
+            return p
+    return None
+
+
+def _download_from_storage(analysis_id: str, storage_key: str) -> Path:
+    """Unduh video terburam dari bucket `videos` Supabase ke penyimpanan lokal."""
+    if storage_key.startswith(("http://", "https://")):
+        url = storage_key
+    else:
+        base = get_settings().supabase_url.rstrip("/")
+        url = f"{base}/storage/v1/object/public/videos/{storage_key.removeprefix('videos/')}"
+    ext = Path(storage_key).suffix.lower()
+    dest = local_video_dir() / f"{analysis_id}{ext if ext in VIDEO_EXTS else '.mp4'}"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    with httpx.stream("GET", url, timeout=120.0, follow_redirects=True) as res:
+        res.raise_for_status()
+        with dest.open("wb") as out:
+            for chunk in res.iter_bytes(1024 * 1024):
+                out.write(chunk)
+    return dest
 
 
 def _update_job(job_id: str, **fields: object) -> None:
     with SessionLocal() as s:
-        job = s.get(Job, job_id)
+        job = s.get(JobRecord, job_id)
         if job is None:
             return
         for k, v in fields.items():
@@ -78,41 +122,61 @@ def _update_job(job_id: str, **fields: object) -> None:
         s.commit()
 
 
-def _publish_asset(session: Session, analysis: Analysis, name: str) -> TwinAsset:
+def publish_asset(session: Session, analysis_id: str, name: str) -> TwinAsset:
+    """Tulis hasil pipeline (fe/public/samples/<name>.json) ke baris twin_assets analisis."""
     meta = json.loads((SAMPLES_DIR / f"{name}.json").read_text())
     files: list[str] = meta.get("files", [])
-    asset = session.get(TwinAsset, analysis.id) or TwinAsset(analysis_id=analysis.id, name=name)
-    asset.name = name
+    asset = session.scalars(select(TwinAsset).where(TwinAsset.analysis_id == analysis_id)).first()
+    if asset is None:
+        asset = TwinAsset(id=f"tw_{uuid4().hex[:10]}", analysis_id=analysis_id)
+        session.add(asset)
+    frames = int(meta.get("frames", 0))
+    registered = int(meta.get("registered", 0))
     asset.ply_url = f"/samples/{name}.ply" if f"{name}.ply" in files else None
     asset.splat_url = f"/samples/{name}.splat" if f"{name}.splat" in files else None
-    asset.path_url = f"/samples/{meta['camera_path']}" if meta.get("camera_path") else None
-    asset.frames = int(meta.get("frames", 0))
-    asset.registered = int(meta.get("registered", 0))
-    asset.points = int(meta.get("points", 0))
-    asset.build_seconds = int(meta.get("seconds", 0))
-    asset.diagnosis = meta.get("diagnosis")
-    session.add(asset)
+    asset.mode = "splat" if asset.splat_url else "pointcloud"
+    asset.total_frames = frames
+    asset.registered_frames = registered
+    asset.points_count = int(meta.get("points", 0))
+    asset.quality_label = quality_label(registered / frames if frames else 0.0)
+    diagnosis = meta.get("diagnosis")
+    asset.diagnosis_summary = diagnosis.get("summary") if isinstance(diagnosis, dict) else None
+    if isinstance(meta.get("up"), list):
+        asset.up_vector = meta["up"]
+    path_file = meta.get("camera_path")
+    if path_file and (SAMPLES_DIR / path_file).exists():
+        # [{frame, timestamp_s, position{x,y,z}, up, forward}, ...]
+        poses = json.loads((SAMPLES_DIR / path_file).read_text())
+        if isinstance(poses, list) and poses:
+            asset.camera_path = poses
+            asset.path_duration_seconds = float(poses[-1].get("timestamp_s") or 0.0)
     return asset
 
 
-def _run(job_id: str, analysis_id: str, video_path: str, label: str, fps: int) -> None:
+def _run(job_id: str, analysis_id: str, label: str, fps: int) -> None:
     name = twin_name(analysis_id)
     log_path = TWIN_ROOT / "work" / name / "job.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    _update_job(
-        job_id,
-        status="berjalan",
-        started_at=_now(),
-        stage=0,
-        stage_label="Menyiapkan",
-        log_path=str(log_path),
-    )
+    _update_job(job_id, status="berjalan", stage="Menyiapkan video", progress=0.0)
 
-    cmd = ["bash", str(SCRIPT), video_path, name, "--fps", str(fps), "--label", label]
-    cmd += ["--splat", "--steps", str(SPLAT_STEPS)]
     tail: list[str] = []
     stage = 0
+    code = -1
     try:
+        video = find_local_video(analysis_id)
+        if video is None:
+            with SessionLocal() as s:
+                row = s.scalars(
+                    select(VideoAsset).where(VideoAsset.analysis_id == analysis_id)
+                ).first()
+                key = row.storage_key if row else None
+            if not key:
+                raise FileNotFoundError("Video belum diunggah ke server.")
+            video = _download_from_storage(analysis_id, key)
+
+        cmd = ["bash", str(SCRIPT), str(video.resolve()), name, "--fps", str(fps), "--label", label]
+        cmd += ["--splat", "--steps", str(SPLAT_STEPS)]
+        _update_job(job_id, stage=STAGES[0])
         with (
             log_path.open("w") as logf,
             subprocess.Popen(
@@ -129,29 +193,26 @@ def _run(job_id: str, analysis_id: str, video_path: str, label: str, fps: int) -
                         stage = idx
                         _update_job(
                             job_id,
-                            stage=stage,
-                            stage_label=STAGES[stage],
+                            stage=STAGES[stage],
                             progress=round(stage / (len(STAGES) - 1), 3),
                         )
             code = proc.wait()
     except Exception as exc:  # job tidak boleh membuat thread mati diam-diam
         log.exception("twin job %s gagal", job_id)
-        code = -1
         tail.append(str(exc))
 
     with SessionLocal() as s:
-        job = s.get(Job, job_id)
-        analysis = s.get(Analysis, analysis_id)
-        if job is None or analysis is None:
+        job = s.get(JobRecord, job_id)
+        if job is None:
             return
-        job.finished_at = _now()
         if code == 0:
             try:
-                _publish_asset(s, analysis, name)
-                job.status, job.stage, job.progress = "selesai", len(STAGES) - 1, 1.0
-                job.stage_label = STAGES[-1]
-                if analysis.status == "memproses":
-                    analysis.status = "verifikasi"
+                asset = publish_asset(s, analysis_id, name)
+                job.status, job.stage, job.progress = "selesai", STAGES[-1], 1.0
+                job.result_ref_id = asset.id
+                analysis = s.get(Analysis, analysis_id)
+                if analysis is not None:
+                    analysis.quality_label = asset.quality_label
             except (OSError, ValueError, KeyError) as exc:
                 job.status, job.message = "gagal", f"Hasil 3D tidak bisa dibaca: {exc}"
         else:
@@ -160,46 +221,69 @@ def _run(job_id: str, analysis_id: str, video_path: str, label: str, fps: int) -
         s.commit()
 
 
-def start_twin_job(session: Session, analysis: Analysis, idempotency_key: str | None) -> Job:
-    """Buat job twin untuk video analisis (idempoten per kunci dan per video)."""
-    existing = session.scalars(
-        select(Job)
-        .where(Job.analysis_id == analysis.id, Job.kind == "twin", Job.status != "gagal")
-        .order_by(Job.created_at.desc())
+def start_twin_job(
+    session: Session, analysis: Analysis, video: VideoAsset, idempotency_key: str | None = None
+) -> JobRecord:
+    """Antrekan job Visual Twin untuk video analisis.
+
+    Idempoten: job yang masih antre/berjalan dipakai ulang, begitu pula job dengan
+    Idempotency-Key yang sama.
+    """
+    running = session.scalars(
+        select(JobRecord)
+        .where(
+            JobRecord.analysis_id == analysis.id,
+            JobRecord.kind == "twin",
+            JobRecord.status.in_(["antre", "berjalan"]),
+        )
+        .order_by(JobRecord.created_at.desc())
     ).first()
-    if existing and (idempotency_key is None or existing.idempotency_key == idempotency_key):
-        return existing
+    if running is not None:
+        return running
+    if idempotency_key:
+        same = session.scalars(
+            select(JobRecord).where(JobRecord.idempotency_key == idempotency_key)
+        ).first()
+        if same is not None:
+            return same
 
-    from app.core.ids import new_id
-
-    job = Job(
-        id=new_id("job"), analysis_id=analysis.id, kind="twin", idempotency_key=idempotency_key
+    job = JobRecord(
+        id=f"job_tw_{uuid4().hex[:10]}",
+        analysis_id=analysis.id,
+        kind="twin",
+        status="antre",
+        stage=STAGES[0],
+        progress=0.0,
+        idempotency_key=idempotency_key,
     )
     session.add(job)
-    analysis.status = "memproses"
-    session.commit()
+    session.flush()
 
-    assert analysis.video_path
-    threading.Thread(
-        target=_run,
-        args=(
-            job.id,
-            analysis.id,
-            analysis.video_path,
-            analysis.video_filename or analysis.name,
-            fps_for_duration(analysis.video_duration_s),
-        ),
-        name=f"twin-{job.id}",
-        daemon=True,
-    ).start()
+    args = (
+        job.id,
+        analysis.id,
+        video.original_filename or analysis.name,
+        fps_for_duration(video.duration_s),
+    )
+    # Thread dimulai setelah transaksi pemanggil commit agar job sudah terlihat.
+    pending: list[tuple[str, str, str, int]] = session.info.setdefault("twin_jobs", [])
+    pending.append(args)
     return job
 
 
+def launch_pending(session: Session) -> None:
+    """Jalankan thread untuk job twin yang diantrekan di sesi ini (panggil setelah commit)."""
+    for args in session.info.pop("twin_jobs", []):
+        threading.Thread(target=_run, args=args, name=f"twin-{args[0]}", daemon=True).start()
+
+
 def fail_orphaned_jobs() -> None:
-    """Job 'berjalan' saat server mati tidak akan selesai; tandai gagal saat start ulang."""
+    """Job twin 'berjalan' saat server mati tidak akan selesai; tandai gagal saat start ulang."""
     with SessionLocal() as s:
-        for job in s.scalars(select(Job).where(Job.status.in_(["antre", "berjalan"]))):
+        stmt = select(JobRecord).where(
+            JobRecord.kind == "twin", JobRecord.status.in_(["antre", "berjalan"])
+        )
+        for job in s.scalars(stmt):
             job.status = "gagal"
             job.message = "Server dimulai ulang saat job berjalan. Coba lagi."
-            job.finished_at = _now()
         s.commit()

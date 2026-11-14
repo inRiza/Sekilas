@@ -1,28 +1,176 @@
-"""PRD 4.4.2 Video: unggah video terburam, lalu kirim titik kasir untuk memicu job Visual Twin.
-
-Mode lokal: video diunggah langsung (multipart) ke API, bukan lewat URL unggah bertanda tangan.
-Job transkrip (VLM) belum ada; yang berjalan hanya job Visual Twin (F7, mode lokal 11.2).
-"""
+"""Halaman 3-4: simpan metadata video terburam, URL unggah Supabase Storage, dan antrean job (F2, F3, F7)."""
 
 import json
-import shutil
+import re
 import subprocess
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import APIRouter, Header, HTTPException, Response, UploadFile, status
+from fastapi import APIRouter, Header, HTTPException, UploadFile, status
+from sqlalchemy import select
 
-from app.api.v1.routes.analyses import get_analysis
+from app.core.auth import CurrentUserDep
 from app.core.config import get_settings
 from app.core.db import SessionDep
-from app.schemas.api_v14 import JobOut, VideoComplete, VideoUploadOut
-from app.services.presenters import job_out
-from app.services.twin.local_runner import start_twin_job
+from app.models.entities import JobRecord, VideoAsset
+from app.schemas.common import JobState, JobStatus
+from app.schemas.video import (
+    VideoCompleteRequest,
+    VideoCompleteResponse,
+    VideoMetadataIn,
+    VideoMetadataOut,
+    VideoUploadUrlRequest,
+    VideoUploadUrlResponse,
+)
+from app.services.crud import (
+    complete_video_and_enqueue_jobs,
+    load_analysis_with_relations,
+    upsert_video_metadata,
+    video_model_to_schema,
+)
+from app.services.twin.local_runner import VIDEO_EXTS, find_local_video, local_video_dir
 
-router = APIRouter(prefix="/analyses/{aid}/video", tags=["video"])
+router = APIRouter(prefix="/analyses/{analysis_id}/video", tags=["video"])
 
-MAX_BYTES = 1_000_000_000
-MIN_S, MAX_S = 20, 180  # PRD F2
+
+@router.get("", response_model=VideoMetadataOut)
+def get_video_metadata(
+    analysis_id: str,
+    session: SessionDep,
+    _user: CurrentUserDep,
+) -> VideoMetadataOut:
+    """Ambil metadata video terburam & stempel waktu kasir untuk analisis ini."""
+    analysis = load_analysis_with_relations(session, analysis_id)
+    if analysis is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Analisis tidak ditemukan"
+        )
+
+    stmt = select(VideoAsset).where(VideoAsset.analysis_id == analysis.id)
+    video = session.scalars(stmt).first()
+    if video is None:
+        return VideoMetadataOut(
+            id=f"vid_{analysis.id}",
+            analysis_id=analysis.id,
+            original_filename=None,
+            storage_key=None,
+            public_url=None,
+            duration_s=0.0,
+            cashier_at_s=None,
+            width=None,
+            height=None,
+            accepted=False,
+            quality_checks={},
+            blurred_faces_count=0,
+            blurred_plates_count=0,
+        )
+    return video_model_to_schema(video)
+
+
+@router.post("/upload-url", response_model=VideoUploadUrlResponse)
+def get_video_upload_url(
+    analysis_id: str,
+    body: VideoUploadUrlRequest,
+    session: SessionDep,
+    _user: CurrentUserDep,
+) -> VideoUploadUrlResponse:
+    """PRD 4.4.2: Hasilkan path storage (`storage_key`) pada bucket `videos` di Supabase Storage."""
+    analysis = load_analysis_with_relations(session, analysis_id)
+    if analysis is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Analisis tidak ditemukan"
+        )
+
+    safe_name = re.sub(r"[^a-zA-Z0-9._-]", "_", body.filename.strip() or "video_toko.mp4")
+    storage_key = f"{analysis.id}/{safe_name}"
+    base_url = get_settings().supabase_url.rstrip("/")
+    public_url = f"{base_url}/storage/v1/object/public/videos/{storage_key}"
+    return VideoUploadUrlResponse(
+        bucket="videos",
+        storage_key=storage_key,
+        public_url=public_url,
+    )
+
+
+@router.put("", response_model=VideoMetadataOut)
+@router.post("", response_model=VideoMetadataOut)
+def save_video_metadata(
+    analysis_id: str,
+    body: VideoMetadataIn,
+    session: SessionDep,
+    user: CurrentUserDep,
+) -> VideoMetadataOut:
+    """Simpan atau perbarui metadata video terburam serta stempel waktu kasir (F2)."""
+    analysis = load_analysis_with_relations(session, analysis_id)
+    if analysis is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Analisis tidak ditemukan"
+        )
+    return upsert_video_metadata(session, analysis, body, actor=user.id)
+
+
+@router.post(
+    "/complete", response_model=VideoCompleteResponse, status_code=status.HTTP_202_ACCEPTED
+)
+def complete_video_upload(
+    analysis_id: str,
+    body: VideoCompleteRequest,
+    session: SessionDep,
+    user: CurrentUserDep,
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+) -> VideoCompleteResponse:
+    """PRD 4.4.2: Konfirmasi titik kasir (`cashier_at_s`) dan antrekan job transkrip VLM + Visual Twin 3D."""
+    analysis = load_analysis_with_relations(session, analysis_id)
+    if analysis is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Analisis tidak ditemukan"
+        )
+    if body.cashier_at_s <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Stempel waktu kasir harus lebih dari 0 detik",
+        )
+    return complete_video_and_enqueue_jobs(
+        session, analysis, body, actor=user.id, idempotency_key=idempotency_key
+    )
+
+
+@router.get("/processing", response_model=JobState)
+def processing_status(
+    analysis_id: str,
+    session: SessionDep,
+    _user: CurrentUserDep,
+) -> JobState:
+    """Status gabungan untuk halaman 4. Halaman 5 terbuka saat transkrip siap."""
+    analysis = load_analysis_with_relations(session, analysis_id)
+    if analysis is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Analisis tidak ditemukan"
+        )
+
+    stmt = (
+        select(JobRecord)
+        .where(JobRecord.analysis_id == analysis.id, JobRecord.kind == "transcript")
+        .order_by(JobRecord.created_at.desc())
+    )
+    job = session.scalars(stmt).first()
+    if job is not None:
+        return JobState(
+            job_id=job.id,
+            status=JobStatus.done if job.status == "selesai" else JobStatus.running,
+            progress=job.progress,
+            stage=job.stage or "Transkrip VLM & 3D Visual Twin siap",
+        )
+
+    return JobState(
+        job_id=f"job_proc_{analysis.id}",
+        status=JobStatus.done,
+        progress=1.0,
+        stage="Transkrip VLM & 3D Visual Twin siap",
+    )
+
+
+MAX_LOCAL_BYTES = 1_000_000_000
 
 
 def _probe(path: Path) -> tuple[float | None, int | None, int | None]:
@@ -54,80 +202,55 @@ def _probe(path: Path) -> tuple[float | None, int | None, int | None]:
         return None, None, None
 
 
-def _err(code: int, key: str, message: str) -> HTTPException:
-    return HTTPException(code, {"code": key, "message": message})
+@router.post("/file", response_model=VideoMetadataOut)
+async def upload_video_file(
+    analysis_id: str,
+    file: UploadFile,
+    session: SessionDep,
+    user: CurrentUserDep,
+) -> VideoMetadataOut:
+    """Mode lokal (PRD 11.2): simpan salinan video terburam di server untuk job Visual Twin.
 
+    Dipakai bersama unggahan ke Supabase Storage; bila salinan lokal tidak ada, job twin
+    mengunduh video dari `storage_key`.
+    """
+    analysis = load_analysis_with_relations(session, analysis_id)
+    if analysis is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Analisis tidak ditemukan"
+        )
+    ext = Path(file.filename or "video.mp4").suffix.lower()
+    if ext not in VIDEO_EXTS and not (file.content_type or "").startswith("video/"):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Kirim file video.")
 
-@router.post("", response_model=VideoUploadOut)
-async def upload_video(aid: str, file: UploadFile, session: SessionDep) -> VideoUploadOut:
-    analysis = get_analysis(aid, session)
-    if analysis.is_demo:
-        raise _err(status.HTTP_409_CONFLICT, "demo_read_only", "Analisis demo hanya bisa dibaca.")
-    if not (file.content_type or "").startswith("video/"):
-        raise _err(status.HTTP_422_UNPROCESSABLE_ENTITY, "not_a_video", "Kirim file video.")
-
-    folder = get_settings().storage_dir / "videos"
+    folder = local_video_dir()
     folder.mkdir(parents=True, exist_ok=True)
-    ext = Path(file.filename or "video.mp4").suffix.lower() or ".mp4"
-    dest = folder / f"{analysis.id}{ext}"
+    if (old := find_local_video(analysis.id)) is not None:
+        old.unlink(missing_ok=True)
+    dest = folder / f"{analysis.id}{ext if ext in VIDEO_EXTS else '.mp4'}"
     size = 0
     with dest.open("wb") as out:
         while chunk := await file.read(1024 * 1024):
             size += len(chunk)
-            if size > MAX_BYTES:
+            if size > MAX_LOCAL_BYTES:
                 out.close()
                 dest.unlink(missing_ok=True)
-                raise _err(
-                    status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                    "video_too_large",
-                    "Video lebih dari 1 GB.",
+                raise HTTPException(
+                    status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "Video lebih dari 1 GB."
                 )
             out.write(chunk)
 
     duration, width, height = _probe(dest)
-    if duration is not None and not (MIN_S <= duration <= MAX_S):
-        dest.unlink(missing_ok=True)
-        raise _err(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
-            "video_duration_out_of_range",
-            f"Durasi video harus {MIN_S} detik sampai {MAX_S // 60} menit.",
-        )
-
-    analysis.video_path = str(dest.resolve())
-    analysis.video_filename = file.filename
-    analysis.video_duration_s, analysis.video_width, analysis.video_height = duration, width, height
-    analysis.cashier_at_s = duration  # bawaan: akhir video, dikonfirmasi pemilik di /complete
-    if analysis.status in ("draft", "konteks"):
-        analysis.status = "video"
-    session.commit()
-    return VideoUploadOut(
-        filename=file.filename or dest.name, duration_s=duration, width=width, height=height
+    stmt = select(VideoAsset).where(VideoAsset.analysis_id == analysis.id)
+    existing = session.scalars(stmt).first()
+    meta = VideoMetadataIn(
+        original_filename=file.filename or dest.name,
+        storage_key=existing.storage_key if existing else None,
+        duration_s=duration or (existing.duration_s if existing else 48.0),
+        cashier_at_s=existing.cashier_at_s if existing else None,
+        width=width or (existing.width if existing else None),
+        height=height or (existing.height if existing else None),
+        blurred_faces_count=existing.blurred_faces_count if existing else 0,
+        blurred_plates_count=existing.blurred_plates_count if existing else 0,
     )
-
-
-@router.post("/complete", response_model=JobOut, status_code=status.HTTP_202_ACCEPTED)
-def complete_video(
-    aid: str,
-    body: VideoComplete,
-    response: Response,
-    session: SessionDep,
-    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
-) -> JobOut:
-    """Konfirmasi titik kasir, lalu mulai job Visual Twin (202 + Location, idempoten)."""
-    analysis = get_analysis(aid, session)
-    if not analysis.video_path or not Path(analysis.video_path).exists():
-        raise _err(status.HTTP_409_CONFLICT, "video_missing", "Unggah video dulu.")
-    if analysis.video_duration_s and body.cashier_at_s > analysis.video_duration_s + 0.5:
-        raise _err(
-            status.HTTP_409_CONFLICT, "cashier_out_of_range", "Titik kasir melebihi durasi video."
-        )
-    if shutil.which("ffmpeg") is None:
-        raise _err(
-            status.HTTP_503_SERVICE_UNAVAILABLE, "twin_tools_missing", "ffmpeg belum terpasang."
-        )
-
-    analysis.cashier_at_s = body.cashier_at_s
-    session.commit()
-    job = start_twin_job(session, analysis, idempotency_key)
-    response.headers["Location"] = f"{get_settings().api_prefix}/analyses/{aid}/jobs/{job.id}"
-    return job_out(job)
+    return upsert_video_metadata(session, analysis, meta, actor=user.id)
