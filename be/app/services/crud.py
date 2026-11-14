@@ -239,6 +239,7 @@ def business_to_schema(biz: BusinessModel, analyses_count: int = 0) -> BusinessO
     return BusinessOut(
         id=biz.id,
         user_id=biz.user_id,
+        owner_id=biz.owner_id or biz.user_id,
         name=biz.name,
         branch_name=biz.branch_name,
         category=biz.category,  # type: ignore[arg-type]

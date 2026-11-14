@@ -28,11 +28,18 @@ router = APIRouter(prefix="/businesses", tags=["businesses"])
 @router.get("", response_model=list[BusinessOut])
 def list_businesses(
     session: SessionDep,
+    current_user: CurrentUserDep,
     user_id: str | None = None,
 ) -> list[BusinessOut]:
-    stmt = select(BusinessModel).order_by(BusinessModel.created_at.asc())
-    if user_id:
-        stmt = stmt.where(BusinessModel.user_id == user_id)
+    target_user_id = user_id or current_user.id
+    stmt = (
+        select(BusinessModel)
+        .where(
+            (BusinessModel.owner_id == target_user_id)
+            | (BusinessModel.user_id == target_user_id)
+        )
+        .order_by(BusinessModel.created_at.asc())
+    )
     businesses = list(session.scalars(stmt).all())
     counts = count_analyses_by_business(session, [b.id for b in businesses])
     return [business_to_schema(b, counts.get(b.id, 0)) for b in businesses]
@@ -44,7 +51,7 @@ def create_business(
     session: SessionDep,
     current_user: CurrentUserDep,
 ) -> BusinessOut:
-    resolved_user_id = body.user_id if body.user_id and body.user_id != DEFAULT_USER_ID else current_user.id
+    resolved_user_id = body.owner_id or (body.user_id if body.user_id and body.user_id != DEFAULT_USER_ID else current_user.id)
     ensure_user(session, resolved_user_id)
     biz_id = f"biz_{uuid4().hex[:12]}"
     ctx = body.context or default_context_for_business(
@@ -55,6 +62,7 @@ def create_business(
     biz = BusinessModel(
         id=biz_id,
         user_id=resolved_user_id,
+        owner_id=resolved_user_id,
         name=body.name.strip(),
         branch_name=(body.branch_name or "Pusat").strip() or "Pusat",
         category=body.category,
@@ -71,10 +79,15 @@ def create_business(
 def get_business(
     business_id: str,
     session: SessionDep,
+    current_user: CurrentUserDep,
 ) -> BusinessOut:
     biz = session.get(BusinessModel, business_id)
     if biz is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Tempat usaha tidak ditemukan.")
+    # Verifikasi kepemilikan
+    biz_owner = biz.owner_id or biz.user_id
+    if current_user.id != DEFAULT_USER_ID and biz_owner != current_user.id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Anda tidak memiliki akses ke tempat usaha ini.")
     counts = count_analyses_by_business(session, [biz.id])
     return business_to_schema(biz, counts.get(biz.id, 0))
 
@@ -84,10 +97,14 @@ def update_business(
     business_id: str,
     body: BusinessUpdate,
     session: SessionDep,
+    current_user: CurrentUserDep,
 ) -> BusinessOut:
     biz = session.get(BusinessModel, business_id)
     if biz is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Tempat usaha tidak ditemukan.")
+    biz_owner = biz.owner_id or biz.user_id
+    if current_user.id != DEFAULT_USER_ID and biz_owner != current_user.id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Anda tidak memiliki akses untuk mengubah tempat usaha ini.")
 
     if body.name is not None:
         biz.name = body.name.strip()
@@ -119,10 +136,14 @@ def update_business(
 def delete_business(
     business_id: str,
     session: SessionDep,
+    current_user: CurrentUserDep,
 ) -> Response:
     biz = session.get(BusinessModel, business_id)
     if biz is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Tempat usaha tidak ditemukan.")
+    biz_owner = biz.owner_id or biz.user_id
+    if current_user.id != DEFAULT_USER_ID and biz_owner != current_user.id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Anda tidak memiliki akses untuk menghapus tempat usaha ini.")
     biz.primary_analysis_id = None
     session.flush()
     session.delete(biz)

@@ -49,6 +49,9 @@ class Business(Base, TimestampMixin):
     user_id: Mapped[str] = mapped_column(
         String(64), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
+    owner_id: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, index=True
+    )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     branch_name: Mapped[str] = mapped_column(String(255), default="Pusat", nullable=False)
     category: Mapped[str] = mapped_column(String(64), nullable=False)  # warung | kedai | kafe | resto_ruko
