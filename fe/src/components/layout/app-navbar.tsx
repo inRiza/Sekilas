@@ -2,8 +2,8 @@
 
 import React, { useState } from 'react';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
-import { CURRENT_USER } from '@/lib/mock/business';
+import { usePathname, useRouter } from 'next/navigation';
+import { signOutUser, useAuthUser } from '@/lib/auth/use-auth';
 import { SidebarTrigger } from '@/components/ui/sidebar';
 import {
   Breadcrumb,
@@ -29,7 +29,15 @@ interface AppNavbarProps {
 /** Topbar aplikasi: tombol sidebar, breadcrumb, dan menu akun. Dirender sekali di AppShell. */
 export function AppNavbar({ businessName = 'Selasar Kopi & Roti', breadcrumbs }: AppNavbarProps) {
   const pathname = usePathname();
+  const router = useRouter();
+  const { user } = useAuthUser();
   const [showUserMenu, setShowUserMenu] = useState(false);
+
+  const handleSignOut = async () => {
+    setShowUserMenu(false);
+    await signOutUser();
+    router.push('/masuk');
+  };
 
   // Setiap tingkat breadcrumb menunjuk ke halamannya SENDIRI (bukan ke halaman tingkat berikutnya):
   //   Daftar bisnis        -> /businesses
@@ -119,14 +127,14 @@ export function AppNavbar({ businessName = 'Selasar Kopi & Roti', breadcrumbs }:
                   className="size-8 rounded-full bg-primary-40 text-white text-xs font-semibold flex items-center justify-center hover:opacity-95 transition focus:outline-none border border-primary-50"
                   aria-label="Menu pengguna"
                 >
-                  {CURRENT_USER.name.charAt(0)}
+                  {user.name.charAt(0).toUpperCase()}
                 </button>
 
                 {showUserMenu && (
                   <div className="absolute right-0 mt-1.5 w-52 rounded-xl border border-line bg-white p-2 shadow-[0_8px_24px_rgba(16,24,40,0.08)] z-50">
                     <div className="px-2 py-1.5 mb-1">
-                      <p className="font-medium text-ink text-xs truncate">{CURRENT_USER.name}</p>
-                      <p className="text-[11px] text-muted truncate font-mono">{CURRENT_USER.email}</p>
+                      <p className="font-medium text-ink text-xs truncate">{user.name}</p>
+                      <p className="text-[11px] text-muted truncate font-mono">{user.email}</p>
                     </div>
                     <Link
                       href="/businesses"
@@ -143,13 +151,13 @@ export function AppNavbar({ businessName = 'Selasar Kopi & Roti', breadcrumbs }:
                       Daftar Analisis
                     </Link>
                     <div className="mt-1 pt-1">
-                      <Link
-                        href="/masuk"
-                        onClick={() => setShowUserMenu(false)}
+                      <button
+                        type="button"
+                        onClick={() => void handleSignOut()}
                         className="w-full text-left flex items-center gap-2 rounded-md px-2.5 py-1.5 text-xs text-friction hover:bg-friction-10 transition font-mono"
                       >
                         Keluar Akun
-                      </Link>
+                      </button>
                     </div>
                   </div>
                 )}

@@ -1,23 +1,28 @@
 'use client';
 
 import { Check, ShieldCheck, Upload, Video, X } from 'lucide-react';
-import { useRouter } from 'next/navigation';
-import React, { Suspense, useRef, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import React, { Suspense, useEffect, useRef, useState } from 'react';
 
 import { Badge } from '@/components/ui/badge';
-import { Input, Label } from '@/components/ui/form';
 import { Button } from '@/components/ui/button';
+import { Input, Label } from '@/components/ui/form';
 import { ArrowLeftIcon, ArrowRightIcon } from '@/components/ui/icons';
+import { fetchVideoMetadata, saveVideoMetadata } from '@/lib/api/crud';
 
 const VIDEO_DURATION = '00:48';
 
-/** 'mm:ss' -> detik; null bila format salah. */
 function toSeconds(value: string): number | null {
   const m = /^(\d{1,2}):([0-5]\d)$/.exec(value.trim());
   return m ? Number(m[1]) * 60 + Number(m[2]) : null;
 }
 
-/** Hasil cek kualitas otomatis sebelum video diproses. */
+function toMmSs(seconds: number): string {
+  const m = Math.floor(seconds / 60);
+  const s = Math.round(seconds % 60);
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}
+
 const QUALITY_CHECKS = [
   { label: 'Resolusi sisi terpendek', value: '1080 px, ideal' },
   { label: 'Durasi video', value: '48 detik, disarankan 60–120 detik' },
@@ -26,7 +31,6 @@ const QUALITY_CHECKS = [
   { label: 'Privasi wajah & plat nomor', value: '14 wajah dan 6 plat diburamkan' },
 ];
 
-/** Judul bagian di dalam satu container (pemisah antar-bagian), sama dengan halaman Konteks usaha. */
 function SectionTitle({ n, title, description }: { n: number; title: string; description: string }) {
   return (
     <div className="mb-6 flex items-start gap-3">
@@ -43,21 +47,50 @@ function SectionTitle({ n, title, description }: { n: number; title: string; des
 
 function VideoUploadInner() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const analysisId = searchParams.get('analysisId') || 'selasar-kopi';
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // UI saja: video contoh sudah "terunggah"; belum terhubung ke backend.
   const [videoName, setVideoName] = useState<string | null>('video_rekaman_selasar.mp4');
   const [dragging, setDragging] = useState(false);
-
   const [cashierTime, setCashierTime] = useState(VIDEO_DURATION);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    void fetchVideoMetadata(analysisId).then((meta) => {
+      if (meta.original_filename) setVideoName(meta.original_filename);
+      if (meta.cashier_at_s !== undefined && meta.cashier_at_s !== null) {
+        setCashierTime(toMmSs(meta.cashier_at_s));
+      }
+    });
+  }, [analysisId]);
 
   const hasVideo = videoName !== null;
   const cashierSec = toSeconds(cashierTime);
   const cashierValid = cashierSec !== null && cashierSec <= (toSeconds(VIDEO_DURATION) ?? 0);
-  const canContinue = hasVideo && cashierValid;
+  const canContinue = hasVideo && cashierValid && !saving;
 
   const pickFile = (f: File | undefined) => {
     if (f && f.type.startsWith('video/')) setVideoName(f.name);
+  };
+
+  const querySuffix = `?analysisId=${encodeURIComponent(analysisId)}`;
+
+  const handleContinue = async () => {
+    if (!canContinue || !videoName || cashierSec === null) return;
+    setSaving(true);
+    try {
+      await saveVideoMetadata(analysisId, {
+        original_filename: videoName,
+        duration_s: 48,
+        cashier_at_s: cashierSec,
+        blurred_faces_count: 14,
+        blurred_plates_count: 6,
+      });
+      router.push(`/business/analysis/proses${querySuffix}`);
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -97,7 +130,6 @@ function VideoUploadInner() {
 
                 {hasVideo ? (
                   <div className="space-y-3">
-                    {/* Baris info file + pilihan tampilan */}
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                       <div className="flex min-w-0 items-center gap-2">
                         <span className="truncate text-[13px] font-medium text-ink">{videoName}</span>
@@ -116,7 +148,6 @@ function VideoUploadInner() {
                       </div>
                     </div>
 
-                    {/* Pratinjau */}
                     <div className="relative flex h-[360px] w-full items-center justify-center overflow-hidden rounded-md bg-panel">
                       <div className="px-6 text-center">
                         <span className="mx-auto mb-3 grid size-12 place-items-center rounded-md bg-primary-10 text-primary-40">
@@ -183,13 +214,13 @@ function VideoUploadInner() {
                 <Label requiredText="wajib">Di menit berapa kasir atau titik pesan terlihat di video?</Label>
                 <div className="flex items-center gap-3">
                   <div className="w-36 shrink-0">
-                  <Input
-                    value={cashierTime}
-                    onChange={(e) => setCashierTime(e.target.value)}
-                    placeholder="00:48"
-                    inputMode="numeric"
-                    className="tabular-nums"
-                  />
+                    <Input
+                      value={cashierTime}
+                      onChange={(e) => setCashierTime(e.target.value)}
+                      placeholder="00:48"
+                      inputMode="numeric"
+                      className="tabular-nums"
+                    />
                   </div>
                   <span className="whitespace-nowrap text-[13px] text-muted">dari {VIDEO_DURATION}</span>
                 </div>
@@ -234,7 +265,7 @@ function VideoUploadInner() {
               <Button
                 variant="secondary"
                 size="lg"
-                onClick={() => router.push('/business/analysis/konteks')}
+                onClick={() => router.push(`/business/analysis/konteks${querySuffix}`)}
                 className="justify-center !rounded-md"
               >
                 <ArrowLeftIcon size={16} /> Kembali ke konteks usaha
@@ -243,10 +274,10 @@ function VideoUploadInner() {
                 variant="primary"
                 size="lg"
                 disabled={!canContinue}
-                onClick={() => canContinue && router.push('/business/analysis/proses')}
+                onClick={() => void handleContinue()}
                 className="justify-center !rounded-md"
               >
-                Lanjut ke pemrosesan <ArrowRightIcon size={16} />
+                {saving ? 'Menyimpan...' : 'Lanjut ke pemrosesan'} <ArrowRightIcon size={16} />
               </Button>
             </div>
           </div>

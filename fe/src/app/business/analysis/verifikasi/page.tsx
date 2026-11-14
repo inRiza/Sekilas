@@ -1,13 +1,19 @@
 'use client';
 
-import { Check, EyeOff, ImageIcon, PencilLine, Trash2 } from 'lucide-react';
-import { useRouter } from 'next/navigation';
-import React, { Suspense, useState } from 'react';
+import { Check, EyeOff, ImageIcon, PencilLine, Plus, Trash2 } from 'lucide-react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import React, { Suspense, useEffect, useState } from 'react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Textarea } from '@/components/ui/form';
+import { Input, Label, Textarea } from '@/components/ui/form';
 import { ArrowLeftIcon, ArrowRightIcon } from '@/components/ui/icons';
+import {
+  createTranscriptSegment,
+  deleteTranscriptSegment,
+  fetchTranscriptSegments,
+  updateTranscriptSegment,
+} from '@/lib/api/crud';
 import { MOCK_TRANSCRIPT } from '@/lib/mock/transcript';
 import { TranscriptSegment } from '@/types/api';
 
@@ -31,11 +37,12 @@ function SegmentItem({
 }: {
   seg: TranscriptSegment;
   onConfirm: () => void;
-  onSave: (text: string) => void;
+  onSave: (narrative: string, notVisible: string) => void;
   onDelete: () => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState(seg.narrative);
+  const [notVisible, setNotVisible] = useState(seg.not_visible ?? '');
   const needsAction = seg.confidence === 'tidak_pasti' && !seg.is_confirmed_by_owner;
 
   return (
@@ -68,7 +75,14 @@ function SegmentItem({
         <div className="min-w-0 flex-1">
           {editing ? (
             <div className="space-y-3">
-              <Textarea value={text} onChange={(e) => setText(e.target.value)} className="!border-primary-40" />
+              <div>
+                <Label>Narasi yang terlihat</Label>
+                <Textarea value={text} onChange={(e) => setText(e.target.value)} className="!border-primary-40" />
+              </div>
+              <div>
+                <Label>Yang tidak terlihat dari sudut ini (opsional)</Label>
+                <Input value={notVisible} onChange={(e) => setNotVisible(e.target.value)} />
+              </div>
               <div className="flex justify-end gap-2">
                 <Button
                   variant="secondary"
@@ -76,6 +90,7 @@ function SegmentItem({
                   className="!rounded-md"
                   onClick={() => {
                     setText(seg.narrative);
+                    setNotVisible(seg.not_visible ?? '');
                     setEditing(false);
                   }}
                 >
@@ -86,7 +101,7 @@ function SegmentItem({
                   size="sm"
                   className="!rounded-md"
                   onClick={() => {
-                    onSave(text);
+                    onSave(text, notVisible);
                     setEditing(false);
                   }}
                 >
@@ -138,14 +153,68 @@ function SegmentItem({
 
 function VerifikasiTranskripInner() {
   const router = useRouter();
-  const [segments, setSegments] = useState<TranscriptSegment[]>(MOCK_TRANSCRIPT);
+  const searchParams = useSearchParams();
+  const analysisId = searchParams.get('analysisId') || 'selasar-kopi';
 
-  const update = (id: string, patch: Partial<TranscriptSegment>) =>
-    setSegments((prev) => prev.map((s) => (s.id === id ? { ...s, ...patch } : s)));
+  const [segments, setSegments] = useState<TranscriptSegment[]>(MOCK_TRANSCRIPT);
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [newStart, setNewStart] = useState('15');
+  const [newEnd, setNewEnd] = useState('25');
+  const [newVantage, setNewVantage] = useState<TranscriptSegment['vantage']>('pintu');
+  const [newNarrative, setNewNarrative] = useState('');
+  const [newNotVisible, setNewNotVisible] = useState('');
+
+  useEffect(() => {
+    void fetchTranscriptSegments(analysisId).then((list) => setSegments(list));
+  }, [analysisId]);
+
+  const handleConfirm = async (id: string) => {
+    setSegments((prev) => prev.map((s) => (s.id === id ? { ...s, is_confirmed_by_owner: true } : s)));
+    await updateTranscriptSegment(analysisId, id, { is_confirmed_by_owner: true });
+  };
+
+  const handleSave = async (id: string, narrative: string, notVisible: string) => {
+    setSegments((prev) =>
+      prev.map((s) =>
+        s.id === id ? { ...s, narrative, not_visible: notVisible, is_confirmed_by_owner: true } : s,
+      ),
+    );
+    await updateTranscriptSegment(analysisId, id, {
+      narrative,
+      not_visible: notVisible,
+      is_confirmed_by_owner: true,
+    });
+  };
+
+  const handleDelete = async (id: string) => {
+    setSegments((prev) => prev.filter((s) => s.id !== id));
+    await deleteTranscriptSegment(analysisId, id);
+  };
+
+  const handleAddSegment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newNarrative.trim()) return;
+    const startSec = Math.max(0, Number(newStart) || 0);
+    const endSec = Math.max(startSec + 1, Number(newEnd) || startSec + 5);
+    const created = await createTranscriptSegment(analysisId, {
+      timestamp_start: startSec,
+      timestamp_end: endSec,
+      vantage: newVantage,
+      narrative: newNarrative.trim(),
+      not_visible: newNotVisible.trim(),
+      confidence: 'stabil',
+      is_confirmed_by_owner: true,
+    });
+    setSegments((prev) => [...prev, created].sort((a, b) => a.timestamp_start - b.timestamp_start));
+    setNewNarrative('');
+    setNewNotVisible('');
+    setShowAddForm(false);
+  };
 
   const pending = segments.filter((s) => s.confidence === 'tidak_pasti' && !s.is_confirmed_by_owner).length;
   const verified = segments.length - pending;
   const ready = pending === 0;
+  const querySuffix = `?analysisId=${encodeURIComponent(analysisId)}`;
 
   return (
     <div className="flex min-h-full flex-col bg-white">
@@ -191,12 +260,81 @@ function VerifikasiTranskripInner() {
                   <SegmentItem
                     key={seg.id}
                     seg={seg}
-                    onConfirm={() => update(seg.id, { is_confirmed_by_owner: true })}
-                    onSave={(text) => update(seg.id, { narrative: text, is_confirmed_by_owner: true })}
-                    onDelete={() => setSegments((prev) => prev.filter((s) => s.id !== seg.id))}
+                    onConfirm={() => void handleConfirm(seg.id)}
+                    onSave={(narrative, notVisible) => void handleSave(seg.id, narrative, notVisible)}
+                    onDelete={() => void handleDelete(seg.id)}
                   />
                 ))}
               </ol>
+
+              {/* Tambah segmen manual */}
+              {showAddForm ? (
+                <form onSubmit={handleAddSegment} className="space-y-4 rounded-md border border-line bg-panel/60 p-4">
+                  <h3 className="text-[13px] font-semibold text-ink">Tambah segmen pengamatan manual</h3>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                    <div>
+                      <Label>Detik mulai</Label>
+                      <Input type="number" min={0} value={newStart} onChange={(e) => setNewStart(e.target.value)} />
+                    </div>
+                    <div>
+                      <Label>Detik selesai</Label>
+                      <Input type="number" min={1} value={newEnd} onChange={(e) => setNewEnd(e.target.value)} />
+                    </div>
+                    <div>
+                      <Label>Sudut pandang</Label>
+                      <select
+                        value={newVantage}
+                        onChange={(e) => setNewVantage(e.target.value as TranscriptSegment['vantage'])}
+                        className="h-10 w-full rounded-md border border-[#d6dae1] bg-white px-3 text-[13px] text-ink focus:border-primary-40 focus:outline-none"
+                      >
+                        <option value="jalan">Dari jalan</option>
+                        <option value="pintu">Di pintu / tangga</option>
+                        <option value="dalam">Di dalam</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div>
+                    <Label requiredText="wajib">Apa yang terlihat di segmen ini?</Label>
+                    <Textarea
+                      value={newNarrative}
+                      onChange={(e) => setNewNarrative(e.target.value)}
+                      placeholder="Contoh: Di dekat pintu masuk ada papan tulis menu kopi harian..."
+                    />
+                  </div>
+                  <div>
+                    <Label>Apa yang belum/tidak terlihat? (opsional)</Label>
+                    <Input
+                      value={newNotVisible}
+                      onChange={(e) => setNewNotVisible(e.target.value)}
+                      placeholder="Contoh: Jam buka belum tertulis di pintu"
+                    />
+                  </div>
+                  <div className="flex justify-end gap-2">
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      className="!rounded-md"
+                      onClick={() => setShowAddForm(false)}
+                    >
+                      Batal
+                    </Button>
+                    <Button type="submit" variant="primary" size="sm" className="!rounded-md">
+                      Simpan segmen
+                    </Button>
+                  </div>
+                </form>
+              ) : (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  className="!rounded-md"
+                  onClick={() => setShowAddForm(true)}
+                >
+                  <Plus size={14} /> Tambah segmen manual
+                </Button>
+              )}
             </div>
 
             {/* Kaki container */}
@@ -204,7 +342,7 @@ function VerifikasiTranskripInner() {
               <Button
                 variant="secondary"
                 size="lg"
-                onClick={() => router.push('/business/analysis/proses')}
+                onClick={() => router.push(`/business/analysis/proses${querySuffix}`)}
                 className="justify-center !rounded-md"
               >
                 <ArrowLeftIcon size={16} /> Kembali ke pemrosesan
@@ -214,7 +352,7 @@ function VerifikasiTranskripInner() {
                   variant="primary"
                   size="lg"
                   disabled={!ready}
-                  onClick={() => ready && router.push('/business/analysis/simulasi')}
+                  onClick={() => ready && router.push(`/business/analysis/simulasi${querySuffix}`)}
                   className="justify-center !rounded-md"
                 >
                   Jalankan simulasi agen <ArrowRightIcon size={16} />
