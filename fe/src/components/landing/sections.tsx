@@ -107,7 +107,7 @@ export function Hero() {
   return (
     <Section className="overflow-clip">
       <MacbookScroll
-        src="/landing/hero-dashboard.png"
+        src="/landing/hero-dashboard-v4.png"
         title={
           <div className="flex flex-col items-center">
             <span className="inline-flex items-center rounded-full border border-line bg-white px-3 py-1 text-[13px] text-muted">
