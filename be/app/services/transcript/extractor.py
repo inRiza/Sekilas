@@ -10,7 +10,7 @@ import httpx
 
 from app.models.entities import Analysis as AnalysisModel
 from app.models.entities import TranscriptCheckpoint, TranscriptSegment
-from app.services.llm.router import KeyframeInput, get_llm_router
+from app.services.llm.router import KeyframeInput, LLMUnavailableError, get_llm_router
 
 logger = logging.getLogger(__name__)
 
@@ -220,8 +220,17 @@ def extract_transcript_with_gemini(
                             )
                         )
                     return parsed_segments, parsed_checkpoints
+            raise LLMUnavailableError(
+                "Respons transkrip Gemini kosong atau tidak valid. Silakan coba lagi.",
+                status_code=502,
+            )
+        except LLMUnavailableError:
+            raise
         except (httpx.HTTPError, ValueError, RuntimeError, KeyError, TypeError, OSError) as exc:
-            logger.warning("Gemini VLM gagal (%s); beralih ke segmen fallback.", exc)
+            raise LLMUnavailableError(
+                f"Ekstraksi transkrip Gemini gagal: {exc}",
+                status_code=502,
+            ) from exc
 
     return _build_fallback_segments(
         analysis=analysis,

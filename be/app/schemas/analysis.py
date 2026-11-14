@@ -36,6 +36,10 @@ class AnalysisUpdate(BaseModel):
     set_as_primary: bool | None = None
 
 
+class AnalysisCloneRequest(BaseModel):
+    name: str | None = Field(default=None, max_length=255)
+
+
 class Analysis(BaseModel):
     id: str
     business_id: str

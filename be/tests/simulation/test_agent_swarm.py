@@ -140,3 +140,279 @@ def test_vlm_extractor_fallback_generates_12_plus_events(monkeypatch) -> None:
     )
     assert len(segs) >= 12
     assert len(chks) >= 2
+
+
+def test_vlm_raises_503_without_fallback_on_server_error(monkeypatch) -> None:
+    import base64
+
+    import pytest
+    from google.genai import errors as genai_errors
+
+    from app.services.llm.router import LLMRouter, LLMUnavailableError
+
+    monkeypatch.setenv("LLM_MODE", "gemini")
+    monkeypatch.setenv("GEMINI_API_KEY", "dummy-key-for-test")
+    get_settings.cache_clear()
+
+    class _FakeModels:
+        def generate_content(self, **_kwargs):
+            raise genai_errors.ServerError(
+                503,
+                {"error": {"code": 503, "message": "This model is currently experiencing high demand.", "status": "UNAVAILABLE"}},
+                None,
+            )
+
+    class _FakeClient:
+        models = _FakeModels()
+
+    monkeypatch.setattr(LLMRouter, "_get_gemini_client", lambda self: _FakeClient())
+
+    tiny_jpeg = "data:image/jpeg;base64," + base64.b64encode(b"\xff\xd8\xff\xd9").decode("ascii")
+    analysis = AnalysisModel(id="anl_test", business_id="biz_test", name="Tes Warung")
+    with pytest.raises(LLMUnavailableError) as exc_info:
+        extract_transcript_with_gemini(
+            analysis=analysis,
+            duration_s=30.0,
+            cashier_at_s=28.0,
+            frame_keys=[tiny_jpeg, tiny_jpeg],
+            timestamps_s=[5.0, 15.0],
+        )
+    assert exc_info.value.status_code == 503
+    assert "503" in str(exc_info.value)
+
+    monkeypatch.setenv("LLM_MODE", "mock")
+    get_settings.cache_clear()
+
+
+def test_swarm_raises_503_without_fallback_to_openai_or_mock(monkeypatch) -> None:
+    import httpx
+    import pytest
+
+    from app.services.llm.router import LLMUnavailableError
+
+    monkeypatch.setenv("LLM_MODE", "auto")
+    monkeypatch.setenv("OPENAI_API_KEY", "dummy-openai-key")
+    monkeypatch.setenv("OPENAI_MODEL", "gpt-6-luna")
+    get_settings.cache_clear()
+
+    class _FakeResp:
+        status_code = 503
+        is_success = False
+        text = "Service Unavailable"
+
+        def json(self):
+            return {"error": {"message": "Model overloaded"}}
+
+    class _FakeHttpClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def post(self, *_args, **_kwargs):
+            return _FakeResp()
+
+    monkeypatch.setattr(httpx, "Client", _FakeHttpClient)
+
+    personas = generate_discrete_personas(n=20, seed=42)
+    segments = [SegmentInput(id="seg_1", vantage="jalan", narrative="Tampak dari jalan", not_visible="Harga belum terlihat")]
+
+    with pytest.raises(LLMUnavailableError) as exc_info:
+        run_20_agent_swarm(
+            personas=personas,
+            segments=segments,
+            business_summary="Warung Nasi SPG",
+            batch_size=10,
+            seed=42,
+        )
+    assert exc_info.value.status_code == 503
+    assert "503" in str(exc_info.value)
+
+    monkeypatch.setenv("LLM_MODE", "mock")
+    get_settings.cache_clear()
+
+
+def test_openai_payload_uses_max_completion_tokens(monkeypatch) -> None:
+    import json
+
+    import httpx
+
+    from app.services.llm.router import get_llm_router
+
+    monkeypatch.setenv("LLM_MODE", "auto")
+    monkeypatch.setenv("OPENAI_API_KEY", "dummy-openai-key")
+    monkeypatch.setenv("OPENAI_MODEL", "gpt-6-luna")
+    get_settings.cache_clear()
+
+    captured_payloads: list[dict] = []
+
+    class _FakeResp:
+        status_code = 200
+        is_success = True
+        text = "{}"
+
+        def json(self):
+            return {"choices": [{"message": {"content": json.dumps({"ok": True})}}]}
+
+    class _FakeHttpClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def post(self, *_args, **kwargs):
+            captured_payloads.append(dict(kwargs.get("json") or {}))
+            return _FakeResp()
+
+    monkeypatch.setattr(httpx, "Client", _FakeHttpClient)
+
+    res = get_llm_router().generate_json(
+        system_prompt="sys",
+        user_prompt="usr",
+        temperature=0.2,
+        max_output_tokens=4096,
+    )
+    assert res.data == {"ok": True}
+    assert len(captured_payloads) == 1
+    assert captured_payloads[0]["max_completion_tokens"] == 4096
+    assert "max_tokens" not in captured_payloads[0]
+
+    monkeypatch.setenv("LLM_MODE", "mock")
+    get_settings.cache_clear()
+
+
+def test_swarm_alias_mapping_early_stop_and_missing_agent_retry(monkeypatch) -> None:
+    import json
+
+    import httpx
+
+    monkeypatch.setenv("LLM_MODE", "auto")
+    monkeypatch.setenv("OPENAI_API_KEY", "dummy-openai-key")
+    monkeypatch.setenv("OPENAI_MODEL", "gpt-6-luna")
+    monkeypatch.setenv("SIM_CONCURRENCY_LIMIT", "1")
+    get_settings.cache_clear()
+
+    call_idx = 0
+
+    class _FakeResp:
+        def __init__(self, payload: dict):
+            self._payload = payload
+            self.status_code = 200
+            self.is_success = True
+            self.text = json.dumps(payload)
+
+        def json(self):
+            return {"choices": [{"message": {"content": self.text}}]}
+
+    class _FakeHttpClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def post(self, *_args, **_kwargs):
+            nonlocal call_idx
+            call_idx += 1
+            if call_idx == 1:
+                # Batch Step 1 sengaja melewatkan agent_id=2 dan menulis segmen ekstra setelah 'berhenti'
+                return _FakeResp(
+                    {
+                        "results": [
+                            {
+                                "agent_id": 1,
+                                "segment_traces": [
+                                    {"segment_id": "S1", "monologue": "Plang belum terlihat jelas.", "action": "berhenti"},
+                                    {"segment_id": "S2", "monologue": "Seharusnya terpotong.", "action": "lanjut"},
+                                ],
+                                "final_decision": "lewat",
+                                "stopped_at_segment_id": "S1",
+                                "deciding_factor": "Plang belum terlihat.",
+                                "factor_segment_ids": ["S1"],
+                            }
+                        ]
+                    }
+                )
+            if call_idx == 2:
+                # Targeted retry khusus untuk agent_id=2 yang sempat terlewat
+                return _FakeResp(
+                    {
+                        "results": [
+                            {
+                                "agent_id": 2,
+                                "segment_traces": [
+                                    {"segment_id": "S1", "monologue": "Masih tampak buka.", "action": "lanjut"},
+                                    {"segment_id": "S2", "monologue": "Langsung masuk dan pesan.", "action": "lanjut"},
+                                ],
+                                "final_decision": "memesan",
+                                "stopped_at_segment_id": None,
+                                "deciding_factor": "Cepat dilayani.",
+                                "factor_segment_ids": ["S2"],
+                            }
+                        ]
+                    }
+                )
+            # Step 2 atribusi Katalog Isyarat
+            return _FakeResp(
+                {
+                    "results": [
+                        {
+                            "agent_id": 1,
+                            "attributions": [
+                                {
+                                    "cue_code": "H1",
+                                    "direction": "menghambat",
+                                    "relevance_score": 3,
+                                    "evidence": "Plang belum terlihat jelas.",
+                                }
+                            ],
+                            "primary": "H1",
+                            "other_reason": None,
+                        },
+                        {
+                            "agent_id": 2,
+                            "attributions": [],
+                            "primary": None,
+                            "other_reason": None,
+                        },
+                    ]
+                }
+            )
+
+    monkeypatch.setattr(httpx, "Client", _FakeHttpClient)
+
+    personas = generate_discrete_personas(n=2, seed=42)
+    segments = [
+        SegmentInput(id="seg_alpha", vantage="jalan", narrative="Tampak dari trotoar.", not_visible="Plang tidak terlihat."),
+        SegmentInput(id="seg_beta", vantage="dalam", narrative="Kasir dan menu jelas.", not_visible=""),
+    ]
+    results = run_20_agent_swarm(
+        personas=personas,
+        segments=segments,
+        business_summary="Warung Nasi SPG",
+        batch_size=10,
+        seed=42,
+    )
+    assert len(results) == 2
+    a1, a2 = results[0], results[1]
+    assert a1.stopped_at_segment_id == "seg_alpha"
+    assert [t["segment_id"] for t in a1.segment_traces] == ["seg_alpha"]
+    assert a1.factor_segment_ids == ["seg_alpha"]
+    assert a1.primary_hypothesis_id == "H1"
+    assert a2.final_decision == "memesan"
+    assert a2.stopped_at_segment_id is None
+    assert [t["segment_id"] for t in a2.segment_traces] == ["seg_alpha", "seg_beta"]
+
+    monkeypatch.setenv("LLM_MODE", "mock")
+    get_settings.cache_clear()

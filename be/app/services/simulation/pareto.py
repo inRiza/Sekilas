@@ -6,7 +6,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
-from app.services.llm.router import get_llm_router
+from app.services.llm.router import LLMUnavailableError, get_llm_router
 from app.services.simulation.catalog import (
     ACTION_BY_ID,
     HYPOTHESIS_BY_CODE,
@@ -145,31 +145,38 @@ def generate_catalog_recommendations(
     router = get_llm_router()
     valid_seg_ids = {s.id for s in segments}
 
-    if not router.is_mock_mode:
+    id_to_alias = {s.id: f"S{i + 1}" for i, s in enumerate(segments)}
+    alias_to_id = {f"S{i + 1}": s.id for i, s in enumerate(segments)}
+
+    if not router.is_mock_mode and top_cues:
         sys_p = (
             "Kamu menyusun prioritas perbaikan toko UMKM. "
             "Kamu HANYA boleh memilih action_id dari daftar kandidat yang diberikan dan mengisi slot parameternya "
             "berdasarkan bukti segmen transkrip. JANGAN mengarang angka efikasi atau tindakan di luar katalog."
         )
-        seg_summary = "\n".join(f"- {s.id} ({s.vantage}): {s.narrative[:120]}" for s in segments)
+        seg_summary = "\n".join(f"- {id_to_alias[s.id]} ({s.vantage}): {s.narrative[:120]}" for s in segments)
         cue_summary = "\n".join(
-            f"- {c.cue_code} ({c.title}): dialami {c.affected_agents_count}/{c.total_non_buyers} agen gagal, "
-            f"segmen={c.top_segment_ids}, kandidat={candidates_by_cue.get(c.cue_code, [])}"
+            f"- {c.cue_code} ({c.title}): {c.affected_agents_count}/{c.total_non_buyers} agen gagal, "
+            f"segmen={[id_to_alias.get(sid, sid) for sid in c.top_segment_ids]}, "
+            f"kandidat={candidates_by_cue.get(c.cue_code, [])}"
             for c in top_cues
         )
         usr_p = (
             f"Tujuan pemilik: {owner_goals or ['meningkatkan konversi']}\n"
             f"Transkrip ringkas:\n{seg_summary}\n\n"
             f"Masalah teratas & kandidat tindakan:\n{cue_summary}\n\n"
-            'Kembalikan JSON: {"recommendations": [{"cue_code": str, "action_id": str, "slot_params": {str: str}, "segment_ids": [str]}]}'
+            'Kembalikan JSON (pakai segment_ids S1..Sk): '
+            '{"recommendations": [{"cue_code": str, "action_id": str, "slot_params": {str: str}, "segment_ids": [str]}]}'
         )
         try:
-            res = router.generate_json(system_prompt=sys_p, user_prompt=usr_p, temperature=0.1, max_output_tokens=1536)
+            res = router.generate_json(system_prompt=sys_p, user_prompt=usr_p, temperature=0.1, max_output_tokens=2048)
             if res and isinstance(res.data, dict) and isinstance(res.data.get("recommendations"), list):
                 for item in res.data["recommendations"]:
                     if isinstance(item, dict) and item.get("cue_code"):
                         selected_by_cue[str(item["cue_code"])] = item
-        except (ValueError, RuntimeError, KeyError, TypeError, OSError) as exc:
+        except LLMUnavailableError:
+            raise
+        except (ValueError, KeyError, TypeError, OSError) as exc:
             logger.warning("Gagal memanggil LLM untuk seleksi tindakan (%s); memakai default katalog.", exc)
 
     recs: list[CuratedRecommendation] = []
@@ -194,7 +201,14 @@ def generate_catalog_recommendations(
         rendered_desc = render_action_spec(chosen_id, slot_params)
 
         raw_segs = llm_choice.get("segment_ids") if isinstance(llm_choice.get("segment_ids"), list) else c.top_segment_ids
-        seg_ids = [str(s) for s in raw_segs if str(s) in valid_seg_ids] or c.top_segment_ids or ([segments[0].id] if segments else [])
+        seg_ids: list[str] = []
+        for raw_s in raw_segs:
+            token = str(raw_s).strip()
+            mapped = alias_to_id.get(token.upper()) or (token if token in valid_seg_ids else None)
+            if mapped and mapped not in seg_ids:
+                seg_ids.append(mapped)
+        if not seg_ids:
+            seg_ids = c.top_segment_ids or ([segments[0].id] if segments else [])
 
         cum_share += c.share_pct
         is_prio = (cum_share / total_share) <= 0.85 or idx <= 2

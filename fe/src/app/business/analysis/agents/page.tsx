@@ -111,10 +111,14 @@ function AgenExplorerInner() {
     businessId ? `&businessId=${encodeURIComponent(businessId)}` : ''
   }`;
 
-  const [allAgents, setAllAgents] = useState<AgentDecision[]>(MOCK_AGENTS);
+  const [allAgents, setAllAgents] = useState<AgentDecision[]>(
+    analysisId === 'selasar-kopi' ? MOCK_AGENTS : [],
+  );
   const [decisionFilter, setDecisionFilter] = useState<'all' | FinalDecision>('all');
   const [segmentFilter, setSegmentFilter] = useState<string>('all');
-  const [openId, setOpenId] = useState<number | null>(MOCK_AGENTS[0]?.agent_id ?? null);
+  const [openId, setOpenId] = useState<number | null>(
+    analysisId === 'selasar-kopi' ? (MOCK_AGENTS[0]?.agent_id ?? null) : null,
+  );
 
   useEffect(() => {
     void fetchAgentDecisions(analysisId).then((list) => {

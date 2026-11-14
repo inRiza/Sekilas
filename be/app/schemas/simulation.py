@@ -45,7 +45,7 @@ class AgentResult(BaseModel):
 
 
 class SimulationRequest(BaseModel):
-    n_agents: int = Field(500, ge=200, le=500)
+    n_agents: int = Field(20, ge=8, le=500)
     seed: int = 42
     scenarios: list[Scenario] = list(Scenario)
 

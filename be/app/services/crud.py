@@ -17,6 +17,7 @@ from app.models.entities import (
     Persona,
     RecommendationItem,
     SimulationRun,
+    TranscriptCheckpoint,
     TranscriptSegment,
     TwinAsset,
     UserAccount,
@@ -1515,7 +1516,7 @@ def build_dashboard_data(
             percentage=100.0,
             drop_off_count=lewat_cnt,
             drop_off_rate=r_lewat,
-            is_highest_friction=(r_lewat == max_drop and r_lewat > r_berhenti),
+            is_highest_friction=(r_lewat == max_drop and r_lewat > r_berhenti and r_lewat > r_masuk),
         ),
         FunnelStageDataOut(
             id="berhenti",
@@ -1524,7 +1525,7 @@ def build_dashboard_data(
             percentage=round((berhenti_cnt / max(total_agents, 1)) * 100, 1),
             drop_off_count=berhenti_pergi_cnt,
             drop_off_rate=r_berhenti,
-            is_highest_friction=(r_berhenti >= max_drop),
+            is_highest_friction=(r_berhenti == max_drop and r_berhenti >= r_lewat and r_berhenti > r_masuk),
         ),
         FunnelStageDataOut(
             id="masuk",
@@ -1533,7 +1534,7 @@ def build_dashboard_data(
             percentage=round((masuk_cnt / max(total_agents, 1)) * 100, 1),
             drop_off_count=masuk_tanpa_cnt,
             drop_off_rate=r_masuk,
-            is_highest_friction=(r_masuk == max_drop and r_masuk > r_berhenti and r_masuk > r_lewat),
+            is_highest_friction=(r_masuk == max_drop and r_masuk >= r_lewat and r_masuk >= r_berhenti),
         ),
         FunnelStageDataOut(
             id="memesan",
@@ -1608,21 +1609,21 @@ def build_dashboard_data(
             time=t_jalan,
             name=f"Jalur Jalan Depan {business_name}",
             status=f"{round(100 - r_lewat, 1):g}% menoleh",
-            is_hotspot=(r_lewat > r_berhenti),
+            is_hotspot=(r_lewat == max_drop and r_lewat > r_berhenti and r_lewat > r_masuk),
         ),
         WaypointOut(
             id="tangga",
             time=t_pintu,
             name=f"Akses Masuk {business_name}",
             status=f"{r_berhenti:g}% bocor",
-            is_hotspot=(r_berhenti >= r_lewat),
+            is_hotspot=(r_berhenti == max_drop and r_berhenti >= r_lewat and r_berhenti > r_masuk),
         ),
         WaypointOut(
             id="kasir",
             time=t_dalam,
             name=f"Titik Pesan / Kasir {business_name}",
             status=f"{round(100 - r_masuk, 1):g}% memesan",
-            is_hotspot=False,
+            is_hotspot=(r_masuk == max_drop and r_masuk >= r_lewat and r_masuk >= r_berhenti),
         ),
     ]
 
@@ -1646,7 +1647,8 @@ def build_dashboard_data(
         for d in decisions
     ]
     cue_ranks = aggregate_cue_scores(dec_runs)
-    top_cue = cue_ranks[0] if cue_ranks else None
+    non_h0_cues = [c for c in cue_ranks if c.cue_code != "H0"]
+    top_cue = non_h0_cues[0] if non_h0_cues else (cue_ranks[0] if cue_ranks else None)
 
     non_buyers = [d for d in decisions if d.final_decision != "memesan"]
     factor_counts = Counter(d.deciding_factor for d in non_buyers if d.deciding_factor)
@@ -1702,15 +1704,53 @@ def build_dashboard_data(
         ),
     ]
 
+    def _format_pct_id(pct: float) -> str:
+        txt = f"{pct:.1f}".rstrip("0").rstrip(".")
+        return f"{txt.replace('.', ',')}%"
+
+    drop_candidates = [
+        (
+            r_lewat,
+            0,
+            total_agents,
+            "Melihat",
+            "Berhenti",
+            f"Fasad / Jalan {business_name} (Detik {t_jalan})",
+            f"{lewat_cnt} dari {total_agents} agen langsung lewat dari arah jalan tanpa berhenti ({_format_pct_id(r_lewat)}).",
+        ),
+        (
+            r_berhenti,
+            1,
+            berhenti_cnt,
+            "Berhenti",
+            "Masuk",
+            f"Akses Masuk {business_name} (Detik {t_pintu})",
+            f"{berhenti_pergi_cnt} dari {berhenti_cnt} agen yang sudah berhenti akhirnya batal masuk ({_format_pct_id(r_berhenti)}).",
+        ),
+        (
+            r_masuk,
+            2,
+            masuk_cnt,
+            "Masuk",
+            "Memesan",
+            f"Titik Pesan / Kasir {business_name} (Detik {t_dalam})",
+            f"{masuk_tanpa_cnt} dari {masuk_cnt} agen yang sudah masuk akhirnya batal memesan di kasir ({_format_pct_id(r_masuk)}).",
+        ),
+    ]
+    valid_drops = [d for d in drop_candidates if d[2] > 0]
+    top_rate, _, _, top_from, top_to, top_loc, top_desc = max(
+        valid_drops or drop_candidates[:1], key=lambda d: (d[0], d[1])
+    )
+
     kpi = DashboardKpiOut(
         buyers_count=memesan_cnt,
         buyers_rate_text=f"{memesan_cnt} dari {total_agents} agen · contoh awal",
         buyers_description=f"Konversi simulasi 20 agen di {business_name} hingga memesan di kasir (skala contoh awal, bukan persen presisi).",
-        drop_off_rate_text=f"{berhenti_pergi_cnt} dari {berhenti_cnt} agen",
-        drop_off_from_stage="Berhenti" if r_berhenti >= r_lewat else "Melihat",
-        drop_off_to_stage="Masuk" if r_berhenti >= r_lewat else "Berhenti",
-        drop_off_location=f"Akses Masuk {business_name} (Detik {t_pintu})",
-        drop_off_description=f"{berhenti_pergi_cnt} dari {berhenti_cnt} agen yang sudah berhenti akhirnya batal masuk.",
+        drop_off_rate_text=_format_pct_id(top_rate),
+        drop_off_from_stage=top_from,
+        drop_off_to_stage=top_to,
+        drop_off_location=top_loc,
+        drop_off_description=top_desc,
         main_cause_title=main_cause_short,
         main_cause_cue_rank=main_cause_rank_str,
         main_cause_detail=top_factor_text,
@@ -1839,3 +1879,156 @@ def get_or_create_measurement_plan(
         metrics=metrics_out,
         practical_tips=list(plan.practical_tips or []),
     )
+
+
+def clone_analysis_with_transcript(
+    session: Session,
+    source: AnalysisModel,
+    name: str | None = None,
+) -> AnalysisSchema:
+    """Buat analisis baru dengan menyalin konteks, menu, video, & transkrip dari analisis sumber."""
+    new_id = f"anl_{uuid4().hex[:12]}"
+    new_anl = AnalysisModel(
+        id=new_id,
+        business_id=source.business_id,
+        name=(name.strip() if name and name.strip() else f"{source.name} (Salinan)"),
+        status="processing",
+        transcript_version=1,
+        stale=False,
+        total_agents=20,
+        is_demo=source.is_demo,
+        quality_label=source.quality_label,
+        thumbnail_url=source.thumbnail_url,
+    )
+    session.add(new_anl)
+    session.flush()
+
+    if source.context is not None:
+        c = source.context
+        session.add(
+            AnalysisContextModel(
+                id=f"ctx_{uuid4().hex[:10]}",
+                analysis_id=new_id,
+                business_type=c.business_type,
+                business_name=c.business_name,
+                location_name=c.location_name,
+                location_lat=c.location_lat,
+                location_lng=c.location_lng,
+                location_description=c.location_description,
+                surroundings=list(c.surroundings or []),
+                surroundings_other=c.surroundings_other,
+                passersby=list(c.passersby or []),
+                business_goal=c.business_goal,
+                fixed_constraints=list(c.fixed_constraints or []),
+                calculated_price_level=c.calculated_price_level,
+                open_hour=c.open_hour,
+                close_hour=c.close_hour,
+                rush_hours=list(c.rush_hours or []),
+                daily_sales_rp=c.daily_sales_rp,
+                daily_visitors=c.daily_visitors,
+                parking=list(c.parking or []),
+                categorical_features=dict(c.categorical_features or {}),
+                w_matrix_version=c.w_matrix_version,
+                segment_table_version=c.segment_table_version,
+                segment_overrides=dict(c.segment_overrides) if c.segment_overrides else None,
+            )
+        )
+
+    for m in source.menu_items or []:
+        session.add(
+            MenuItemModel(
+                id=f"mnu_{uuid4().hex[:10]}",
+                analysis_id=new_id,
+                name=m.name,
+                price=m.price,
+                category=m.category,
+                is_featured=m.is_featured,
+                sort_order=m.sort_order,
+            )
+        )
+
+    src_vid = session.scalars(select(VideoAsset).where(VideoAsset.analysis_id == source.id)).first()
+    if src_vid is not None:
+        session.add(
+            VideoAsset(
+                id=f"vid_{uuid4().hex[:10]}",
+                analysis_id=new_id,
+                original_filename=src_vid.original_filename,
+                storage_key=src_vid.storage_key,
+                duration_s=src_vid.duration_s,
+                cashier_at_s=src_vid.cashier_at_s,
+                width=src_vid.width,
+                height=src_vid.height,
+                accepted=src_vid.accepted,
+                quality_checks=dict(src_vid.quality_checks or {}),
+                blurred_faces_count=src_vid.blurred_faces_count,
+                blurred_plates_count=src_vid.blurred_plates_count,
+            )
+        )
+
+    src_twin = session.scalars(select(TwinAsset).where(TwinAsset.analysis_id == source.id)).first()
+    if src_twin is not None:
+        session.add(
+            TwinAsset(
+                id=f"tw_{uuid4().hex[:10]}",
+                analysis_id=new_id,
+                mode=src_twin.mode,
+                registered_frames=src_twin.registered_frames,
+                total_frames=src_twin.total_frames,
+                quality_label=src_twin.quality_label,
+                points_count=src_twin.points_count,
+                path_duration_seconds=src_twin.path_duration_seconds,
+                asset_url=src_twin.asset_url,
+            )
+        )
+
+    src_segs = list(
+        session.scalars(
+            select(TranscriptSegment)
+            .where(TranscriptSegment.analysis_id == source.id)
+            .order_by(TranscriptSegment.timestamp_start.asc())
+        ).all()
+    )
+    seg_id_map: dict[str, str] = {}
+    for s in src_segs:
+        new_seg_id = f"seg_{uuid4().hex[:8]}"
+        seg_id_map[s.id] = new_seg_id
+        session.add(
+            TranscriptSegment(
+                id=new_seg_id,
+                analysis_id=new_id,
+                timestamp_start=s.timestamp_start,
+                timestamp_end=s.timestamp_end,
+                frame_keys=list(s.frame_keys or []),
+                vantage=s.vantage,
+                zone_id=s.zone_id,
+                narrative=s.narrative,
+                not_visible=s.not_visible,
+                confidence=s.confidence,
+                is_confirmed_by_owner=s.is_confirmed_by_owner,
+                edited_by_owner=s.edited_by_owner,
+                camera_pose=dict(s.camera_pose) if s.camera_pose else None,
+            )
+        )
+    session.flush()
+
+    src_chks = list(
+        session.scalars(
+            select(TranscriptCheckpoint).where(TranscriptCheckpoint.analysis_id == source.id)
+        ).all()
+    )
+    for chk in src_chks:
+        session.add(
+            TranscriptCheckpoint(
+                id=f"chk_{uuid4().hex[:8]}",
+                analysis_id=new_id,
+                kind=chk.kind,
+                timestamp_s=chk.timestamp_s,
+                segment_id=seg_id_map.get(chk.segment_id or ""),
+            )
+        )
+
+    session.commit()
+    loaded = load_analysis_with_relations(session, new_id)
+    assert loaded is not None
+    return analysis_to_schema(loaded)

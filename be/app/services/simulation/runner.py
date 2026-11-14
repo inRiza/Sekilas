@@ -4,17 +4,18 @@ from __future__ import annotations
 
 import logging
 import random
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any
 
+from app.core.config import get_settings
 from app.schemas.simulation import PersonaSpecOut
-from app.services.llm.router import get_llm_router
+from app.services.llm.router import LLMUnavailableError, get_llm_router
 from app.services.simulation.catalog import (
     HYPOTHESIS_BY_CODE,
     CueHypothesis,
     shuffled_catalog_for_agent,
 )
-from app.services.simulation.population import format_persona_behavior_rules
 
 logger = logging.getLogger(__name__)
 
@@ -200,6 +201,178 @@ def _evaluate_batch_mock(
     return results
 
 
+def _parse_agent_id(raw: Any) -> int | None:
+    if isinstance(raw, bool):
+        return None
+    if isinstance(raw, int):
+        return raw
+    token = str(raw or "").strip().lstrip("#")
+    return int(token) if token.isdigit() else None
+
+
+def _compact_persona_line(persona: PersonaSpecOut, prefix_txt: str = "") -> str:
+    """Format profil persona seringkas mungkin agar hemat token tanpa menghilangkan kendala nyata."""
+    t = persona.discrete_traits
+    f = persona.concrete_facts
+    budget_val = f.get("meal_budget")
+    budget_str = f"Rp{int(budget_val):,}".replace(",", ".") if isinstance(budget_val, (int, float)) else "-"
+    time_val = f.get("break_time_minutes")
+    time_str = f"{int(time_val)}m" if isinstance(time_val, (int, float)) else "-"
+    line = (
+        f"#{persona.agent_id} ({persona.segment}): "
+        f"bujet={budget_str}[{t.get('budget_sensitivity', '-')}], "
+        f"waktu={time_str}, "
+        f"malas={t.get('physical_laziness', '-')}, "
+        f"gaya={t.get('dining_context', '-')}, "
+        f"akrab={t.get('area_familiarity', '-')}, "
+        f"niat={t.get('visit_intent', '-')} | "
+        f"situasi={persona.context_around} | mood={persona.daily_mood}"
+    )
+    if prefix_txt:
+        line += f" | jejak_sebelumnya={prefix_txt}"
+    return line
+
+
+def _resolve_seg_id(
+    raw: Any,
+    *,
+    alias_to_id: dict[str, str],
+    valid_raw_ids: set[str],
+) -> str | None:
+    token = str(raw or "").strip()
+    if not token:
+        return None
+    upper = token.upper()
+    if upper in alias_to_id:
+        return alias_to_id[upper]
+    return token if token in valid_raw_ids else None
+
+
+def _normalize_step1_agent(
+    *,
+    s1: dict[str, Any],
+    prefix: list[dict[str, str]],
+    target_segments: list[SegmentInput],
+    alias_to_id: dict[str, str],
+    valid_raw_ids: set[str],
+    seg_by_id: dict[str, SegmentInput],
+) -> dict[str, Any]:
+    """Normalisasi output Step 1: petakan alias S1..Sk ke ID segmen asli dan pastikan early-stop konsisten."""
+    target_id_set = {s.id for s in target_segments}
+    new_traces: list[dict[str, str]] = []
+    for raw_t in s1.get("segment_traces") or []:
+        if not isinstance(raw_t, dict):
+            continue
+        seg_id = _resolve_seg_id(raw_t.get("segment_id"), alias_to_id=alias_to_id, valid_raw_ids=valid_raw_ids)
+        if not seg_id or seg_id not in target_id_set:
+            continue
+        action = "berhenti" if str(raw_t.get("action") or "").strip().lower() == "berhenti" else "lanjut"
+        new_traces.append(
+            {
+                "segment_id": seg_id,
+                "monologue": str(raw_t.get("monologue") or "").strip(),
+                "action": action,
+            }
+        )
+        if action == "berhenti":
+            break
+
+    all_traces = prefix + new_traces
+    raw_stopped = _resolve_seg_id(
+        s1.get("stopped_at_segment_id"), alias_to_id=alias_to_id, valid_raw_ids=valid_raw_ids
+    )
+    trace_stopped = next((t["segment_id"] for t in all_traces if t["action"] == "berhenti"), None)
+
+    decision = str(s1.get("final_decision") or "").strip()
+    if decision not in ("lewat", "berhenti_lalu_pergi", "masuk_tanpa_memesan", "memesan"):
+        decision = _infer_decision_from_stopped_vantage(seg_by_id.get(trace_stopped or raw_stopped or ""))
+
+    if decision == "memesan":
+        stopped_id: str | None = None
+    else:
+        stopped_id = (
+            trace_stopped
+            or raw_stopped
+            or (all_traces[-1]["segment_id"] if all_traces else (target_segments[-1].id if target_segments else None))
+        )
+        # Jika LLM menandai stopped_at_segment_id tetapi lupa set action='berhenti', selaraskan trace-nya
+        if stopped_id and trace_stopped is None:
+            aligned: list[dict[str, str]] = []
+            for t in all_traces:
+                item = dict(t)
+                if item["segment_id"] == stopped_id:
+                    item["action"] = "berhenti"
+                    aligned.append(item)
+                    break
+                aligned.append(item)
+            all_traces = aligned
+
+    factor_seg_ids: list[str] = []
+    for raw_fid in s1.get("factor_segment_ids") or []:
+        fid = _resolve_seg_id(raw_fid, alias_to_id=alias_to_id, valid_raw_ids=valid_raw_ids)
+        if fid and fid not in factor_seg_ids:
+            factor_seg_ids.append(fid)
+    if decision != "memesan" and not factor_seg_ids and stopped_id:
+        factor_seg_ids = [stopped_id]
+
+    full_mono = " ".join(t["monologue"] for t in all_traces if t["monologue"])
+    return {
+        "traces": all_traces,
+        "full_mono": full_mono,
+        "stopped_id": stopped_id,
+        "decision": decision,
+        "deciding_factor": str(s1.get("deciding_factor") or "").strip(),
+        "factor_segment_ids": factor_seg_ids,
+    }
+
+
+def _build_step1_user_prompt(
+    *,
+    business_summary: str,
+    seg_lines: list[str],
+    personas: list[PersonaSpecOut],
+    prefix_by_agent: dict[int, str],
+) -> str:
+    persona_lines = [
+        _compact_persona_line(p, prefix_by_agent.get(p.agent_id, ""))
+        for p in personas
+    ]
+    return (
+        f"Profil toko: {business_summary}\n\n"
+        "Urutan segmen transkrip:\n" + "\n".join(seg_lines) + "\n\n"
+        f"Daftar {len(personas)} agen:\n" + "\n".join(persona_lines) + "\n\n"
+        "Untuk setiap agen kembalikan JSON (monologue maks 15 kata/segmen, pakai ID pendek S1..Sk):\n"
+        '{"results": [{"agent_id": int, "segment_traces": [{"segment_id": str, "monologue": str, "action": "lanjut"|"berhenti"}], '
+        '"final_decision": "lewat"|"berhenti_lalu_pergi"|"masuk_tanpa_memesan"|"memesan", '
+        '"stopped_at_segment_id": str|null, "deciding_factor": str, "factor_segment_ids": [str]}]}'
+    )
+
+
+def _build_step2_user_prompt(
+    *,
+    personas: list[PersonaSpecOut],
+    parsed_step1: dict[int, dict[str, Any]],
+    segments: list[SegmentInput],
+    seed: int,
+) -> str:
+    eval_prompts: list[str] = []
+    for p in personas:
+        parsed = parsed_step1[p.agent_id]
+        allowed_v = _allowed_vantages_until(segments, parsed["stopped_id"])
+        shuffled = shuffled_catalog_for_agent(agent_id=p.agent_id, allowed_vantages=allowed_v, seed=seed)
+        cat_str = ", ".join(f"{h.cue_code}:{h.title}" for h in shuffled)
+        eval_prompts.append(
+            f"#{p.agent_id} | decision={parsed['decision']} | mono=\"{parsed['full_mono'][:500]}\"\n"
+            f"  Katalog: [{cat_str}]"
+        )
+    return (
+        "\n".join(eval_prompts)
+        + '\n\nKembalikan JSON (isi hanya isyarat relevan score 1-3, maks 4 isyarat/agen):\n'
+        '{"results": [{"agent_id": int, "attributions": [{"cue_code": str, "direction": "menghambat"|"mendorong"|"netral", '
+        '"relevance_score": 1|2|3, "evidence": str}], "primary": str|null, "other_reason": str|null}]}'
+    )
+
+
 def _evaluate_batch_llm(
     *,
     personas: list[PersonaSpecOut],
@@ -210,114 +383,162 @@ def _evaluate_batch_llm(
     prefix_traces_by_agent: dict[int, list[dict[str, str]]] | None = None,
     start_idx: int = 0,
 ) -> list[AgentRunResult] | None:
-    """Jalankan 1 batch (maks 10 agen) lewat Gemini (atau fallback OpenAI) dengan 2 langkah terstruktur."""
+    """Jalankan 1 batch (maks 10 agen) lewat OpenAI dengan alias segmen kompak dan validasi ketat."""
     router = get_llm_router()
     if router.is_mock_mode:
         return None
 
+    model_name = get_settings().openai_model
+    id_to_alias = {s.id: f"S{i + 1}" for i, s in enumerate(segments)}
+    alias_to_id = {f"S{i + 1}": s.id for i, s in enumerate(segments)}
+    valid_raw_ids = {s.id for s in segments}
+    seg_by_id = {s.id: s for s in segments}
+
     target_segments = segments[start_idx:]
     seg_lines = [
-        f"- {s.id} (vantage: {s.vantage}): {s.narrative} | TIDAK TERLIHAT: {s.not_visible}"
+        f"- {id_to_alias[s.id]} ({s.vantage}): {s.narrative} | TIDAK TERLIHAT: {s.not_visible}"
         for s in target_segments
     ]
-    persona_blocks = []
+    prefix_by_agent: dict[int, str] = {}
     for p in personas:
         prefix = (prefix_traces_by_agent or {}).get(p.agent_id, [])
-        prefix_txt = " ".join(t["monologue"] for t in prefix[:start_idx]) if prefix else ""
-        persona_blocks.append(
-            f"Agent #{p.agent_id} ({p.segment}): {p.context_around}. Mood: {p.daily_mood}. "
-            f"Aturan: {format_persona_behavior_rules(p)}"
-            + (f"\n  Jejak segmen sebelumnya yang sudah dilewati: {prefix_txt}" if prefix_txt else "")
-        )
+        if prefix and start_idx > 0:
+            prefix_by_agent[p.agent_id] = " ".join(t["monologue"] for t in prefix[:start_idx])
 
-    # Pesan 1: Keputusan & jejak per segmen TANPA katalog isyarat
+    # Pesan 1: Keputusan & jejak per segmen TANPA katalog isyarat (anti-priming)
     sys1 = (
-        "Kamu mensimulasikan calon pelanggan nyata yang melewati tempat makan. "
-        "Setiap agen membaca segmen berurutan dan hanya boleh memakai informasi dari segmen yang sudah dilewati. "
-        "Jika agen memilih 'berhenti', ia langsung selesai di segmen itu. Kembalikan JSON valid."
+        "Kamu mensimulasikan calon pelanggan nyata yang melewati tempat makan.\n"
+        "Aturan simulasi ketat:\n"
+        "1. Setiap agen membaca segmen berurutan (S1, S2, ...) dan HANYA boleh memakai info dari segmen yang sudah dilewati.\n"
+        "2. Sesuaikan reaksi dengan profil tiap agen: agen sensitif bujet ragu bila harga tidak terlihat atau kemahalan; "
+        "agen malas fisik enggan naik tangga/akses gelap/sempit; agen buru-buru mudah batal bila antre/menu tidak langsung terbaca; "
+        "agen baru di area butuh penanda jelas.\n"
+        "3. Begitu agen memilih 'berhenti' pada satu segmen, HENTIKAN segment_traces tepat di segmen itu.\n"
+        "4. Buat monolog unik sesuai bujet, waktu, gaya makan, dan mood masing-masing agen (hindari kalimat seragam).\n"
+        "5. Kembalikan HANYA JSON valid."
     )
-    usr1 = (
-        f"Profil singkat toko (hanya yang terlihat umum): {business_summary}\n\n"
-        f"Urutan segmen transkrip:\n" + "\n".join(seg_lines) + "\n\n"
-        f"Daftar {len(personas)} agen:\n" + "\n".join(persona_blocks) + "\n\n"
-        "Untuk setiap agen kembalikan JSON:\n"
-        '{"results": [{"agent_id": int, "segment_traces": [{"segment_id": str, "monologue": str, "action": "lanjut"|"berhenti"}], '
-        '"final_decision": "lewat"|"berhenti_lalu_pergi"|"masuk_tanpa_memesan"|"memesan", '
-        '"stopped_at_segment_id": str|null, "deciding_factor": str, "factor_segment_ids": [str]}]}'
+    usr1 = _build_step1_user_prompt(
+        business_summary=business_summary,
+        seg_lines=seg_lines,
+        personas=personas,
+        prefix_by_agent=prefix_by_agent,
     )
 
-    res1 = router.generate_json(system_prompt=sys1, user_prompt=usr1, temperature=0.2, max_output_tokens=4096)
+    res1 = router.generate_json(system_prompt=sys1, user_prompt=usr1, temperature=0.3, max_output_tokens=6144)
     if not res1 or not isinstance(res1.data, dict) or not isinstance(res1.data.get("results"), list):
-        return None
-
-    step1_map: dict[int, dict[str, Any]] = {
-        int(item["agent_id"]): item for item in res1.data["results"] if isinstance(item, dict) and "agent_id" in item
-    }
-
-    # Pesan 2: Penilaian relevance_score & direction terhadap Katalog Isyarat (urutan diacak per agen!)
-    eval_prompts = []
-    for p in personas:
-        s1 = step1_map.get(p.agent_id) or {}
-        stopped_id = s1.get("stopped_at_segment_id")
-        allowed_v = _allowed_vantages_until(segments, stopped_id)
-        shuffled = shuffled_catalog_for_agent(agent_id=p.agent_id, allowed_vantages=allowed_v, seed=seed)
-        cat_str = ", ".join(f"{h.cue_code} ({h.title})" for h in shuffled)
-        traces_list = s1.get("segment_traces") or []
-        mono = " ".join(str(t.get("monologue", "")) for t in traces_list if isinstance(t, dict))
-        eval_prompts.append(
-            f"Agent #{p.agent_id} | final_decision={s1.get('final_decision')} | monolog=\"{mono[:400]}\"\n"
-            f"  Katalog isyarat (urutan khusus agen ini): [{cat_str}]"
+        raise LLMUnavailableError(
+            f"Model OpenAI ({model_name}) tidak mengembalikan daftar keputusan agen yang valid.",
+            status_code=502,
         )
 
+    step1_map: dict[int, dict[str, Any]] = {}
+    for item in res1.data["results"]:
+        if not isinstance(item, dict):
+            continue
+        aid = _parse_agent_id(item.get("agent_id"))
+        if aid is not None:
+            step1_map[aid] = item
+
+    # Jika ada agen yang terlewat oleh model, retry 1x khusus agen yang hilang (jangan pernah mock diam-diam)
+    missing_personas = [p for p in personas if p.agent_id not in step1_map]
+    if missing_personas:
+        retry_usr1 = _build_step1_user_prompt(
+            business_summary=business_summary,
+            seg_lines=seg_lines,
+            personas=missing_personas,
+            prefix_by_agent=prefix_by_agent,
+        )
+        retry_res1 = router.generate_json(
+            system_prompt=sys1,
+            user_prompt=retry_usr1,
+            temperature=0.3,
+            max_output_tokens=max(2048, len(missing_personas) * 700),
+        )
+        if retry_res1 and isinstance(retry_res1.data, dict) and isinstance(retry_res1.data.get("results"), list):
+            for item in retry_res1.data["results"]:
+                if not isinstance(item, dict):
+                    continue
+                aid = _parse_agent_id(item.get("agent_id"))
+                if aid is not None:
+                    step1_map[aid] = item
+
+        still_missing = [p.agent_id for p in personas if p.agent_id not in step1_map]
+        if still_missing:
+            raise LLMUnavailableError(
+                f"Model OpenAI ({model_name}) melewatkan keputusan untuk agen {still_missing}. Silakan coba lagi.",
+                status_code=502,
+            )
+
+    parsed_step1: dict[int, dict[str, Any]] = {}
+    for p in personas:
+        prefix = list((prefix_traces_by_agent or {}).get(p.agent_id, []))[:start_idx]
+        parsed_step1[p.agent_id] = _normalize_step1_agent(
+            s1=step1_map[p.agent_id],
+            prefix=prefix,
+            target_segments=target_segments,
+            alias_to_id=alias_to_id,
+            valid_raw_ids=valid_raw_ids,
+            seg_by_id=seg_by_id,
+        )
+
+    # Pesan 2: Atribusi faktor penyebab terhadap Katalog Isyarat teracak per agen
     sys2 = (
-        "Evaluasi faktor penyebab keputusan setiap agen berdasarkan monolognya terhadap katalog isyarat. "
-        "JANGAN ubah final_decision agen. Wajib sertakan arah ('menghambat'|'mendorong'|'netral') dan kutipan dari monolog.\n"
+        "Evaluasi faktor penyebab keputusan tiap agen berdasarkan monolog terhadap Katalog Isyarat agen tersebut.\n"
+        "JANGAN ubah final_decision agen. Gunakan cue_code HANYA dari Katalog milik agen itu, "
+        "sertakan arah ('menghambat'|'mendorong'|'netral') dan kutipan singkat dari monolog.\n"
+        "Jika decision!='memesan', wajib minimal 1 isyarat 'menghambat' berskor >= 1.\n"
         + SCALE_ANCHORS_TEXT
     )
-    usr2 = (
-        "\n".join(eval_prompts)
-        + '\n\nKembalikan JSON:\n{"results": [{"agent_id": int, "attributions": [{"cue_code": str, "direction": "menghambat"|"mendorong"|"netral", "relevance_score": 0|1|2|3, "evidence": str}], "primary": str|null}]}'
+    usr2 = _build_step2_user_prompt(
+        personas=personas,
+        parsed_step1=parsed_step1,
+        segments=segments,
+        seed=seed,
     )
+    res2 = router.generate_json(system_prompt=sys2, user_prompt=usr2, temperature=0.1, max_output_tokens=4096)
+    if not res2 or not isinstance(res2.data, dict) or not isinstance(res2.data.get("results"), list):
+        raise LLMUnavailableError(
+            f"Model OpenAI ({model_name}) gagal menyusun atribusi Katalog Isyarat agen.",
+            status_code=502,
+        )
 
-    res2 = router.generate_json(system_prompt=sys2, user_prompt=usr2, temperature=0.1, max_output_tokens=3072)
     step2_map: dict[int, dict[str, Any]] = {}
-    if res2 and isinstance(res2.data, dict) and isinstance(res2.data.get("results"), list):
-        step2_map = {
-            int(item["agent_id"]): item for item in res2.data["results"] if isinstance(item, dict) and "agent_id" in item
-        }
+    for item in res2.data["results"]:
+        if not isinstance(item, dict):
+            continue
+        aid = _parse_agent_id(item.get("agent_id"))
+        if aid is not None:
+            step2_map[aid] = item
+
+    missing_s2 = [
+        p for p in personas if p.agent_id not in step2_map and parsed_step1[p.agent_id]["decision"] != "memesan"
+    ]
+    if missing_s2:
+        retry_usr2 = _build_step2_user_prompt(
+            personas=missing_s2,
+            parsed_step1=parsed_step1,
+            segments=segments,
+            seed=seed,
+        )
+        retry_res2 = router.generate_json(
+            system_prompt=sys2,
+            user_prompt=retry_usr2,
+            temperature=0.1,
+            max_output_tokens=max(1536, len(missing_s2) * 500),
+        )
+        if retry_res2 and isinstance(retry_res2.data, dict) and isinstance(retry_res2.data.get("results"), list):
+            for item in retry_res2.data["results"]:
+                if not isinstance(item, dict):
+                    continue
+                aid = _parse_agent_id(item.get("agent_id"))
+                if aid is not None:
+                    step2_map[aid] = item
 
     final_results: list[AgentRunResult] = []
     for p in personas:
-        s1 = step1_map.get(p.agent_id)
-        if not s1:
-            # Fallback aman untuk agen yang terlewat di output batch
-            mock_one = _evaluate_batch_mock(
-                personas=[p],
-                segments=segments,
-                batch_id=batch_id,
-                seed=seed,
-                prefix_traces_by_agent=prefix_traces_by_agent,
-                start_idx=start_idx,
-            )[0]
-            final_results.append(mock_one)
-            continue
-
-        prefix = list((prefix_traces_by_agent or {}).get(p.agent_id, []))[:start_idx]
-        new_traces = [
-            {
-                "segment_id": str(t.get("segment_id", "")),
-                "monologue": str(t.get("monologue", "")),
-                "action": "berhenti" if t.get("action") == "berhenti" else "lanjut",
-            }
-            for t in (s1.get("segment_traces") or [])
-            if isinstance(t, dict)
-        ]
-        all_traces = prefix + new_traces
-        full_mono = " ".join(t["monologue"] for t in all_traces)
-        stopped_id = s1.get("stopped_at_segment_id")
-        decision = str(s1.get("final_decision") or "lewat")
-        if decision not in ("lewat", "berhenti_lalu_pergi", "masuk_tanpa_memesan", "memesan"):
-            decision = "lewat"
+        parsed = parsed_step1[p.agent_id]
+        decision = parsed["decision"]
+        stopped_id = parsed["stopped_id"]
 
         allowed_v = _allowed_vantages_until(segments, stopped_id)
         valid_cues = {
@@ -330,13 +551,16 @@ def _evaluate_batch_llm(
         for a in s2.get("attributions") or []:
             if not isinstance(a, dict):
                 continue
-            code = str(a.get("cue_code") or "")
+            code = str(a.get("cue_code") or "").strip()
             if code not in valid_cues:
                 continue
-            rel = int(max(0, min(3, int(a.get("relevance_score", 0)))))
+            try:
+                rel = int(max(0, min(3, int(float(a.get("relevance_score", 0))))))
+            except (TypeError, ValueError):
+                continue
             if rel <= 0:
                 continue
-            direction = str(a.get("direction") or "menghambat")
+            direction = str(a.get("direction") or "menghambat").strip()
             if direction not in ("menghambat", "mendorong", "netral"):
                 direction = "menghambat"
             cleaned_attrs.append(
@@ -351,18 +575,22 @@ def _evaluate_batch_llm(
         primary = s2.get("primary")
         if primary not in valid_cues:
             inhibitors = [a for a in cleaned_attrs if a["direction"] == "menghambat"]
-            primary = inhibitors[0]["cue_code"] if inhibitors else (cleaned_attrs[0]["cue_code"] if cleaned_attrs else None)
+            primary = (
+                inhibitors[0]["cue_code"]
+                if inhibitors
+                else (cleaned_attrs[0]["cue_code"] if cleaned_attrs else None)
+            )
 
         final_results.append(
             AgentRunResult(
                 agent_id=p.agent_id,
                 batch_id=batch_id,
-                monologue=full_mono,
+                monologue=parsed["full_mono"],
                 final_decision=decision,
                 stopped_at_segment_id=stopped_id,
-                deciding_factor=str(s1.get("deciding_factor") or ""),
-                factor_segment_ids=[str(x) for x in (s1.get("factor_segment_ids") or [])],
-                segment_traces=all_traces,
+                deciding_factor=parsed["deciding_factor"],
+                factor_segment_ids=parsed["factor_segment_ids"],
+                segment_traces=parsed["traces"],
                 attributions=cleaned_attrs,
                 primary_hypothesis_id=primary if decision != "memesan" else None,
                 other_reason=str(s2.get("other_reason")) if s2.get("other_reason") else None,
@@ -398,10 +626,23 @@ def run_20_agent_swarm(
                 continue
         agents_to_run.append(p)
 
-    new_results: list[AgentRunResult] = []
-    for b_idx in range(0, len(agents_to_run), max(1, batch_size)):
-        batch = agents_to_run[b_idx : b_idx + batch_size]
-        batch_num = b_idx // max(1, batch_size)
+    batches = [
+        (b_idx // max(1, batch_size), agents_to_run[b_idx : b_idx + batch_size])
+        for b_idx in range(0, len(agents_to_run), max(1, batch_size))
+    ]
+
+    def _run_one_batch(item: tuple[int, list[PersonaSpecOut]]) -> list[AgentRunResult]:
+        batch_num, batch = item
+        router = get_llm_router()
+        if router.is_mock_mode:
+            return _evaluate_batch_mock(
+                personas=batch,
+                segments=segments,
+                batch_id=batch_num,
+                seed=seed,
+                prefix_traces_by_agent=prefix_traces_by_agent,
+                start_idx=start_idx,
+            )
         llm_out = _evaluate_batch_llm(
             personas=batch,
             segments=segments,
@@ -411,19 +652,21 @@ def run_20_agent_swarm(
             prefix_traces_by_agent=prefix_traces_by_agent,
             start_idx=start_idx,
         )
-        if llm_out is not None:
-            new_results.extend(llm_out)
-        else:
-            new_results.extend(
-                _evaluate_batch_mock(
-                    personas=batch,
-                    segments=segments,
-                    batch_id=batch_num,
-                    seed=seed,
-                    prefix_traces_by_agent=prefix_traces_by_agent,
-                    start_idx=start_idx,
-                )
+        if llm_out is None:
+            raise LLMUnavailableError(
+                "Model gagal menghasilkan keputusan agen yang valid. Silakan coba lagi.",
+                status_code=502,
             )
+        return llm_out
+
+    new_results: list[AgentRunResult] = []
+    if len(batches) > 1:
+        max_workers = max(1, min(len(batches), get_settings().sim_concurrency_limit))
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            for batch_res in pool.map(_run_one_batch, batches):
+                new_results.extend(batch_res)
+    elif batches:
+        new_results.extend(_run_one_batch(batches[0]))
 
     combined = reused_results + new_results
     combined.sort(key=lambda r: r.agent_id)
