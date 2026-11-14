@@ -14,8 +14,22 @@ import {
   SimulationRequiredError,
   subscribeCrudChanges,
 } from '@/lib/api/crud';
-import { MOCK_DASHBOARD, MOCK_WHAT_IF_PROJECTION, WhatIfFix } from '@/lib/mock/dashboard';
-import type { DashboardData, WaypointData, WhatIfProjectionData } from '@/types/api';
+import type { DashboardData, WhatIfProjectionData } from '@/types/api';
+
+/** Satu perbaikan yang bisa dicentang di simulasi hipotesis. */
+interface WhatIfFix {
+  id: string;
+  title: string;
+  impact_label: string;
+  effort_label: string;
+  is_checked: boolean;
+}
+
+/** "00:16" -> 16 */
+function toSeconds(mmss: string): number {
+  const [m, s] = mmss.split(':').map(Number);
+  return (m || 0) * 60 + (s || 0);
+}
 
 const KPI_TONE = {
   impact: 'bg-impact-10 text-impact',
@@ -99,17 +113,16 @@ function DashboardResultInner() {
   const searchParams = useSearchParams();
   const analysisId = searchParams.get('analysisId') || 'selasar-kopi';
   const businessId = searchParams.get('businessId');
+  // ?agent=7 dari Jelajah Agen: langsung putar perjalanan agen itu di Visual Twin.
+  const focusAgentParam = searchParams.get('agent');
+  const focusAgentId = focusAgentParam ? Number(focusAgentParam) : null;
   const querySuffix = `?analysisId=${encodeURIComponent(analysisId)}${
     businessId ? `&businessId=${encodeURIComponent(businessId)}` : ''
   }`;
 
-  const [data, setData] = useState<DashboardData | null>(
-    analysisId === 'selasar-kopi' ? MOCK_DASHBOARD : null,
-  );
-  const [projection, setProjection] = useState<WhatIfProjectionData | null>(
-    analysisId === 'selasar-kopi' ? (MOCK_DASHBOARD.what_if_projection ?? MOCK_WHAT_IF_PROJECTION) : null,
-  );
-  const [activeWaypoint, setActiveWaypoint] = useState<string>('tangga');
+  const [data, setData] = useState<DashboardData | null>(null);
+  const [projection, setProjection] = useState<WhatIfProjectionData | null>(null);
+  const [activeWaypoint, setActiveWaypoint] = useState<string | null>(null);
   const [fixes, setFixes] = useState<WhatIfFix[]>([]);
   const [isSimulating, setIsSimulating] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -133,10 +146,10 @@ function DashboardResultInner() {
           }
           if (res.recommendations && res.recommendations.length > 0) {
             setFixes(
-              res.recommendations.map((rec, idx) => ({
+              res.recommendations.map((rec) => ({
                 id: rec.id,
                 title: rec.title,
-                impact_label: rec.estimated_lift_range || (idx === 0 ? 'Dampak tinggi' : 'Dampak sedang'),
+                impact_label: rec.estimated_lift_range || `Dampak ${rec.impact.toLowerCase()}`,
                 effort_label:
                   rec.effort === 'Rendah'
                     ? 'Usaha rendah'
@@ -207,13 +220,8 @@ function DashboardResultInner() {
     );
   }
 
-  if (!data || !projection) {
-    const stageText =
-      elapsedSec < 3
-        ? 'Mengambil data dasbor dan keputusan 20 agen dari server...'
-        : elapsedSec < 10
-          ? 'Belum ada hasil simulasi tersimpan — menjalankan simulasi 20 agen (2 batch paralel)...'
-          : 'Meranking Katalog Isyarat dan menyusun rekomendasi perbaikan...';
+  if (!data) {
+    const stageText = 'Mengambil hasil simulasi, keputusan agen, dan rekomendasi dari server...';
     return (
       <div className="flex min-h-full items-center justify-center bg-white px-4 py-16">
         <div className="max-w-md rounded-xl border border-line bg-white p-6 text-center shadow-sm">
@@ -229,15 +237,11 @@ function DashboardResultInner() {
   }
 
   const checkedFixesCount = fixes.filter((f) => f.is_checked).length;
-  const durationSeconds = Math.max(1, Math.round(data.twin_meta?.path_duration_seconds || 48));
-  const waypoints: WaypointData[] =
-    data.waypoints && data.waypoints.length > 0
-      ? data.waypoints
-      : [
-          { id: 'jalan', time: '00:04', name: 'Trotoar Depan', status: 'Daya Tarik Baik', is_hotspot: false },
-          { id: 'tangga', time: '00:18', name: 'Akses Pintu / Tangga', status: `${data.kpi.drop_off_rate_text} bocor`, is_hotspot: true },
-          { id: 'kasir', time: '00:36', name: 'Titik Pesan / Kasir', status: 'Konversi Solid', is_hotspot: false },
-        ];
+  const durationSeconds = Math.round(data.twin_meta?.path_duration_seconds ?? 0);
+  const waypoints = data.waypoints ?? [];
+  const totalAgents = data.total_agents;
+  // Titik pantau di 3D ditempatkan di detiknya pada jalur kamera rekaman.
+  const twinWaypoints = waypoints.map((wp) => ({ id: wp.id, label: wp.name, t: toSeconds(wp.time), hot: Boolean(wp.is_hotspot) }));
 
   return (
     <div className="flex min-h-full flex-col justify-between bg-white">
@@ -248,7 +252,7 @@ function DashboardResultInner() {
           <div>
             <div className="flex flex-wrap items-center gap-2 mb-2">
               <span className="text-[13px] text-muted">Hasil analisis video</span>
-              <Badge>{`${durationSeconds} detik rekaman`}</Badge>
+              {durationSeconds > 0 && <Badge>{`${durationSeconds} detik rekaman`}</Badge>}
             </div>
             <h1 className="text-2xl sm:text-[32px] font-normal tracking-[-0.035em] text-ink">
               Dasbor Titik Gesekan & Peluang Konversi
@@ -315,7 +319,7 @@ function DashboardResultInner() {
           <KpiCard
             label="Penyebab utama batal"
             info={data.kpi.main_cause_detail}
-            value={data.kpi.main_cause_title || 'Menu & Harga'}
+            value={data.kpi.main_cause_title || '–'}
             sub={data.kpi.main_cause_cue_rank}
             icon={TriangleAlert}
             tone="friction"
@@ -336,10 +340,13 @@ function DashboardResultInner() {
           <div className="space-y-4">
             <AnalysisTwin
               analysisId={analysisId}
-              meta={[`${durationSeconds} detik`, `${waypoints.length} zona`]}
+              meta={durationSeconds > 0 ? [`${durationSeconds} detik`] : []}
               activeWaypoint={activeWaypoint}
               onSelectWaypoint={setActiveWaypoint}
+              focusAgentId={focusAgentId}
+              waypoints={twinWaypoints}
             />
+            {waypoints.length > 0 && (
             <div className="rounded-xl border border-line bg-white overflow-hidden">
               {/* 2D Waypoint Progression Bar */}
               <div className="p-4 bg-white">
@@ -373,6 +380,7 @@ function DashboardResultInner() {
                 </div>
               </div>
             </div>
+            )}
           </div>
 
           {/* Temuan Utama & Rekomendasi Prioritas: dua kolom sejajar, tinggi sama */}
@@ -437,6 +445,7 @@ function DashboardResultInner() {
         {/* ==================================================================== */}
         {/* SECTION BAWAH: SIMULASI HIPOTESIS (What-If Simulator Sesuai Figma)   */}
         {/* ==================================================================== */}
+        {projection ? (
         <div className="pt-4 space-y-4">
           <div className="flex items-center justify-between">
             <span className="font-mono text-[11px] uppercase tracking-wider text-muted font-semibold">
@@ -516,7 +525,7 @@ function DashboardResultInner() {
                     </Badge>
                   </div>
                   <p className="text-xs text-muted mt-0.5">
-                    Perbandingan perilaku {data.total_agents || 20} agen yang sama, sebelum dan sesudah perbaikan (contoh awal).
+                    Perbandingan perilaku {totalAgents} agen yang sama, sebelum dan sesudah perbaikan.
                   </p>
                 </div>
                 <div className="flex items-center gap-3 text-xs font-medium text-ink-soft shrink-0">
@@ -579,7 +588,7 @@ function DashboardResultInner() {
                         />
                       </div>
                       <span className="font-mono text-[11px] text-muted w-12 text-right shrink-0">
-                        {Math.round((stage.baseline_pct / 100) * (data.total_agents || 20))}/{data.total_agents || 20}
+                        {Math.round((stage.baseline_pct / 100) * totalAgents)}/{totalAgents}
                       </span>
                     </div>
 
@@ -593,7 +602,7 @@ function DashboardResultInner() {
                         />
                       </div>
                       <span className="font-mono text-[11px] text-primary-40 font-semibold w-12 text-right shrink-0">
-                        {Math.round((stage.projected_pct / 100) * (data.total_agents || 20))}/{data.total_agents || 20}
+                        {Math.round((stage.projected_pct / 100) * totalAgents)}/{totalAgents}
                       </span>
                     </div>
                   </div>
@@ -612,6 +621,11 @@ function DashboardResultInner() {
             </div>
           </div>
         </div>
+        ) : (
+          <div className="rounded-xl border border-line bg-panel p-5 text-[13px] text-muted">
+            Proyeksi perbaikan belum tersedia untuk analisis ini.
+          </div>
+        )}
       </main>
 
     </div>
