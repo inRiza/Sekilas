@@ -30,7 +30,7 @@ type MenuFile = { name: string; previewUrl?: string };
 const MENU_SOURCES: Record<MenuSource, { label: string; icon: typeof Keyboard; accept?: string; hint?: string }> = {
   manual: { label: 'Ketik manual', icon: Keyboard },
   excel: {
-    label: 'File Excel / CSV',
+    label: 'Excel / CSV',
     icon: FileSpreadsheet,
     accept: '.xlsx,.xls,.csv,.txt',
     hint: 'Kolom: nama menu, harga porsi. Format .csv, .xlsx, atau .xls.',
@@ -135,7 +135,7 @@ function MenuInput({
 
   return (
     <div className="space-y-4">
-      <div className="inline-flex rounded-md bg-soft p-1">
+      <div className="grid w-full grid-cols-3 rounded-md bg-soft p-1 sm:inline-grid sm:w-auto">
         {(Object.keys(MENU_SOURCES) as MenuSource[]).map((key) => {
           const Icon = MENU_SOURCES[key].icon;
           return (
@@ -146,11 +146,11 @@ function MenuInput({
                 if (key !== source) clearFile();
                 setSource(key);
               }}
-              className={`inline-flex h-8 items-center gap-2 rounded-[5px] px-3 text-[13px] transition-colors ${
+              className={`inline-flex h-8 items-center justify-center gap-2 whitespace-nowrap rounded-[5px] px-2 text-[13px] transition-colors sm:px-3 ${
                 source === key ? 'bg-white font-medium text-ink shadow-[0_1px_2px_rgba(16,24,40,0.08)]' : 'text-muted hover:text-ink'
               }`}
             >
-              <Icon size={14} />
+              <Icon size={14} className="hidden shrink-0 sm:block" />
               {MENU_SOURCES[key].label}
             </button>
           );
