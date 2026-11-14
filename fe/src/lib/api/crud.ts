@@ -1070,3 +1070,13 @@ export interface ProcessingJob {
 export async function fetchProcessingStatus(analysisId: string): Promise<ProcessingJob | null> {
   return tryApiFetch<ProcessingJob>(`/analyses/${encodeURIComponent(analysisId)}/video/processing`, { cache: 'no-store' });
 }
+
+/** Satu analisis dari server (status, stale). `null` bila tidak ada atau server tidak terjangkau. */
+export async function fetchAnalysis(analysisId: string): Promise<Analysis | null> {
+  return tryApiFetch<Analysis>(`/analyses/${encodeURIComponent(analysisId)}`, { cache: 'no-store' });
+}
+
+/** Analisis sudah punya hasil simulasi yang masih berlaku: tampilkan dasbor, jangan jalankan ulang. */
+export function isAnalysisComplete(analysis: Analysis | null, decisionsCount: number): boolean {
+  return Boolean(analysis && analysis.status === 'ready' && !analysis.stale && decisionsCount > 0);
+}
