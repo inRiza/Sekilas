@@ -271,33 +271,63 @@ export async function inspectVideoFile(file: File): Promise<VideoInspectionResul
       });
     };
 
-    const timeout = window.setTimeout(() => {
+    const capturedFrames: string[] = [];
+    let resolvedWidth = 1920;
+    let resolvedHeight = 1080;
+    let resolvedDuration = 48;
+    let lumSum = 0;
+    let lumCount = 0;
+    let totalFacesDetected = 0;
+    let totalPlatesDetected = 0;
+    let settled = false;
+
+    const safeFinish = (
+      w: number,
+      h: number,
+      dur: number,
+      bright: number,
+      faces?: number,
+      plates?: number,
+      frames: string[] = [],
+    ) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timeout);
       URL.revokeObjectURL(objectUrl);
-      finishWith(1920, 1080, 48, 135);
-    }, 6500);
+      finishWith(w, h, dur, bright, faces, plates, frames);
+    };
+
+    const timeout = window.setTimeout(() => {
+      const avgLum = lumCount > 0 ? Math.round(lumSum / lumCount) : 135;
+      safeFinish(
+        resolvedWidth,
+        resolvedHeight,
+        resolvedDuration,
+        avgLum,
+        totalFacesDetected,
+        totalPlatesDetected,
+        capturedFrames,
+      );
+    }, 20000);
 
     video.onloadedmetadata = async () => {
-      const width = video.videoWidth || 1920;
-      const height = video.videoHeight || 1080;
-      const rawDuration = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 48;
+      resolvedWidth = video.videoWidth || 1920;
+      resolvedHeight = video.videoHeight || 1080;
+      resolvedDuration = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 48;
 
-      const samplePoints = [0.15, 0.4, 0.65, 0.85].map((r) => Math.min(rawDuration - 0.1, Math.max(0.1, rawDuration * r)));
+      const samplePoints = [0.15, 0.4, 0.65, 0.85].map((r) =>
+        Math.min(resolvedDuration - 0.1, Math.max(0.1, resolvedDuration * r)),
+      );
       let sampleIdx = 0;
-      let lumSum = 0;
-      let lumCount = 0;
-      let totalFacesDetected = 0;
-      let totalPlatesDetected = 0;
-      const capturedFrames: string[] = [];
 
       const seekNext = () => {
+        if (settled) return;
         if (sampleIdx >= samplePoints.length) {
-          window.clearTimeout(timeout);
           const avgLum = lumCount > 0 ? Math.round(lumSum / lumCount) : 135;
-          URL.revokeObjectURL(objectUrl);
-          finishWith(
-            width,
-            height,
-            rawDuration,
+          safeFinish(
+            resolvedWidth,
+            resolvedHeight,
+            resolvedDuration,
             avgLum,
             totalFacesDetected,
             totalPlatesDetected,
@@ -310,6 +340,7 @@ export async function inspectVideoFile(file: File): Promise<VideoInspectionResul
       };
 
       video.onseeked = async () => {
+        if (settled) return;
         try {
           const canvas = document.createElement('canvas');
           canvas.width = 64;
@@ -327,21 +358,27 @@ export async function inspectVideoFile(file: File): Promise<VideoInspectionResul
             lumCount += 1;
           }
 
-          const boxes = await detectPrivacyBoxesAsync(video);
+          // Gunakan timeout per-frame 3 detik untuk deteksi agar tidak memblokir ekstraksi keyframe
+          const boxes = await Promise.race([
+            detectPrivacyBoxesAsync(video),
+            new Promise<Awaited<ReturnType<typeof detectPrivacyBoxesAsync>>>((res) =>
+              window.setTimeout(() => res([]), 3000),
+            ),
+          ]);
           totalFacesDetected += boxes.filter((b) => b.kind === 'face').length;
           totalPlatesDetected += boxes.filter((b) => b.kind === 'plate').length;
 
-          // Tangkap thumbnail terburam (320x180) untuk dijadikan frame bukti di Verifikasi Transkrip
+          // Tangkap thumbnail terburam (640x360) untuk dijadikan frame bukti di Verifikasi Transkrip
           const thumbCanvas = document.createElement('canvas');
-          thumbCanvas.width = 320;
-          thumbCanvas.height = 180;
+          thumbCanvas.width = 640;
+          thumbCanvas.height = 360;
           const thumbCtx = thumbCanvas.getContext('2d');
           if (thumbCtx) {
             renderSelectivePrivacyBlur(thumbCtx, video, boxes, {
               blurEnabled: true,
               showIndicators: false,
             });
-            capturedFrames.push(thumbCanvas.toDataURL('image/jpeg', 0.75));
+            capturedFrames.push(thumbCanvas.toDataURL('image/jpeg', 0.8));
           }
         } catch {
           // Lanjut ke sampel berikutnya
@@ -353,9 +390,7 @@ export async function inspectVideoFile(file: File): Promise<VideoInspectionResul
     };
 
     video.onerror = () => {
-      window.clearTimeout(timeout);
-      URL.revokeObjectURL(objectUrl);
-      finishWith(1920, 1080, 48, 135);
+      safeFinish(1920, 1080, 48, 135);
     };
   });
 }

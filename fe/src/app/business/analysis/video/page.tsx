@@ -321,9 +321,40 @@ function VideoUploadInner() {
         const uploaded = await uploadVideoToSupabaseStorage(analysisId, redactedFile);
         storageKey = uploaded.storageKey;
 
-        if (sampledFrames.length > 0) {
+        let framesToUpload = sampledFrames;
+        if (framesToUpload.length === 0 && videoElRef.current && videoElRef.current.readyState >= 2) {
+          const v = videoElRef.current;
+          const dur = Number.isFinite(v.duration) && v.duration > 0 ? v.duration : durationSec;
+          const pts = [0.15, 0.4, 0.65, 0.85].map((r) => Math.min(dur - 0.1, Math.max(0.1, dur * r)));
+          const c = document.createElement('canvas');
+          c.width = 640;
+          c.height = 360;
+          const cctx = c.getContext('2d');
+          if (cctx) {
+            const captured: string[] = [];
+            for (const pt of pts) {
+              await new Promise<void>((res) => {
+                const onSeek = () => {
+                  v.removeEventListener('seeked', onSeek);
+                  cctx.drawImage(v, 0, 0, c.width, c.height);
+                  captured.push(c.toDataURL('image/jpeg', 0.8));
+                  res();
+                };
+                v.addEventListener('seeked', onSeek, { once: true });
+                v.currentTime = pt;
+                window.setTimeout(() => {
+                  v.removeEventListener('seeked', onSeek);
+                  res();
+                }, 1500);
+              });
+            }
+            if (captured.length > 0) framesToUpload = captured;
+          }
+        }
+
+        if (framesToUpload.length > 0) {
           setUploadStage('Mengunggah frame bukti transkrip...');
-          frameUrls = await uploadKeyframesToStorage(analysisId, sampledFrames);
+          frameUrls = await uploadKeyframesToStorage(analysisId, framesToUpload);
         }
       }
 
