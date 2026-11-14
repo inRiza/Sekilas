@@ -2,6 +2,7 @@ from datetime import datetime
 from typing import Any
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     DateTime,
     Float,
@@ -13,10 +14,12 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import JSONB as PG_JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, TimestampMixin
+
+JSONB = JSON().with_variant(PG_JSONB(), "postgresql")
 
 
 class UserAccount(Base, TimestampMixin):
@@ -54,6 +57,7 @@ class Business(Base, TimestampMixin):
         String(64),
         ForeignKey("analyses.id", ondelete="SET NULL", use_alter=True, name="fk_businesses_primary_analysis_id"),
         nullable=True,
+        index=True,
     )
     default_context: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, nullable=False)
 
@@ -288,7 +292,7 @@ class TranscriptCheckpoint(Base, TimestampMixin):
     )  # terlihat_dari_jalan | pintu_atau_tangga | penanda_atau_papan | menu_dan_harga | titik_pesan
     timestamp_s: Mapped[float] = mapped_column(Float, nullable=False)
     segment_id: Mapped[str | None] = mapped_column(
-        String(64), ForeignKey("transcript_segments.id", ondelete="SET NULL"), nullable=True
+        String(64), ForeignKey("transcript_segments.id", ondelete="SET NULL"), nullable=True, index=True
     )
 
     analysis: Mapped["Analysis"] = relationship("Analysis", back_populates="transcript_checkpoints")
@@ -399,7 +403,7 @@ class RecommendationItem(Base, TimestampMixin):
         String(64), ForeignKey("analyses.id", ondelete="CASCADE"), nullable=False, index=True
     )
     run_id: Mapped[str | None] = mapped_column(
-        String(64), ForeignKey("simulation_runs.id", ondelete="SET NULL"), nullable=True
+        String(64), ForeignKey("simulation_runs.id", ondelete="SET NULL"), nullable=True, index=True
     )
     hypothesis_id: Mapped[str] = mapped_column(String(16), nullable=False)  # H1..H10
     action_id: Mapped[str] = mapped_column(String(32), nullable=False)  # misal A8.1
@@ -432,10 +436,10 @@ class Projection(Base, TimestampMixin):
         String(64), ForeignKey("analyses.id", ondelete="CASCADE"), nullable=False, index=True
     )
     baseline_run_id: Mapped[str | None] = mapped_column(
-        String(64), ForeignKey("simulation_runs.id", ondelete="SET NULL"), nullable=True
+        String(64), ForeignKey("simulation_runs.id", ondelete="SET NULL"), nullable=True, index=True
     )
     ablation_run_id: Mapped[str | None] = mapped_column(
-        String(64), ForeignKey("simulation_runs.id", ondelete="SET NULL"), nullable=True
+        String(64), ForeignKey("simulation_runs.id", ondelete="SET NULL"), nullable=True, index=True
     )
     label: Mapped[str] = mapped_column(
         String(32), default="perkiraan_cepat", nullable=False

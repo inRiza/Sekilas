@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 
 import { SekilasLogo, SekilasLogoIcon } from '@/components/brand/logo';
 import { Badge } from '@/components/ui/badge';
@@ -19,7 +19,13 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from '@/components/ui/sidebar';
-import { MOCK_ANALYSES } from '@/lib/mock/analyses';
+import {
+  fetchAnalyses,
+  fetchBusinesses,
+  getLocalAnalyses,
+  getLocalBusinesses,
+  subscribeCrudChanges,
+} from '@/lib/api/crud';
 import { CURRENT_USER, MOCK_BUSINESSES } from '@/lib/mock/business';
 import type { Analysis, Business } from '@/types/api';
 
@@ -52,33 +58,30 @@ function initials(name: string) {
     .join('');
 }
 
-function analysesOf(businessId: string) {
-  return MOCK_ANALYSES.filter((a) => a.business_id === businessId).sort((a, b) =>
-    b.created_at.localeCompare(a.created_at),
-  );
-}
-
 /** Analisis selesai membuka dasbor; yang belum selesai membuka langkah pemrosesannya. */
 function analysisHref(a: Analysis) {
-  return a.status === 'ready' ? '/business/analysis' : '/business/analysis/proses';
+  if (a.status === 'ready') return `/business/analysis?analysisId=${encodeURIComponent(a.id)}`;
+  if (a.status === 'draft') return `/business/analysis/konteks?analysisId=${encodeURIComponent(a.id)}&businessId=${encodeURIComponent(a.business_id)}`;
+  return `/business/analysis/proses?analysisId=${encodeURIComponent(a.id)}`;
 }
 
 /** Satu cabang usaha (induk) dengan daftar analisisnya (anak). */
 function BusinessNode({
   business,
+  analyses,
   expanded,
   onToggle,
   activeAnalysisId,
   onOpenAnalysis,
 }: {
   business: Business;
+  analyses: Analysis[];
   expanded: boolean;
   onToggle: () => void;
   activeAnalysisId: string | null;
   onOpenAnalysis: (id: string) => void;
 }) {
   const { open: sidebarOpen, setOpen, setOpenMobile } = useSidebar();
-  const analyses = analysesOf(business.id);
 
   return (
     <li className="list-none">
@@ -141,7 +144,7 @@ function BusinessNode({
           })}
           <li>
             <Link
-              href={NEW_ANALYSIS_HREF}
+              href={`${NEW_ANALYSIS_HREF}?businessId=${encodeURIComponent(business.id)}&mode=new`}
               onClick={() => setOpenMobile(false)}
               className="flex items-center gap-2 rounded-lg px-2.5 py-2 text-[12px] text-muted transition-colors hover:bg-hover hover:text-ink"
             >
@@ -157,17 +160,36 @@ function BusinessNode({
 
 export function AppSidebar() {
   const pathname = usePathname();
+  const [businesses, setBusinesses] = useState<Business[]>(() => getLocalBusinesses());
+  const [analyses, setAnalyses] = useState<Analysis[]>(() => getLocalAnalyses());
   const [expanded, setExpanded] = useState<Record<string, boolean>>({
     [MOCK_BUSINESSES[0]!.id]: true,
   });
   const [openedAnalysisId, setOpenedAnalysisId] = useState<string | null>(null);
 
+  useEffect(() => {
+    let active = true;
+    void Promise.all([fetchBusinesses(), fetchAnalyses()]).then(([bizList, anlList]) => {
+      if (!active) return;
+      setBusinesses(bizList);
+      setAnalyses(anlList);
+    });
+    const unsubscribe = subscribeCrudChanges(() => {
+      setBusinesses(getLocalBusinesses());
+      setAnalyses(getLocalAnalyses());
+    });
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, []);
+
   // Sorot analisis hanya di halaman hasil (dasbor & jelajah agen); halaman alur
   // (konteks, video, dst.) adalah pembuatan analisis baru, jadi tidak ada yang disorot.
   const onAnalysisPage = pathname === '/business/analysis' || pathname === '/business/analysis/agents';
-  const latestReady = MOCK_ANALYSES.filter((a) => a.status === 'ready').sort((a, b) =>
-    b.created_at.localeCompare(a.created_at),
-  )[0];
+  const latestReady = analyses
+    .filter((a) => a.status === 'ready')
+    .sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
   const activeAnalysisId = onAnalysisPage ? (openedAnalysisId ?? latestReady?.id ?? null) : null;
 
   return (
@@ -209,16 +231,22 @@ export function AppSidebar() {
         <SidebarGroup>
           <SidebarGroupLabel>Bisnis & analisis</SidebarGroupLabel>
           <ul className="flex flex-col gap-0.5">
-            {MOCK_BUSINESSES.map((b) => (
-              <BusinessNode
-                key={b.id}
-                business={b}
-                expanded={!!expanded[b.id]}
-                onToggle={() => setExpanded((prev) => ({ ...prev, [b.id]: !prev[b.id] }))}
-                activeAnalysisId={activeAnalysisId}
-                onOpenAnalysis={setOpenedAnalysisId}
-              />
-            ))}
+            {businesses.map((b) => {
+              const bizAnalyses = analyses
+                .filter((a) => a.business_id === b.id)
+                .sort((x, y) => y.created_at.localeCompare(x.created_at));
+              return (
+                <BusinessNode
+                  key={b.id}
+                  business={b}
+                  analyses={bizAnalyses}
+                  expanded={!!expanded[b.id]}
+                  onToggle={() => setExpanded((prev) => ({ ...prev, [b.id]: !prev[b.id] }))}
+                  activeAnalysisId={activeAnalysisId}
+                  onOpenAnalysis={setOpenedAnalysisId}
+                />
+              );
+            })}
           </ul>
         </SidebarGroup>
       </SidebarContent>

@@ -1,16 +1,23 @@
 'use client';
 
 import { FileSpreadsheet, ImageIcon, Keyboard, Plus, Upload, X } from 'lucide-react';
-import { useRouter } from 'next/navigation';
-import React, { Suspense, useRef, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import React, { Suspense, useEffect, useRef, useState } from 'react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Chip, Input, Label, Textarea } from '@/components/ui/form';
 import { ArrowRightIcon } from '@/components/ui/icons';
 import { TimeSelect, isWithinHours, toMinutes } from '@/components/ui/time-select';
+import {
+  calculateMedianPriceLevel,
+  createAnalysis,
+  fetchAnalysisContext,
+  getLocalBusinesses,
+  saveAnalysisContext,
+} from '@/lib/api/crud';
 import { MOCK_CONTEXT } from '@/lib/mock/context';
-import { BusinessGoal, BusinessType, FixedConstraint, PasserbyType } from '@/types/api';
+import { BusinessGoal, BusinessType, FixedConstraint, PasserbyType, SurroundingsType } from '@/types/api';
 
 /* ---------------- Menu ---------------- */
 
@@ -246,6 +253,9 @@ type Parking = 'motor' | 'mobil' | 'tidak_ada';
 
 function KonteksUsahaInner() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const analysisIdParam = searchParams.get('analysisId');
+  const businessIdParam = searchParams.get('businessId');
 
   // 1. Informasi dasar
   const [businessType, setBusinessType] = useState<BusinessType | null>(MOCK_CONTEXT.business_type);
@@ -274,6 +284,45 @@ function KonteksUsahaInner() {
   const [parking, setParking] = useState<Parking[]>([]);
 
   const [showErrors, setShowErrors] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    void fetchAnalysisContext(analysisIdParam, businessIdParam).then((ctx) => {
+      if (!active) return;
+      setBusinessType(ctx.business_type);
+      setBusinessName(ctx.business_name);
+      setLocationName(ctx.location_name);
+      setLocationDescription(ctx.location_description);
+      setSurroundings(
+        ctx.surroundings && ctx.surroundings.length > 0
+          ? ctx.surroundings
+          : [ctx.surroundings_type || 'dekat_kampus'],
+      );
+      setSurroundingsOther(ctx.surroundings_other ?? '');
+      setPassersby(ctx.passersby ?? []);
+      setBusinessGoal(ctx.business_goal);
+      setFixedConstraints(ctx.fixed_constraints ?? []);
+      setMenuRows(
+        ctx.menu_items && ctx.menu_items.length > 0
+          ? ctx.menu_items.map((m) => newRow(m.name, String(m.price)))
+          : [newRow()],
+      );
+      setOpenHour(ctx.opening_hours?.open ?? '08:00');
+      setCloseHour(ctx.opening_hours?.close ?? '22:00');
+      setRushRanges(
+        ctx.rush_hours && ctx.rush_hours.length > 0
+          ? ctx.rush_hours.map((r) => newRange(r.start, r.end))
+          : [newRange('12:00', '14:00')],
+      );
+      setDailySales(ctx.daily_sales_rp ? String(ctx.daily_sales_rp) : '');
+      setDailyVisitors(ctx.daily_visitors ? String(ctx.daily_visitors) : '');
+      setParking(ctx.parking ?? []);
+    });
+    return () => {
+      active = false;
+    };
+  }, [analysisIdParam, businessIdParam]);
 
   const toggle = <T,>(list: T[], val: T) => (list.includes(val) ? list.filter((v) => v !== val) : [...list, val]);
 
@@ -303,14 +352,64 @@ function KonteksUsahaInner() {
   const isAllValid = missing.size === 0;
   const err = (id: string) => showErrors && missing.has(id);
 
-  const handleNext = () => {
-    if (isAllValid) {
-      router.push('/business/analysis/video');
+  const handleNext = async () => {
+    if (!isAllValid || !businessType) {
+      setShowErrors(true);
+      const first = required.find((r) => !r.ok);
+      if (first) document.getElementById(first.id)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
       return;
     }
-    setShowErrors(true);
-    const first = required.find((r) => !r.ok);
-    if (first) document.getElementById(first.id)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+    setIsSaving(true);
+    try {
+      const cleanedMenu = menuRows
+        .filter((r) => r.name.trim() && Number(r.price) > 0)
+        .map((r, idx) => ({
+          id: r.id || `m_${idx + 1}`,
+          name: r.name.trim(),
+          price: Number(r.price),
+        }));
+
+      const typedSurroundings = surroundings as SurroundingsType[];
+      const contextPayload = {
+        business_type: businessType,
+        business_name: businessName.trim(),
+        location_name: locationName.trim(),
+        location_description: locationDescription.trim(),
+        surroundings_type: typedSurroundings[0] ?? 'jalan_utama',
+        surroundings: typedSurroundings,
+        surroundings_other: surroundings.includes('lainnya') ? surroundingsOther.trim() : undefined,
+        passersby,
+        business_goal: businessGoal,
+        fixed_constraints: fixedConstraints,
+        menu_items: cleanedMenu,
+        calculated_price_level: calculateMedianPriceLevel(cleanedMenu.map((m) => m.price)),
+        opening_hours: { open: openHour, close: closeHour },
+        rush_hours: rushRanges.map((r) => ({ start: r.start, end: r.end })),
+        daily_sales_rp: dailySales ? Number(dailySales) : undefined,
+        daily_visitors: dailyVisitors ? Number(dailyVisitors) : undefined,
+        parking,
+      };
+
+      let targetAnalysisId = analysisIdParam;
+      const resolvedBizId = businessIdParam ?? getLocalBusinesses()[0]?.id ?? 'biz_selasar_dipatiukur';
+
+      if (!targetAnalysisId) {
+        const created = await createAnalysis({
+          business_id: resolvedBizId,
+          name: `Analisis ${businessName.trim()}`,
+          status: 'draft',
+          context: contextPayload,
+        });
+        targetAnalysisId = created.id;
+      } else {
+        await saveAnalysisContext(targetAnalysisId, contextPayload, resolvedBizId);
+      }
+
+      router.push(`/business/analysis/video?analysisId=${encodeURIComponent(targetAnalysisId)}`);
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   return (
@@ -581,8 +680,8 @@ function KonteksUsahaInner() {
               <span className={`text-[13px] ${isAllValid ? 'text-impact' : 'text-muted'}`}>
                 {isAllValid ? 'Semua bidang wajib lengkap' : `${missing.size} bidang wajib belum terisi`}
               </span>
-              <Button variant="primary" size="lg" onClick={handleNext} className="justify-center !rounded-md">
-                {isAllValid ? 'Lanjut ke rekam video' : 'Lengkapi bidang wajib'} <ArrowRightIcon size={16} />
+              <Button variant="primary" size="lg" onClick={handleNext} disabled={isSaving} className="justify-center !rounded-md">
+                {isSaving ? 'Menyimpan...' : isAllValid ? 'Lanjut ke rekam video' : 'Lengkapi bidang wajib'} <ArrowRightIcon size={16} />
               </Button>
             </div>
           </div>
