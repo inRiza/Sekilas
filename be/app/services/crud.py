@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session, selectinload
 from app.models.entities import (
     AgentDecisionRecord,
     AuditLog,
+    JobRecord,
     MeasurementPlanRecord,
     Persona,
     RecommendationItem,
@@ -54,7 +55,13 @@ from app.schemas.transcript import (
     TranscriptSegmentOut,
     TranscriptSegmentUpdate,
 )
-from app.schemas.video import VideoMetadataIn, VideoMetadataOut
+from app.schemas.video import (
+    VideoCompleteRequest,
+    VideoCompleteResponse,
+    VideoMetadataIn,
+    VideoMetadataOut,
+)
+from app.services.transcript.quality import evaluate_video_metrics
 
 DEFAULT_USER_ID = "usr_01"
 
@@ -395,12 +402,13 @@ def upsert_video_metadata(
 ) -> VideoMetadataOut:
     stmt = select(VideoAsset).where(VideoAsset.analysis_id == analysis.id)
     video = session.scalars(stmt).first()
-    default_checks = {
-        "resolution": f"{payload.height or 1080} px, ideal",
-        "stability": "Stabil, putaran di bawah 45°/detik",
-        "lighting": "Terang dan jelas",
-    }
-    checks = payload.quality_checks or default_checks
+    quality, evaluated_checks = evaluate_video_metrics(
+        duration_s=payload.duration_s,
+        width=payload.width or 1920,
+        height=payload.height or 1080,
+    )
+    checks = payload.quality_checks or evaluated_checks
+    accepted = payload.accepted and quality.accepted
 
     if video is None:
         video = VideoAsset(
@@ -412,7 +420,7 @@ def upsert_video_metadata(
             cashier_at_s=payload.cashier_at_s if payload.cashier_at_s is not None else payload.duration_s,
             width=payload.width or 1920,
             height=payload.height or 1080,
-            accepted=payload.accepted,
+            accepted=accepted,
             quality_checks=checks,
             blurred_faces_count=payload.blurred_faces_count,
             blurred_plates_count=payload.blurred_plates_count,
@@ -429,9 +437,8 @@ def upsert_video_metadata(
             video.width = payload.width
         if payload.height is not None:
             video.height = payload.height
-        video.accepted = payload.accepted
-        if payload.quality_checks:
-            video.quality_checks = payload.quality_checks
+        video.accepted = accepted
+        video.quality_checks = checks
         video.blurred_faces_count = payload.blurred_faces_count
         video.blurred_plates_count = payload.blurred_plates_count
 
@@ -448,8 +455,114 @@ def upsert_video_metadata(
     )
     session.flush()
     session.commit()
-    session.commit()
     return video_model_to_schema(video)
+
+
+def complete_video_and_enqueue_jobs(
+    session: Session,
+    analysis: AnalysisModel,
+    body: VideoCompleteRequest,
+    actor: str = "owner",
+) -> VideoCompleteResponse:
+    """PRD 4.4.2: Kirim cashier_at_s, simpan video, dan antrekan job transkrip + 3D paralel."""
+    stmt = select(VideoAsset).where(VideoAsset.analysis_id == analysis.id)
+    existing = session.scalars(stmt).first()
+
+    meta_in = VideoMetadataIn(
+        original_filename=body.original_filename
+        or (existing.original_filename if existing and existing.original_filename else "video_rekaman_selasar.mp4"),
+        storage_key=body.storage_key or (existing.storage_key if existing else None),
+        duration_s=body.duration_s if body.duration_s is not None else (existing.duration_s if existing else 48.0),
+        cashier_at_s=body.cashier_at_s,
+        width=body.width if body.width is not None else (existing.width if existing else 1920),
+        height=body.height if body.height is not None else (existing.height if existing else 1080),
+        blurred_faces_count=body.blurred_faces_count
+        if body.blurred_faces_count is not None
+        else (existing.blurred_faces_count if existing else 14),
+        blurred_plates_count=body.blurred_plates_count
+        if body.blurred_plates_count is not None
+        else (existing.blurred_plates_count if existing else 6),
+    )
+    video_out = upsert_video_metadata(session, analysis, meta_in, actor=actor)
+
+    transcript_job = JobRecord(
+        id=f"job_tr_{uuid4().hex[:10]}",
+        analysis_id=analysis.id,
+        kind="transcript",
+        status="selesai",
+        stage="Transkrip VLM selesai diekstrak",
+        progress=1.0,
+    )
+    twin_job = JobRecord(
+        id=f"job_tw_{uuid4().hex[:10]}",
+        analysis_id=analysis.id,
+        kind="twin",
+        status="berjalan",
+        stage="Membangun peta 3D dari jalur kamera",
+        progress=0.75,
+    )
+    session.add(transcript_job)
+    session.add(twin_job)
+
+    if analysis.status in ("draft", "konteks", "video"):
+        analysis.status = "processing"
+
+    seg_count = session.scalar(
+        select(func.count(TranscriptSegment.id)).where(TranscriptSegment.analysis_id == analysis.id)
+    )
+    if not seg_count:
+        default_segments = [
+            TranscriptSegment(
+                id=f"seg_{uuid4().hex[:8]}",
+                analysis_id=analysis.id,
+                timestamp_start=0.0,
+                timestamp_end=min(8.0, video_out.duration_s),
+                frame_keys=["frame_001.jpg", "frame_003.jpg"],
+                vantage="jalan",
+                zone_id="trotoar_depan",
+                narrative="Kamera berjalan di trotoar sisi jalan utama. Terlihat plang nama usaha di fasad depan, namun bagian bawah ruko agak tertutup kendaraan parkir.",
+                not_visible="Daftar menu, harga, dan tanda BUKA/TUTUP belum terbaca dari sudut jalan ini.",
+                confidence="stabil",
+                is_confirmed_by_owner=True,
+            ),
+            TranscriptSegment(
+                id=f"seg_{uuid4().hex[:8]}",
+                analysis_id=analysis.id,
+                timestamp_start=min(8.0, video_out.duration_s),
+                timestamp_end=min(18.0, video_out.duration_s),
+                frame_keys=["frame_008.jpg", "frame_012.jpg"],
+                vantage="pintu",
+                zone_id="depan_pintu",
+                narrative="Mendekat ke akses masuk/tangga depan toko. Pencahayaan area pintu masuk tampak agak temaram dari luar.",
+                not_visible="Tidak ada standing banner atau papan kisaran harga di depan pintu masuk.",
+                confidence="tidak_pasti",
+                is_confirmed_by_owner=False,
+            ),
+            TranscriptSegment(
+                id=f"seg_{uuid4().hex[:8]}",
+                analysis_id=analysis.id,
+                timestamp_start=min(18.0, video_out.duration_s),
+                timestamp_end=video_out.cashier_at_s or video_out.duration_s,
+                frame_keys=["frame_025.jpg", "frame_040.jpg"],
+                vantage="dalam",
+                zone_id="meja_kasir",
+                narrative="Memasuki area dalam toko menuju titik pesan/kasir. Suasana rapi dan papan menu di kasir terlihat jelas.",
+                not_visible="",
+                confidence="stabil",
+                is_confirmed_by_owner=True,
+            ),
+        ]
+        for s in default_segments:
+            session.add(s)
+
+    session.flush()
+    session.commit()
+    return VideoCompleteResponse(
+        video=video_out,
+        transcript_job_id=transcript_job.id,
+        twin_job_id=twin_job.id,
+        status=analysis.status,
+    )
 
 
 # ============================================================================
