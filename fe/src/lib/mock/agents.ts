@@ -27,7 +27,6 @@ export const MOCK_AGENTS: AgentDecision[] = [
     stopped_at_segment_id: 'seg_02',
     deciding_factor: 'Papan harga tidak terlihat di lantai bawah, khawatir melebihi anggaran makan Rp 25.000.',
     factor_segment_ids: ['seg_01', 'seg_02'],
-    hesitation_score: 4,
   },
   {
     agent_id: 108,
@@ -55,7 +54,6 @@ export const MOCK_AGENTS: AgentDecision[] = [
     stopped_at_segment_id: null,
     deciding_factor: 'Suasana lantai 2 nyaman, cocok untuk bekerja dengan harga masuk akal.',
     factor_segment_ids: ['seg_04'],
-    hesitation_score: 1,
   },
   {
     agent_id: 215,
@@ -83,7 +81,6 @@ export const MOCK_AGENTS: AgentDecision[] = [
     stopped_at_segment_id: 'seg_01',
     deciding_factor: 'Akses tangga dan parkir motor depan ruko terkesan menyulitkan untuk mampir kilat.',
     factor_segment_ids: ['seg_01'],
-    hesitation_score: 2,
   },
   {
     agent_id: 340,
@@ -111,6 +108,5 @@ export const MOCK_AGENTS: AgentDecision[] = [
     stopped_at_segment_id: 'seg_04',
     deciding_factor: 'Kapasitas tempat duduk meja besar penuh, hanya tersisa meja sempit.',
     factor_segment_ids: ['seg_04'],
-    hesitation_score: 3,
   },
 ];

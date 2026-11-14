@@ -21,6 +21,13 @@ uv run ruff check .
 uv run pytest
 ```
 
+## Kebijakan Model & Privasi (Gemini Free Tier)
+
+- **Multimodal (VLM Keyframe -> Transkrip):** Menggunakan Gemini (`GEMINI_MODEL` pada konfigurasi).
+- **Kebijakan Free Tier:** Gemini Free Tier **hanya digunakan untuk pengembangan dan demo dengan video/keyframe yang sudah diburamkan (wajah & plat nomor) di browser sisi klien**. Jangan mengirim video mentah tanpa penyamaran privasi ke Free Tier, dan untuk beban produksi penuh gunakan tier berbayar dengan kebijakan zero-retention.
+- **Fallback Teks/JSON:** Router LLM (`app/services/llm/router.py`) mendukung *fallback* otomatis ke OpenAI (`OPENAI_MODEL`) apabila panggilan teks/JSON ke Gemini gagal atau terkena batas kuota (*rate limit*).
+- **Penghematan Kredit saat Pengujian:** Atur `LLM_MODE=mock` saat menjalankan `pytest` atau pengujian lokal berulang agar tidak menghabiskan kuota/kredit API.
+
 ## Struktur Direktori
 
 ```text

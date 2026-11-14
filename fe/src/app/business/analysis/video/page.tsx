@@ -80,6 +80,7 @@ function VideoUploadInner() {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [videoName, setVideoName] = useState<string | null>(null);
   const [sampledFrames, setSampledFrames] = useState<string[]>([]);
+  const [sampledTimestamps, setSampledTimestamps] = useState<number[]>([]);
   const [durationSec, setDurationSec] = useState<number>(48);
   const [widthPx, setWidthPx] = useState<number>(1920);
   const [heightPx, setHeightPx] = useState<number>(1080);
@@ -249,6 +250,7 @@ function VideoUploadInner() {
       setBlurredFaces(result.blurredFacesCount);
       setBlurredPlates(result.blurredPlatesCount);
       setSampledFrames(result.sampledFrameDataUrls);
+      setSampledTimestamps(result.sampledFrameTimestamps);
       setChecks(result.checks);
       setAccepted(result.accepted);
       setRejectionReasons(result.rejectionReasons);
@@ -271,6 +273,7 @@ function VideoUploadInner() {
     setSelectedFile(null);
     setVideoName(null);
     setSampledFrames([]);
+    setSampledTimestamps([]);
     setIsPlaying(false);
     setRejectionReasons([]);
     lastBoxesRef.current = [];
@@ -311,6 +314,7 @@ function VideoUploadInner() {
     try {
       let storageKey: string | undefined;
       let frameUrls: string[] = [];
+      let timestampsToSend: number[] = sampledTimestamps;
       if (selectedFile) {
         setUploadStage('Memburamkan wajah & plat nomor di perangkatmu...');
         const redactedFile = await exportRedactedVideoFile(selectedFile, (ratio) => {
@@ -325,19 +329,25 @@ function VideoUploadInner() {
         if (framesToUpload.length === 0 && videoElRef.current && videoElRef.current.readyState >= 2) {
           const v = videoElRef.current;
           const dur = Number.isFinite(v.duration) && v.duration > 0 ? v.duration : durationSec;
-          const pts = [0.15, 0.4, 0.65, 0.85].map((r) => Math.min(dur - 0.1, Math.max(0.1, dur * r)));
+          const targetFrames = Math.min(20, Math.max(10, Math.round(dur / 2.2)));
+          const pts = Array.from({ length: targetFrames }, (_, idx) => {
+            const ratio = (idx + 0.5) / targetFrames;
+            return Math.min(dur - 0.1, Math.max(0.1, dur * ratio));
+          });
           const c = document.createElement('canvas');
           c.width = 640;
           c.height = 360;
           const cctx = c.getContext('2d');
           if (cctx) {
             const captured: string[] = [];
+            const capturedTs: number[] = [];
             for (const pt of pts) {
               await new Promise<void>((res) => {
                 const onSeek = () => {
                   v.removeEventListener('seeked', onSeek);
                   cctx.drawImage(v, 0, 0, c.width, c.height);
-                  captured.push(c.toDataURL('image/jpeg', 0.8));
+                  captured.push(c.toDataURL('image/jpeg', 0.78));
+                  capturedTs.push(Math.round(v.currentTime * 10) / 10);
                   res();
                 };
                 v.addEventListener('seeked', onSeek, { once: true });
@@ -348,7 +358,10 @@ function VideoUploadInner() {
                 }, 1500);
               });
             }
-            if (captured.length > 0) framesToUpload = captured;
+            if (captured.length > 0) {
+              framesToUpload = captured;
+              timestampsToSend = capturedTs;
+            }
           }
         }
 
@@ -376,6 +389,7 @@ function VideoUploadInner() {
         blurred_faces_count: blurredFaces,
         blurred_plates_count: blurredPlates,
         frame_keys: frameUrls.length > 0 ? frameUrls : sampledFrames.length > 0 ? sampledFrames : undefined,
+        frame_timestamps_s: timestampsToSend.length > 0 ? timestampsToSend : undefined,
       });
       router.push(`/business/analysis/proses${querySuffix}`);
     } finally {

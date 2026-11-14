@@ -38,6 +38,7 @@ def run_what_if(
         session,
         analysis,
         checked_recommendation_ids=body.checked_recommendation_ids,
+        projection_mode=body.mode,
     )
     if dash.what_if_projection is None:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Gagal menghitung proyeksi")

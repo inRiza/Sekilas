@@ -133,16 +133,21 @@ function DashboardResultInner() {
   }, [analysisId]);
 
   const toggleFix = (id: string) => {
-    setFixes((prev) =>
-      prev.map((f) => (f.id === id ? { ...f, is_checked: !f.is_checked } : f))
-    );
+    setFixes((prev) => {
+      const next = prev.map((f) => (f.id === id ? { ...f, is_checked: !f.is_checked } : f));
+      const checkedIds = next.filter((f) => f.is_checked).map((f) => f.id);
+      void runWhatIfProjection(analysisId, checkedIds, 'estimasi_cepat').then((updated) => {
+        if (updated) setProjection(updated);
+      });
+      return next;
+    });
   };
 
   const handleRunWhatIf = async () => {
     setIsSimulating(true);
     try {
       const checkedIds = fixes.filter((f) => f.is_checked).map((f) => f.id);
-      const updated = await runWhatIfProjection(analysisId, checkedIds);
+      const updated = await runWhatIfProjection(analysisId, checkedIds, 'terverifikasi_simulasi');
       if (updated) {
         setProjection(updated);
       }

@@ -20,10 +20,16 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-sonnet-5-5"
     gemini_api_key: str = ""
+    gemini_model: str = "gemini-3.8-flash"
+    openai_api_key: str = ""
+    openai_model: str = "gpt-6-luna"
     vision_provider: str = "gemini"
+    llm_mode: str = "live"  # "mock" (0 token, untuk unit test) atau "live"
 
-    sim_default_agents: int = 500
+    sim_default_agents: int = 20
     sim_default_seed: int = 42
+    sim_batch_size: int = 10
+    sim_concurrency_limit: int = 2
 
     twin_queue_name: str = "twin"
 
