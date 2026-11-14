@@ -45,6 +45,7 @@ from app.schemas.context import (
     calculate_price_level,
 )
 from app.schemas.dashboard import (
+    CueRankOut,
     DashboardDataOut,
     DashboardKpiOut,
     FunnelStageDataOut,
@@ -1647,6 +1648,18 @@ def build_dashboard_data(
         for d in decisions
     ]
     cue_ranks = aggregate_cue_scores(dec_runs)
+    cue_ranking = [
+        CueRankOut(
+            rank=i,
+            cue_code=c.cue_code,
+            title=c.title,
+            share_pct=c.share_pct,
+            affected_agents_count=c.affected_agents_count,
+            total_non_buyers=c.total_non_buyers,
+            lift=c.lift,
+        )
+        for i, c in enumerate(cue_ranks, start=1)
+    ]
     non_h0_cues = [c for c in cue_ranks if c.cue_code != "H0"]
     top_cue = non_h0_cues[0] if non_h0_cues else (cue_ranks[0] if cue_ranks else None)
 
@@ -1786,6 +1799,7 @@ def build_dashboard_data(
         is_stale=bool(analysis.stale),
         kpi=kpi,
         funnel_stages=funnel_stages,
+        cue_ranking=cue_ranking,
         key_insights=key_insights,
         recommendations=recommendations,
         twin_meta=twin_meta,

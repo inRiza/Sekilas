@@ -124,6 +124,16 @@ class DashboardKpiOut(BaseModel):
     potential_loss_detail: str
 
 
+class CueRankOut(BaseModel):
+    rank: int
+    cue_code: str
+    title: str
+    share_pct: float  # skor: porsi suara agen batal (0..100)
+    affected_agents_count: int
+    total_non_buyers: int
+    lift: float
+
+
 class WaypointOut(BaseModel):
     id: str
     time: str
@@ -171,6 +181,7 @@ class DashboardDataOut(BaseModel):
     is_stale: bool = False
     kpi: DashboardKpiOut
     funnel_stages: list[FunnelStageDataOut]
+    cue_ranking: list[CueRankOut] = []
     key_insights: list[KeyInsightOut]
     recommendations: list[ParetoRecommendationOut]
     twin_meta: VisualTwinMetaOut
