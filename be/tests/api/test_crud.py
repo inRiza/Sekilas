@@ -139,3 +139,96 @@ def test_business_and_analysis_crud_flow(client: TestClient) -> None:
     del_biz = client.delete(f"/api/v1/businesses/{biz_id}")
     assert del_biz.status_code == 204
     assert client.get(f"/api/v1/businesses/{biz_id}").status_code == 404
+
+
+def test_video_transcript_dashboard_and_measurement_endpoints(client: TestClient) -> None:
+    biz = client.post(
+        "/api/v1/businesses",
+        json={
+            "name": "Selasar Kopi",
+            "branch_name": "Dipatiukur",
+            "category": "kedai",
+            "address": "Jl. Dipatiukur No. 42, Bandung",
+        },
+    ).json()
+    anl = client.post(
+        f"/api/v1/businesses/{biz['id']}/analyses",
+        json={"name": "Analisis Fasad & Tangga", "status": "ready"},
+    ).json()
+    anl_id = anl["id"]
+
+    # 1. Video metadata PUT & GET
+    put_vid = client.put(
+        f"/api/v1/analyses/{anl_id}/video",
+        json={
+            "original_filename": "rekaman_fasad.mp4",
+            "duration_s": 48.0,
+            "cashier_at_s": 46.5,
+            "blurred_faces_count": 12,
+            "blurred_plates_count": 5,
+        },
+    )
+    assert put_vid.status_code == 200
+    assert put_vid.json()["original_filename"] == "rekaman_fasad.mp4"
+    assert put_vid.json()["cashier_at_s"] == 46.5
+
+    get_vid = client.get(f"/api/v1/analyses/{anl_id}/video")
+    assert get_vid.status_code == 200
+    assert get_vid.json()["blurred_faces_count"] == 12
+
+    # 2. Transcript segment create, list, patch, delete
+    create_seg = client.post(
+        f"/api/v1/analyses/{anl_id}/transcript/segments",
+        json={
+            "timestamp_start": 8.0,
+            "timestamp_end": 18.0,
+            "vantage": "jalan",
+            "narrative": "Lorong tangga tampak agak gelap dari trotoar.",
+            "not_visible": "Belum ada standing banner harga.",
+            "confidence": "tidak_pasti",
+            "is_confirmed_by_owner": False,
+        },
+    )
+    assert create_seg.status_code == 201
+    seg = create_seg.json()
+    seg_id = seg["id"]
+    assert seg["vantage"] == "jalan"
+
+    # Patch segment (confirm & edit narrative -> marks analysis stale)
+    patch_seg = client.patch(
+        f"/api/v1/analyses/{anl_id}/transcript/segments/{seg_id}",
+        json={
+            "narrative": "Lorong tangga cukup gelap dan terhalang motor parkir.",
+            "is_confirmed_by_owner": True,
+        },
+    )
+    assert patch_seg.status_code == 200
+    assert patch_seg.json()["is_confirmed_by_owner"] is True
+    assert patch_seg.json()["edited_by_owner"] is True
+
+    # List segments
+    list_seg = client.get(f"/api/v1/analyses/{anl_id}/transcript")
+    assert list_seg.status_code == 200
+    assert len(list_seg.json()) == 1
+
+    # Check dashboard reflects stale=True after transcript change
+    dash_res = client.get(f"/api/v1/analyses/{anl_id}/dashboard")
+    assert dash_res.status_code == 200
+    assert dash_res.json()["is_stale"] is True
+    assert len(dash_res.json()["funnel_stages"]) == 4
+
+    # Delete segment
+    del_seg = client.delete(f"/api/v1/analyses/{anl_id}/transcript/segments/{seg_id}")
+    assert del_seg.status_code == 204
+    assert len(client.get(f"/api/v1/analyses/{anl_id}/transcript").json()) == 0
+
+    # 3. Start simulation clears stale flag
+    sim_res = client.post(f"/api/v1/analyses/{anl_id}/simulation", json={"n_agents": 200, "seed": 42})
+    assert sim_res.status_code == 202
+    assert client.get(f"/api/v1/analyses/{anl_id}/dashboard").json()["is_stale"] is False
+
+    # 4. Measurement plan GET
+    mp_res = client.get(f"/api/v1/analyses/{anl_id}/measurement-plan")
+    assert mp_res.status_code == 200
+    assert mp_res.json()["suggested_duration_minutes"] == 30
+    assert len(mp_res.json()["metrics"]) == 4

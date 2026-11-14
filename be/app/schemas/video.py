@@ -30,3 +30,33 @@ class VideoUploadResult(BaseModel):
     video_id: str
     checkpoints: list[Checkpoint]
     quality: VideoQuality
+
+
+class VideoMetadataIn(BaseModel):
+    """PRD v1.4 F2: Metadata video yang telah diproses/diburamkan di browser."""
+
+    original_filename: str = "video_rekaman_toko.mp4"
+    storage_key: str | None = None
+    duration_s: float = 48.0
+    cashier_at_s: float | None = None
+    width: int | None = 1920
+    height: int | None = 1080
+    accepted: bool = True
+    quality_checks: dict[str, str] = {}
+    blurred_faces_count: int = 14
+    blurred_plates_count: int = 6
+
+
+class VideoMetadataOut(BaseModel):
+    id: str
+    analysis_id: str
+    original_filename: str | None = None
+    storage_key: str | None = None
+    duration_s: float = 48.0
+    cashier_at_s: float | None = None
+    width: int | None = None
+    height: int | None = None
+    accepted: bool = True
+    quality_checks: dict[str, str] = {}
+    blurred_faces_count: int = 0
+    blurred_plates_count: int = 0

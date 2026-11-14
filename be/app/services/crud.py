@@ -7,6 +7,17 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.models.entities import (
+    AgentDecisionRecord,
+    AuditLog,
+    MeasurementPlanRecord,
+    Persona,
+    RecommendationItem,
+    TranscriptSegment,
+    TwinAsset,
+    UserAccount,
+    VideoAsset,
+)
+from app.models.entities import (
     Analysis as AnalysisModel,
 )
 from app.models.entities import (
@@ -18,9 +29,6 @@ from app.models.entities import (
 from app.models.entities import (
     MenuItem as MenuItemModel,
 )
-from app.models.entities import (
-    UserAccount,
-)
 from app.schemas.analysis import Analysis as AnalysisSchema
 from app.schemas.business import BusinessOut
 from app.schemas.context import (
@@ -30,6 +38,23 @@ from app.schemas.context import (
     RushHourRange,
     calculate_price_level,
 )
+from app.schemas.dashboard import (
+    DashboardDataOut,
+    DashboardKpiOut,
+    FunnelStageDataOut,
+    KeyInsightOut,
+    ParetoRecommendationOut,
+    VisualTwinMetaOut,
+)
+from app.schemas.measurement import MeasurementMetricSchema, MeasurementPlanDataOut
+from app.schemas.simulation import AgentDecisionOut, PersonaSpecOut
+from app.schemas.transcript import (
+    CameraPoseSchema,
+    TranscriptSegmentCreate,
+    TranscriptSegmentOut,
+    TranscriptSegmentUpdate,
+)
+from app.schemas.video import VideoMetadataIn, VideoMetadataOut
 
 DEFAULT_USER_ID = "usr_01"
 
@@ -340,3 +365,588 @@ def count_analyses_by_business(session: Session, business_ids: list[str]) -> dic
         .group_by(AnalysisModel.business_id)
     )
     return {biz_id: int(cnt) for biz_id, cnt in session.execute(stmt).all()}
+
+
+# ============================================================================
+# F2: Video Asset CRUD
+# ============================================================================
+def video_model_to_schema(video: VideoAsset) -> VideoMetadataOut:
+    return VideoMetadataOut(
+        id=video.id,
+        analysis_id=video.analysis_id,
+        original_filename=video.original_filename,
+        storage_key=video.storage_key,
+        duration_s=video.duration_s,
+        cashier_at_s=video.cashier_at_s,
+        width=video.width,
+        height=video.height,
+        accepted=video.accepted,
+        quality_checks={str(k): str(v) for k, v in (video.quality_checks or {}).items()},
+        blurred_faces_count=video.blurred_faces_count,
+        blurred_plates_count=video.blurred_plates_count,
+    )
+
+
+def upsert_video_metadata(
+    session: Session,
+    analysis: AnalysisModel,
+    payload: VideoMetadataIn,
+    actor: str = "owner",
+) -> VideoMetadataOut:
+    stmt = select(VideoAsset).where(VideoAsset.analysis_id == analysis.id)
+    video = session.scalars(stmt).first()
+    default_checks = {
+        "resolution": f"{payload.height or 1080} px, ideal",
+        "stability": "Stabil, putaran di bawah 45°/detik",
+        "lighting": "Terang dan jelas",
+    }
+    checks = payload.quality_checks or default_checks
+
+    if video is None:
+        video = VideoAsset(
+            id=f"vid_{uuid4().hex[:12]}",
+            analysis_id=analysis.id,
+            original_filename=payload.original_filename,
+            storage_key=payload.storage_key or f"videos/{analysis.id}/{payload.original_filename}",
+            duration_s=payload.duration_s,
+            cashier_at_s=payload.cashier_at_s if payload.cashier_at_s is not None else payload.duration_s,
+            width=payload.width or 1920,
+            height=payload.height or 1080,
+            accepted=payload.accepted,
+            quality_checks=checks,
+            blurred_faces_count=payload.blurred_faces_count,
+            blurred_plates_count=payload.blurred_plates_count,
+        )
+        session.add(video)
+    else:
+        video.original_filename = payload.original_filename
+        if payload.storage_key:
+            video.storage_key = payload.storage_key
+        video.duration_s = payload.duration_s
+        if payload.cashier_at_s is not None:
+            video.cashier_at_s = payload.cashier_at_s
+        if payload.width is not None:
+            video.width = payload.width
+        if payload.height is not None:
+            video.height = payload.height
+        video.accepted = payload.accepted
+        if payload.quality_checks:
+            video.quality_checks = payload.quality_checks
+        video.blurred_faces_count = payload.blurred_faces_count
+        video.blurred_plates_count = payload.blurred_plates_count
+
+    session.add(
+        AuditLog(
+            id=f"aud_{uuid4().hex[:12]}",
+            analysis_id=analysis.id,
+            actor=actor,
+            action="video.upsert",
+            entity_type="video",
+            entity_id=video.id,
+            after_state=payload.model_dump(),
+        )
+    )
+    session.flush()
+    session.commit()
+    session.commit()
+    return video_model_to_schema(video)
+
+
+# ============================================================================
+# F3 & F4: Transcript Segment CRUD + AuditLog + Stale Marking
+# ============================================================================
+def segment_model_to_schema(seg: TranscriptSegment) -> TranscriptSegmentOut:
+    pose = None
+    if isinstance(seg.camera_pose, dict):
+        pos = seg.camera_pose.get("position")
+        look = seg.camera_pose.get("look_vector")
+        if isinstance(pos, list) and isinstance(look, list):
+            pose = CameraPoseSchema(
+                position=[float(x) for x in pos[:3]],
+                look_vector=[float(x) for x in look[:3]],
+            )
+
+    vantage = seg.vantage if seg.vantage in ("jalan", "pintu", "dalam") else "jalan"
+    conf = seg.confidence if seg.confidence in ("stabil", "tidak_pasti") else "stabil"
+    return TranscriptSegmentOut(
+        id=seg.id,
+        timestamp_start=seg.timestamp_start,
+        timestamp_end=seg.timestamp_end,
+        frame_keys=list(seg.frame_keys or []),
+        vantage=vantage,  # type: ignore[arg-type]
+        zone_id=seg.zone_id,
+        narrative=seg.narrative,
+        not_visible=seg.not_visible or "",
+        confidence=conf,  # type: ignore[arg-type]
+        is_confirmed_by_owner=seg.is_confirmed_by_owner,
+        edited_by_owner=seg.edited_by_owner,
+        camera_pose=pose,
+    )
+
+
+def mark_transcript_changed(analysis: AnalysisModel) -> None:
+    analysis.transcript_version = (analysis.transcript_version or 1) + 1
+    if analysis.status == "ready":
+        analysis.stale = True
+        reasons = list(analysis.stale_reasons or [])
+        if "transcript_changed" not in reasons:
+            reasons.append("transcript_changed")
+        analysis.stale_reasons = reasons
+
+
+def list_transcript_segments(session: Session, analysis_id: str) -> list[TranscriptSegmentOut]:
+    stmt = (
+        select(TranscriptSegment)
+        .where(TranscriptSegment.analysis_id == analysis_id)
+        .order_by(TranscriptSegment.timestamp_start.asc(), TranscriptSegment.id.asc())
+    )
+    rows = session.scalars(stmt).all()
+    return [segment_model_to_schema(r) for r in rows]
+
+
+def create_transcript_segment(
+    session: Session,
+    analysis: AnalysisModel,
+    payload: TranscriptSegmentCreate,
+    actor: str = "owner",
+) -> TranscriptSegmentOut:
+    seg = TranscriptSegment(
+        id=f"seg_{uuid4().hex[:10]}",
+        analysis_id=analysis.id,
+        timestamp_start=payload.timestamp_start,
+        timestamp_end=max(payload.timestamp_end, payload.timestamp_start + 1.0),
+        frame_keys=list(payload.frame_keys or ["frame_manual.jpg"]),
+        vantage=payload.vantage,
+        zone_id=payload.zone_id,
+        narrative=payload.narrative.strip(),
+        not_visible=payload.not_visible.strip(),
+        confidence=payload.confidence,
+        is_confirmed_by_owner=payload.is_confirmed_by_owner,
+        edited_by_owner=True,
+    )
+    session.add(seg)
+    mark_transcript_changed(analysis)
+    session.add(
+        AuditLog(
+            id=f"aud_{uuid4().hex[:12]}",
+            analysis_id=analysis.id,
+            actor=actor,
+            action="transcript_segment.create",
+            entity_type="transcript_segment",
+            entity_id=seg.id,
+            after_state=payload.model_dump(),
+        )
+    )
+    session.flush()
+    session.commit()
+    session.commit()
+    return segment_model_to_schema(seg)
+
+
+def update_transcript_segment(
+    session: Session,
+    analysis: AnalysisModel,
+    seg: TranscriptSegment,
+    payload: TranscriptSegmentUpdate,
+    actor: str = "owner",
+) -> TranscriptSegmentOut:
+    before = segment_model_to_schema(seg).model_dump()
+    narrative_changed = False
+
+    if payload.timestamp_start is not None:
+        seg.timestamp_start = payload.timestamp_start
+    if payload.timestamp_end is not None:
+        seg.timestamp_end = payload.timestamp_end
+    if payload.vantage is not None:
+        seg.vantage = payload.vantage
+    if payload.zone_id is not None:
+        seg.zone_id = payload.zone_id
+    if payload.narrative is not None and payload.narrative.strip() != seg.narrative:
+        seg.narrative = payload.narrative.strip()
+        seg.edited_by_owner = True
+        narrative_changed = True
+    if payload.not_visible is not None and payload.not_visible.strip() != seg.not_visible:
+        seg.not_visible = payload.not_visible.strip()
+        seg.edited_by_owner = True
+        narrative_changed = True
+    if payload.confidence is not None:
+        seg.confidence = payload.confidence
+    if payload.is_confirmed_by_owner is not None:
+        seg.is_confirmed_by_owner = payload.is_confirmed_by_owner
+
+    if narrative_changed:
+        mark_transcript_changed(analysis)
+
+    after = segment_model_to_schema(seg).model_dump()
+    session.add(
+        AuditLog(
+            id=f"aud_{uuid4().hex[:12]}",
+            analysis_id=analysis.id,
+            actor=actor,
+            action="transcript_segment.update",
+            entity_type="transcript_segment",
+            entity_id=seg.id,
+            before_state=before,
+            after_state=after,
+        )
+    )
+    session.flush()
+    session.commit()
+    session.commit()
+    return segment_model_to_schema(seg)
+
+
+def delete_transcript_segment(
+    session: Session,
+    analysis: AnalysisModel,
+    seg: TranscriptSegment,
+    actor: str = "owner",
+) -> None:
+    before = segment_model_to_schema(seg).model_dump()
+    seg_id = seg.id
+    session.delete(seg)
+    mark_transcript_changed(analysis)
+    session.add(
+        AuditLog(
+            id=f"aud_{uuid4().hex[:12]}",
+            analysis_id=analysis.id,
+            actor=actor,
+            action="transcript_segment.delete",
+            entity_type="transcript_segment",
+            entity_id=seg_id,
+            before_state=before,
+        )
+    )
+    session.flush()
+    session.commit()
+
+
+# ============================================================================
+# F5, F6, F7: Read Dashboard, Agent Decisions, and Measurement Plan
+# ============================================================================
+def list_agent_decisions_for_analysis(
+    session: Session,
+    analysis_id: str,
+    final_decision: str | None = None,
+    segment: str | None = None,
+) -> list[AgentDecisionOut]:
+    dec_stmt = (
+        select(AgentDecisionRecord)
+        .where(AgentDecisionRecord.analysis_id == analysis_id)
+        .order_by(AgentDecisionRecord.agent_id.asc())
+    )
+    if final_decision and final_decision != "all":
+        dec_stmt = dec_stmt.where(AgentDecisionRecord.final_decision == final_decision)
+    decisions = list(session.scalars(dec_stmt).all())
+
+    per_stmt = select(Persona).where(Persona.analysis_id == analysis_id)
+    personas_by_agent = {p.agent_id: p for p in session.scalars(per_stmt).all()}
+
+    results: list[AgentDecisionOut] = []
+    for dec in decisions:
+        per = personas_by_agent.get(dec.agent_id)
+        seg_name = per.segment if per is not None else "mahasiswa"
+        if segment and segment != "all" and seg_name != segment:
+            continue
+
+        persona_out = PersonaSpecOut(
+            agent_id=dec.agent_id,
+            segment=seg_name,
+            discrete_traits=dict(per.discrete_traits)
+            if per is not None
+            else {
+                "budget_sensitivity": "hemat",
+                "physical_laziness": "normal",
+                "dining_context": "santai",
+                "area_familiarity": "baru_pertama",
+                "visit_intent": "mencari_makan",
+            },
+            concrete_facts=dict(per.concrete_facts)
+            if per is not None
+            else {"meal_budget": 25000, "break_time_minutes": 30},
+            context_around=per.context_around if per is not None else "Melintas di sekitar lokasi usaha",
+            daily_mood=per.daily_mood if per is not None else "Santai",
+            seed=per.seed if per is not None else 42,
+            table_version=per.table_version if per is not None else "v1.4-handcrafted",
+        )
+        results.append(
+            AgentDecisionOut(
+                agent_id=dec.agent_id,
+                persona=persona_out,
+                monologue=dec.monologue,
+                final_decision=dec.final_decision,
+                stopped_at_segment_id=dec.stopped_at_segment_id,
+                deciding_factor=dec.deciding_factor,
+                factor_segment_ids=list(dec.factor_segment_ids or []),
+                hesitation_score=dec.hesitation_score,
+            )
+        )
+    return results
+
+
+def build_dashboard_data(session: Session, analysis: AnalysisModel) -> DashboardDataOut:
+    biz = analysis.business
+    business_name = (
+        biz.name
+        if biz is not None
+        else (analysis.context.business_name if analysis.context is not None else analysis.name)
+    )
+    branch_name = biz.branch_name if biz is not None else "Pusat"
+    total_agents = analysis.total_agents or 20
+
+    # Recommendations from DB
+    rec_stmt = (
+        select(RecommendationItem)
+        .where(RecommendationItem.analysis_id == analysis.id)
+        .order_by(RecommendationItem.rank.asc())
+    )
+    rec_rows = list(session.scalars(rec_stmt).all())
+    if rec_rows:
+        recommendations = [
+            ParetoRecommendationOut(
+                id=r.id,
+                priority_tag=r.priority_tag,
+                rank=r.rank,
+                title=r.title,
+                description=r.description,
+                impact=r.impact,
+                effort=r.effort,
+                estimated_lift_range=r.estimated_lift_range,
+                location_zone=r.location_zone,
+            )
+            for r in rec_rows
+        ]
+    else:
+        recommendations = [
+            ParetoRecommendationOut(
+                id="rec_1",
+                priority_tag="Prioritas",
+                rank=1,
+                title="Pasang standing banner menu & kisaran harga di kaki tangga",
+                description="Tampilkan 3 menu favorit beserta harga mulai Rp 15rb persis di depan akses tangga bawah.",
+                impact="Tinggi",
+                effort="Rendah",
+                estimated_lift_range="12% – 16%",
+                location_zone="Kaki Tangga (Detik 00:18)",
+            ),
+            ParetoRecommendationOut(
+                id="rec_2",
+                priority_tag="Prioritas",
+                rank=2,
+                title="Tingkatkan pencahayaan lampu di sepanjang lorong tangga",
+                description="Ganti lampu tangga dengan temperatur hangat yang lebih terang agar tidak terkesan sepi/tutup.",
+                impact="Sedang",
+                effort="Rendah",
+                estimated_lift_range="4% – 7%",
+                location_zone="Lorong Tangga (Detik 00:24)",
+            ),
+            ParetoRecommendationOut(
+                id="rec_3",
+                priority_tag="Nanti",
+                rank=3,
+                title="Ubah tulisan plang nama ruko menjadi kontras tinggi",
+                description="Warna plang abu-abu saat ini cenderung menyatu dengan tembok ruko tetangga saat siang terik.",
+                impact="Rendah",
+                effort="Sedang",
+                estimated_lift_range="2% – 4%",
+                location_zone="Fasad Depan (Detik 00:04)",
+            ),
+        ]
+
+    # Twin asset metadata from DB
+    twin_stmt = select(TwinAsset).where(TwinAsset.analysis_id == analysis.id)
+    twin_row = session.scalars(twin_stmt).first()
+    if twin_row is not None:
+        ratio = round(twin_row.registered_frames / max(twin_row.total_frames, 1), 2)
+        twin_meta = VisualTwinMetaOut(
+            registered_frames=twin_row.registered_frames,
+            total_frames=twin_row.total_frames,
+            ratio=ratio,
+            quality_label=twin_row.quality_label,
+            points_count=twin_row.points_count,
+            path_duration_seconds=twin_row.path_duration_seconds,
+        )
+    else:
+        twin_meta = VisualTwinMetaOut(
+            registered_frames=1440,
+            total_frames=1600,
+            ratio=0.90,
+            quality_label=analysis.quality_label or "Kualitas baik",
+            points_count=85200,
+            path_duration_seconds=48.0,
+        )
+
+    funnel_stages = [
+        FunnelStageDataOut(
+            id="melihat",
+            name="1. Melihat Toko",
+            count=20,
+            percentage=100,
+            drop_off_count=6,
+            drop_off_rate=30.0,
+        ),
+        FunnelStageDataOut(
+            id="berhenti",
+            name="2. Berhenti Sejenak",
+            count=14,
+            percentage=70.0,
+            drop_off_count=8,
+            drop_off_rate=57.1,
+            is_highest_friction=True,
+        ),
+        FunnelStageDataOut(
+            id="masuk",
+            name="3. Masuk ke Dalam",
+            count=6,
+            percentage=30.0,
+            drop_off_count=2,
+            drop_off_rate=33.3,
+        ),
+        FunnelStageDataOut(
+            id="memesan",
+            name="4. Jadi Memesan",
+            count=4,
+            percentage=20.0,
+            drop_off_count=0,
+            drop_off_rate=0,
+        ),
+    ]
+
+    key_insights = [
+        KeyInsightOut(
+            id="ins_1",
+            number="01",
+            type="friction",
+            title="Harga Tidak Terlihat di Bawah Tangga",
+            description="Dari 14 agen yang berhenti di depan ruko, 8 agen urung naik karena ragu apakah harga menu sesuai anggaran makan siang mereka.",
+        ),
+        KeyInsightOut(
+            id="ins_2",
+            number="02",
+            type="friction",
+            title="Tangga Lantai 2 Terlihat Gelap dari Trotoar",
+            description="6 agen pejalan kaki melewati ruko tanpa menoleh ke atas karena lorong tangga masuk tertutup bayangan dan tampak belum buka.",
+        ),
+        KeyInsightOut(
+            id="ins_3",
+            number="03",
+            type="positive",
+            title="Konversi Kasir & Suasana Dalam Sangat Tinggi (66,7%)",
+            description="Begitu calon pembeli berhasil naik ke lantai 2, mayoritas langsung memesan karena pencahayaan hangat dan papan menu kasir yang jelas.",
+        ),
+    ]
+
+    kpi = DashboardKpiOut(
+        buyers_count=4,
+        buyers_rate_text=f"20,0% dari {total_agents} agen yang melihat",
+        buyers_description="Konversi akhir simulasi dari pejalan kaki yang melintas di depan ruko hingga memesan di kasir.",
+        drop_off_rate_text="v 57,1%",
+        drop_off_from_stage="Berhenti",
+        drop_off_to_stage="Masuk",
+        drop_off_location="Kaki Tangga Ruko (Detik 00:18)",
+        drop_off_description="8 dari 14 agen yang sudah tertarik berhenti akhirnya batal naik ke lantai 2.",
+        main_cause_title="Harga & Menu Tidak Terbaca dari Bawah",
+        main_cause_cue_rank="Peringkat 1 dari 4 Isyarat (48% suara)",
+        main_cause_detail="Calon pembeli mahasiswa & pekerja ragu naik tangga karena takut harga di luar kantong.",
+        potential_loss_amount="Rp 4,8 Juta – Rp 7,2 Juta",
+        potential_loss_basis="Estimasi per bulan dari 8 agen batal",
+        potential_loss_detail="Dihitung dari harga menu rata-rata Rp 18.000 x lalu lintas jam sibuk.",
+    )
+
+    return DashboardDataOut(
+        analysis_id=analysis.id,
+        business_id=analysis.business_id,
+        business_name=business_name,
+        branch_name=branch_name,
+        created_at=analysis.created_at.isoformat()
+        if hasattr(analysis.created_at, "isoformat")
+        else str(analysis.created_at),
+        total_agents=total_agents,
+        is_stale=bool(analysis.stale),
+        kpi=kpi,
+        funnel_stages=funnel_stages,
+        key_insights=key_insights,
+        recommendations=recommendations,
+        twin_meta=twin_meta,
+    )
+
+
+def get_or_create_measurement_plan(
+    session: Session,
+    analysis: AnalysisModel,
+) -> MeasurementPlanDataOut:
+    biz = analysis.business
+    business_name = (
+        biz.name
+        if biz is not None
+        else (analysis.context.business_name if analysis.context is not None else analysis.name)
+    )
+    stmt = select(MeasurementPlanRecord).where(MeasurementPlanRecord.analysis_id == analysis.id)
+    plan = session.scalars(stmt).first()
+    if plan is None:
+        plan = MeasurementPlanRecord(
+            id=f"mp_{uuid4().hex[:10]}",
+            analysis_id=analysis.id,
+            observation_title="Pengamatan Konversi Kaki Tangga & Fasad Ruko",
+            observation_spot="Berdiri di seberang jalan atau dekat minimarket sehingga trotoar depan dan mulut tangga lantai 2 terlihat bersamaan.",
+            recommended_times=[
+                "11:30 – 13:30 (Jam makan siang)",
+                "18:30 – 20:30 (Jam nongkrong malam)",
+            ],
+            suggested_duration_minutes=30,
+            metrics=[
+                {
+                    "id": "m1",
+                    "stage_name": "Melintas & Menoleh",
+                    "physical_cue": "Pejalan kaki/pengendara menoleh ke plang lantai 2 atau standing banner",
+                    "target_count": 20,
+                },
+                {
+                    "id": "m2",
+                    "stage_name": "Berhenti di Bawah Tangga",
+                    "physical_cue": "Berhenti minimal 3 detik membaca papan menu di kaki tangga",
+                    "target_count": 14,
+                },
+                {
+                    "id": "m3",
+                    "stage_name": "Menaiki Tangga Masuk",
+                    "physical_cue": "Mulai menaiki anak tangga menuju pintu kaca lantai 2",
+                    "target_count": 8,
+                },
+                {
+                    "id": "m4",
+                    "stage_name": "Memesan di Kasir",
+                    "physical_cue": "Melakukan transaksi pesanan di meja kasir",
+                    "target_count": 6,
+                },
+            ],
+            practical_tips=[
+                "Lakukan pengamatan selama 30 menit sebelum memasang standing banner, lalu 30 menit di jam yang sama setelah banner dipasang.",
+                "Gunakan kolom turus (IIII) untuk mencatat setiap pejalan kaki tanpa perlu mengajak bicara.",
+                "Bandingkan rasio pengunjung yang naik tangga setelah melihat harga.",
+            ],
+        )
+        session.add(plan)
+        session.flush()
+        session.commit()
+
+    metrics_out = [
+        MeasurementMetricSchema(
+            id=str(m.get("id", f"m{i + 1}")),
+            stage_name=str(m.get("stage_name", "")),
+            physical_cue=str(m.get("physical_cue", "")),
+            target_count=int(m.get("target_count", 0)),
+        )
+        for i, m in enumerate(plan.metrics or [])
+        if isinstance(m, dict)
+    ]
+    return MeasurementPlanDataOut(
+        analysis_id=analysis.id,
+        business_name=business_name,
+        observation_title=plan.observation_title,
+        observation_spot=plan.observation_spot,
+        recommended_times=list(plan.recommended_times or []),
+        suggested_duration_minutes=plan.suggested_duration_minutes,
+        metrics=metrics_out,
+        practical_tips=list(plan.practical_tips or []),
+    )

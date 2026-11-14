@@ -1,12 +1,15 @@
 'use client';
 
-import React, { useState, Suspense } from 'react';
+import React, { useEffect, useState, Suspense } from 'react';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import { TrendingDown, TrendingUp, TriangleAlert, Wallet, type LucideIcon } from 'lucide-react';
 import { InfoIcon, TrendingUpIcon } from '@/components/ui/icons';
 import { Badge } from '@/components/ui/badge';
 import { TwinViewer } from '@/components/dashboard/twin-viewer';
+import { fetchDashboardData, subscribeCrudChanges } from '@/lib/api/crud';
 import { MOCK_DASHBOARD, MOCK_WHAT_IF_PROJECTION, WhatIfFix } from '@/lib/mock/dashboard';
+import type { DashboardData } from '@/types/api';
 
 const KPI_TONE = {
   impact: 'bg-impact-10 text-impact',
@@ -86,8 +89,20 @@ function KpiCard({
 }
 
 function DashboardResultInner() {
-  const data = MOCK_DASHBOARD;
+  const searchParams = useSearchParams();
+  const analysisId = searchParams.get('analysisId') || 'selasar-kopi';
+  const querySuffix = `?analysisId=${encodeURIComponent(analysisId)}`;
+
+  const [data, setData] = useState<DashboardData>(MOCK_DASHBOARD);
   const projection = MOCK_WHAT_IF_PROJECTION;
+
+  useEffect(() => {
+    const load = () => {
+      void fetchDashboardData(analysisId).then((res) => setData(res));
+    };
+    load();
+    return subscribeCrudChanges(load);
+  }, [analysisId]);
 
   const [activeWaypoint, setActiveWaypoint] = useState<string>('tangga');
 
@@ -153,8 +168,16 @@ function DashboardResultInner() {
           </div>
 
           <div className="flex items-center gap-2 shrink-0">
+            {data.is_stale && (
+              <Link
+                href={`/business/analysis/simulasi${querySuffix}`}
+                className="inline-flex h-9 items-center rounded-md border border-friction/40 bg-friction-10 px-3 text-xs font-medium text-friction hover:bg-friction-10/80 transition"
+              >
+                Data berubah • Jalankan ulang
+              </Link>
+            )}
             <Link
-              href="/business/analysis/agents"
+              href={`/business/analysis/agents${querySuffix}`}
               className="inline-flex h-9 items-center rounded-md border border-line bg-white px-3.5 text-xs font-medium text-ink hover:bg-panel transition"
             >
               Jelajah agen

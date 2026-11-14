@@ -1,13 +1,14 @@
 'use client';
 
 import { Box, Check, Eye, EyeOff, FileText, LoaderCircle, ShieldCheck, type LucideIcon } from 'lucide-react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import React, { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 
 import { SekilasMascot } from '@/components/brand/mascot';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ArrowLeftIcon, ArrowRightIcon } from '@/components/ui/icons';
+import { fetchTranscriptSegments } from '@/lib/api/crud';
 import { MOCK_TRANSCRIPT } from '@/lib/mock/transcript';
 import type { TranscriptSegment } from '@/types/api';
 
@@ -99,7 +100,18 @@ function SectionTitle({ n, title, description }: { n: number; title: string; des
 
 function ProsesInner() {
   const router = useRouter();
-  const log = useMemo(() => buildLog(MOCK_TRANSCRIPT), []);
+  const searchParams = useSearchParams();
+  const analysisId = searchParams.get('analysisId') || 'selasar-kopi';
+  const querySuffix = `?analysisId=${encodeURIComponent(analysisId)}`;
+
+  const [segments, setSegments] = useState<TranscriptSegment[]>(MOCK_TRANSCRIPT);
+  useEffect(() => {
+    void fetchTranscriptSegments(analysisId).then((list) => {
+      if (list.length > 0) setSegments(list);
+    });
+  }, [analysisId]);
+
+  const log = useMemo(() => buildLog(segments), [segments]);
   const [shown, setShown] = useState(0);
   const logBoxRef = useRef<HTMLDivElement>(null);
 
@@ -222,7 +234,7 @@ function ProsesInner() {
               <Button
                 variant="secondary"
                 size="lg"
-                onClick={() => router.push('/business/analysis/video')}
+                onClick={() => router.push(`/business/analysis/video${querySuffix}`)}
                 className="justify-center !rounded-md"
               >
                 <ArrowLeftIcon size={16} /> Kembali ke rekam video
@@ -231,7 +243,7 @@ function ProsesInner() {
                 variant="primary"
                 size="lg"
                 disabled={!transcriptDone}
-                onClick={() => transcriptDone && router.push('/business/analysis/verifikasi')}
+                onClick={() => transcriptDone && router.push(`/business/analysis/verifikasi${querySuffix}`)}
                 className="justify-center !rounded-md"
               >
                 Cek transkrip <ArrowRightIcon size={16} />

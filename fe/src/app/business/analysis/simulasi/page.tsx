@@ -1,14 +1,16 @@
 'use client';
 
 import { BarChart3, Check, ListOrdered, LoaderCircle, Route, UserRound, Users, type LucideIcon } from 'lucide-react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import React, { Suspense, useEffect, useRef, useState } from 'react';
 
 import { SekilasMascot } from '@/components/brand/mascot';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ArrowLeftIcon, ArrowRightIcon } from '@/components/ui/icons';
+import { fetchAgentDecisions, triggerSimulationRun } from '@/lib/api/crud';
 import { MOCK_AGENTS } from '@/lib/mock/agents';
+import type { AgentDecision } from '@/types/api';
 
 /** Jeda antar-langkah animasi (UI simulasi; nanti diganti progres asli dari backend). */
 const TICK_MS = 1100;
@@ -60,8 +62,20 @@ function SectionTitle({ n, title, description }: { n: number; title: string; des
 
 function SimulasiAgenInner() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const analysisId = searchParams.get('analysisId') || 'selasar-kopi';
+  const querySuffix = `?analysisId=${encodeURIComponent(analysisId)}`;
+
+  const [agents, setAgents] = useState<AgentDecision[]>(MOCK_AGENTS);
   const [tick, setTick] = useState(0);
   const feedRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    void triggerSimulationRun(analysisId);
+    void fetchAgentDecisions(analysisId).then((list) => {
+      if (list.length > 0) setAgents(list);
+    });
+  }, [analysisId]);
 
   useEffect(() => {
     if (tick >= TOTAL_TICKS) return;
@@ -163,7 +177,7 @@ function SimulasiAgenInner() {
                       Menyiapkan persona calon pelanggan…
                     </div>
                   )}
-                  {MOCK_AGENTS.slice(0, agentsShown).map((ag) => {
+                  {agents.slice(0, agentsShown).map((ag) => {
                     const d = DECISION[ag.final_decision] ?? { label: ag.final_decision, variant: 'neutral' as const };
                     return (
                       <article key={ag.agent_id} className="animate-[fadeIn_300ms_ease-out] rounded-md bg-white p-4">
@@ -195,7 +209,7 @@ function SimulasiAgenInner() {
               <Button
                 variant="secondary"
                 size="lg"
-                onClick={() => router.push('/business/analysis/verifikasi')}
+                onClick={() => router.push(`/business/analysis/verifikasi${querySuffix}`)}
                 className="justify-center !rounded-md"
               >
                 <ArrowLeftIcon size={16} /> Kembali ke verifikasi
@@ -204,7 +218,7 @@ function SimulasiAgenInner() {
                 variant="primary"
                 size="lg"
                 disabled={!done}
-                onClick={() => done && router.push('/business/analysis')}
+                onClick={() => done && router.push(`/business/analysis${querySuffix}`)}
                 className="justify-center !rounded-md"
               >
                 Buka dasbor hasil <ArrowRightIcon size={16} />

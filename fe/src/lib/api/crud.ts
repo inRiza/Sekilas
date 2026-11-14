@@ -1,15 +1,45 @@
+import { MOCK_AGENTS } from '@/lib/mock/agents';
 import { MOCK_ANALYSES } from '@/lib/mock/analyses';
 import { MOCK_BUSINESSES } from '@/lib/mock/business';
 import { MOCK_CONTEXT } from '@/lib/mock/context';
+import { MOCK_DASHBOARD } from '@/lib/mock/dashboard';
+import { MOCK_TRANSCRIPT } from '@/lib/mock/transcript';
 import { createClient } from '@/lib/supabase/client';
-import type { Analysis, Business, BusinessContext, BusinessType, PriceLevel } from '@/types/api';
+import type {
+  AgentDecision,
+  Analysis,
+  Business,
+  BusinessContext,
+  BusinessType,
+  DashboardData,
+  MeasurementPlanData,
+  PriceLevel,
+  TranscriptSegment,
+} from '@/types/api';
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000').replace(/\/$/, '') + '/api/v1';
 
 const STORAGE_BIZ_KEY = 'sekilas_businesses_v1';
 const STORAGE_ANL_KEY = 'sekilas_analyses_v1';
 const STORAGE_CTX_KEY = 'sekilas_contexts_v1';
+const STORAGE_TRS_KEY = 'sekilas_transcripts_v1';
+const STORAGE_VID_KEY = 'sekilas_videos_v1';
 const CRUD_EVENT = 'sekilas:crud-changed';
+
+export interface VideoMetadata {
+  id?: string;
+  analysis_id?: string;
+  original_filename: string;
+  storage_key?: string | null;
+  duration_s: number;
+  cashier_at_s: number;
+  width?: number | null;
+  height?: number | null;
+  accepted?: boolean;
+  quality_checks?: Record<string, string>;
+  blurred_faces_count?: number;
+  blurred_plates_count?: number;
+}
 
 export interface CreateBusinessPayload {
   name: string;
@@ -446,4 +476,225 @@ export async function saveAnalysisContext(
   }
 
   return saved;
+}
+
+/* ---------------- Video Metadata CRUD (F2) ---------------- */
+
+function getLocalVideoMap(): Record<string, VideoMetadata> {
+  if (typeof window === 'undefined') return {};
+  try {
+    const raw = window.localStorage.getItem(STORAGE_VID_KEY);
+    return raw ? (JSON.parse(raw) as Record<string, VideoMetadata>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function setLocalVideo(analysisId: string, meta: VideoMetadata) {
+  if (typeof window === 'undefined') return;
+  const map = getLocalVideoMap();
+  map[analysisId] = meta;
+  window.localStorage.setItem(STORAGE_VID_KEY, JSON.stringify(map));
+  notifyCrudChanged();
+}
+
+export async function fetchVideoMetadata(analysisId?: string | null): Promise<VideoMetadata> {
+  const id = analysisId || 'selasar-kopi';
+  const remote = await tryApiFetch<VideoMetadata>(`/analyses/${id}/video`);
+  if (remote) {
+    setLocalVideo(id, remote);
+    return remote;
+  }
+  const local = getLocalVideoMap()[id];
+  if (local) return local;
+  return {
+    id: `vid_${id}`,
+    analysis_id: id,
+    original_filename: 'video_rekaman_selasar.mp4',
+    duration_s: 48,
+    cashier_at_s: 48,
+    width: 1920,
+    height: 1080,
+    accepted: true,
+    blurred_faces_count: 14,
+    blurred_plates_count: 6,
+  };
+}
+
+export async function saveVideoMetadata(
+  analysisId: string,
+  payload: Partial<VideoMetadata>,
+): Promise<VideoMetadata> {
+  const current = await fetchVideoMetadata(analysisId);
+  const merged: VideoMetadata = {
+    ...current,
+    ...payload,
+    original_filename: payload.original_filename ?? current.original_filename ?? 'video_rekaman_selasar.mp4',
+    duration_s: payload.duration_s ?? current.duration_s ?? 48,
+    cashier_at_s: payload.cashier_at_s ?? current.cashier_at_s ?? 48,
+  };
+
+  const remote = await tryApiFetch<VideoMetadata>(`/analyses/${analysisId}/video`, {
+    method: 'PUT',
+    body: JSON.stringify(merged),
+  });
+  const saved = remote ?? merged;
+  setLocalVideo(analysisId, saved);
+  return saved;
+}
+
+/* ---------------- Transcript Segments CRUD (F3 & F4) ---------------- */
+
+function getLocalTranscriptMap(): Record<string, TranscriptSegment[]> {
+  if (typeof window === 'undefined') return {};
+  try {
+    const raw = window.localStorage.getItem(STORAGE_TRS_KEY);
+    return raw ? (JSON.parse(raw) as Record<string, TranscriptSegment[]>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function setLocalTranscript(analysisId: string, segments: TranscriptSegment[]) {
+  if (typeof window === 'undefined') return;
+  const map = getLocalTranscriptMap();
+  map[analysisId] = segments;
+  window.localStorage.setItem(STORAGE_TRS_KEY, JSON.stringify(map));
+  notifyCrudChanged();
+}
+
+export async function fetchTranscriptSegments(analysisId?: string | null): Promise<TranscriptSegment[]> {
+  const id = analysisId || 'selasar-kopi';
+  const remote = await tryApiFetch<TranscriptSegment[]>(`/analyses/${id}/transcript`);
+  if (remote && remote.length > 0) {
+    setLocalTranscript(id, remote);
+    return remote;
+  }
+  const local = getLocalTranscriptMap()[id];
+  if (local && local.length > 0) return local;
+  setLocalTranscript(id, MOCK_TRANSCRIPT);
+  return MOCK_TRANSCRIPT;
+}
+
+export async function createTranscriptSegment(
+  analysisId: string,
+  payload: {
+    timestamp_start: number;
+    timestamp_end: number;
+    vantage: TranscriptSegment['vantage'];
+    narrative: string;
+    not_visible?: string;
+    confidence?: TranscriptSegment['confidence'];
+    is_confirmed_by_owner?: boolean;
+  },
+): Promise<TranscriptSegment> {
+  const remote = await tryApiFetch<TranscriptSegment>(`/analyses/${analysisId}/transcript/segments`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+  const current = await fetchTranscriptSegments(analysisId);
+  if (remote) {
+    const next = [...current.filter((s) => s.id !== remote.id), remote].sort(
+      (a, b) => a.timestamp_start - b.timestamp_start,
+    );
+    setLocalTranscript(analysisId, next);
+    return remote;
+  }
+
+  const created: TranscriptSegment = {
+    id: `seg_${Date.now()}`,
+    timestamp_start: payload.timestamp_start,
+    timestamp_end: Math.max(payload.timestamp_end, payload.timestamp_start + 1),
+    frame_keys: ['frame_manual.jpg'],
+    vantage: payload.vantage,
+    narrative: payload.narrative.trim(),
+    not_visible: payload.not_visible?.trim() ?? '',
+    confidence: payload.confidence ?? 'stabil',
+    is_confirmed_by_owner: payload.is_confirmed_by_owner ?? true,
+  };
+  const next = [...current, created].sort((a, b) => a.timestamp_start - b.timestamp_start);
+  setLocalTranscript(analysisId, next);
+  return created;
+}
+
+export async function updateTranscriptSegment(
+  analysisId: string,
+  segmentId: string,
+  patch: Partial<TranscriptSegment>,
+): Promise<TranscriptSegment | null> {
+  const remote = await tryApiFetch<TranscriptSegment>(
+    `/analyses/${analysisId}/transcript/segments/${segmentId}`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify(patch),
+    },
+  );
+  const current = await fetchTranscriptSegments(analysisId);
+  if (remote) {
+    const next = current.map((s) => (s.id === segmentId ? remote : s));
+    setLocalTranscript(analysisId, next);
+    return remote;
+  }
+
+  const target = current.find((s) => s.id === segmentId);
+  if (!target) return null;
+  const updated: TranscriptSegment = { ...target, ...patch };
+  setLocalTranscript(
+    analysisId,
+    current.map((s) => (s.id === segmentId ? updated : s)),
+  );
+  return updated;
+}
+
+export async function deleteTranscriptSegment(analysisId: string, segmentId: string): Promise<void> {
+  await tryApiFetch<void>(`/analyses/${analysisId}/transcript/segments/${segmentId}`, {
+    method: 'DELETE',
+  });
+  const current = await fetchTranscriptSegments(analysisId);
+  setLocalTranscript(
+    analysisId,
+    current.filter((s) => s.id !== segmentId),
+  );
+}
+
+/* ---------------- Dashboard, Agent Decisions & Measurement Plan (F5, F6, F7) ---------------- */
+
+export async function fetchDashboardData(analysisId?: string | null): Promise<DashboardData> {
+  const id = analysisId || 'selasar-kopi';
+  const remote = await tryApiFetch<DashboardData>(`/analyses/${id}/dashboard`);
+  if (remote) return remote;
+
+  const anl = getLocalAnalyses().find((a) => a.id === id);
+  if (anl) {
+    return {
+      ...MOCK_DASHBOARD,
+      analysis_id: anl.id,
+      business_id: anl.business_id,
+      business_name: anl.business_name,
+      branch_name: anl.branch_name,
+      is_stale: Boolean(anl.stale),
+    };
+  }
+  return MOCK_DASHBOARD;
+}
+
+export async function fetchAgentDecisions(analysisId?: string | null): Promise<AgentDecision[]> {
+  const id = analysisId || 'selasar-kopi';
+  const remote = await tryApiFetch<AgentDecision[]>(`/analyses/${id}/simulation/agents`);
+  if (remote && remote.length > 0) return remote;
+  return MOCK_AGENTS;
+}
+
+export async function triggerSimulationRun(analysisId?: string | null): Promise<void> {
+  const id = analysisId || 'selasar-kopi';
+  await tryApiFetch(`/analyses/${id}/simulation`, {
+    method: 'POST',
+    body: JSON.stringify({ n_agents: 200, seed: 42 }),
+  });
+  await updateAnalysis(id, { status: 'ready', stale: false });
+}
+
+export async function fetchMeasurementPlan(analysisId?: string | null): Promise<MeasurementPlanData | null> {
+  const id = analysisId || 'selasar-kopi';
+  return await tryApiFetch<MeasurementPlanData>(`/analyses/${id}/measurement-plan`);
 }
