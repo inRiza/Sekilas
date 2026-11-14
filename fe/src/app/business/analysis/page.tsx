@@ -1,12 +1,15 @@
 'use client';
 
-import React, { useEffect, useState, Suspense } from 'react';
+import React, { useEffect, useRef, useState, Suspense } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import {
+  ChevronDown,
+  ChevronUp,
   CircleCheck,
   Info,
   LoaderCircle,
+  MapPin,
   Plus,
   TrendingDown,
   TrendingUp,
@@ -27,8 +30,28 @@ import {
   SimulationRequiredError,
   subscribeCrudChanges,
 } from '@/lib/api/crud';
-import type { WhatIfFix } from '@/lib/mock/dashboard';
 import type { DashboardData, KeyInsight, WhatIfProjectionData } from '@/types/api';
+
+interface FixOption {
+  id: string;
+  rank: number;
+  priority_tag: 'Prioritas' | 'Nanti';
+  title: string;
+  description: string;
+  location_zone: string;
+  impact_label: string;
+  effort_label: string;
+  cost_rp: number | null;
+  affected_agents_count: number;
+  is_checked: boolean;
+}
+
+function formatCostShort(rp: number): string {
+  if (rp >= 1_000_000) {
+    return `Rp ${(rp / 1_000_000).toFixed(1).replace('.', ',').replace(',0', '')} jt`;
+  }
+  return `Rp ${Math.round(rp / 1000)}rb`;
+}
 
 /** "00:16" -> 16 */
 function toSeconds(mmss: string): number {
@@ -62,12 +85,18 @@ function DashboardResultInner() {
 
   const [data, setData] = useState<DashboardData | null>(null);
   const [projection, setProjection] = useState<WhatIfProjectionData | null>(null);
+  const [lastVerifiedProjection, setLastVerifiedProjection] = useState<WhatIfProjectionData | null>(null);
+  const [lastVerifiedCheckedIds, setLastVerifiedCheckedIds] = useState<string[]>([]);
   const [activeWaypoint, setActiveWaypoint] = useState<string | null>(null);
-  const [fixes, setFixes] = useState<WhatIfFix[]>([]);
+  const [fixes, setFixes] = useState<FixOption[]>([]);
+  const [showSecondaryFixes, setShowSecondaryFixes] = useState(false);
+  const [isQuickUpdating, setIsQuickUpdating] = useState(false);
   const [isSimulating, setIsSimulating] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [whatIfError, setWhatIfError] = useState<string | null>(null);
   const [elapsedSec, setElapsedSec] = useState(0);
+  const quickAbortRef = useRef<AbortController | null>(null);
+  const quickSeqRef = useRef(0);
 
   useEffect(() => {
     if (data || loadError) return;
@@ -77,28 +106,51 @@ function DashboardResultInner() {
 
   useEffect(() => {
     const load = () => {
+      quickAbortRef.current?.abort();
+      quickSeqRef.current += 1;
+      setIsQuickUpdating(false);
       setLoadError(null);
       void fetchDashboardData(analysisId)
         .then((res) => {
           setData(res);
+          const nextFixes: FixOption[] =
+            res.recommendations && res.recommendations.length > 0
+              ? (() => {
+                  const hasPriority = res.recommendations.some((rec) => rec.priority_tag === 'Prioritas');
+                  return res.recommendations.map((rec) => ({
+                    id: rec.id,
+                    rank: rec.rank,
+                    priority_tag: rec.priority_tag,
+                    title: rec.title,
+                    description: rec.description,
+                    location_zone: rec.location_zone,
+                    impact_label: rec.estimated_lift_range || `Dampak ${rec.impact.toLowerCase()}`,
+                    effort_label:
+                      rec.effort === 'Rendah'
+                        ? 'Usaha rendah'
+                        : rec.effort === 'Tinggi'
+                          ? 'Usaha tinggi'
+                          : 'Usaha sedang',
+                    cost_rp: rec.cost_rp ?? null,
+                    affected_agents_count: rec.affected_agents_count ?? 0,
+                    is_checked: hasPriority ? rec.priority_tag === 'Prioritas' : true,
+                  }));
+                })()
+              : [];
+          setFixes(nextFixes);
+
           if (res.what_if_projection) {
             setProjection(res.what_if_projection);
-          }
-          if (res.recommendations && res.recommendations.length > 0) {
-            setFixes(
-              res.recommendations.map((rec) => ({
-                id: rec.id,
-                title: rec.title,
-                impact_label: rec.estimated_lift_range || `Dampak ${rec.impact.toLowerCase()}`,
-                effort_label:
-                  rec.effort === 'Rendah'
-                    ? 'Usaha rendah'
-                    : rec.effort === 'Tinggi'
-                      ? 'Usaha tinggi'
-                      : 'Usaha sedang',
-                is_checked: true,
-              })),
-            );
+            if (res.what_if_projection.mode === 'terverifikasi_simulasi') {
+              setLastVerifiedProjection(res.what_if_projection);
+              setLastVerifiedCheckedIds(nextFixes.filter((f) => f.is_checked).map((f) => f.id));
+            } else {
+              setLastVerifiedProjection(null);
+              setLastVerifiedCheckedIds([]);
+            }
+          } else {
+            setLastVerifiedProjection(null);
+            setLastVerifiedCheckedIds([]);
           }
           if (res.waypoints && res.waypoints.length > 0) {
             const hotspot = res.waypoints.find((w) => w.is_hotspot) ?? res.waypoints[0];
@@ -114,26 +166,49 @@ function DashboardResultInner() {
         });
     };
     load();
-    return subscribeCrudChanges(load);
+    const unsub = subscribeCrudChanges(load);
+    return () => {
+      quickAbortRef.current?.abort();
+      unsub();
+    };
   }, [analysisId, querySuffix, router]);
 
   const toggleFix = (id: string) => {
-    setFixes((prev) => {
-      const next = prev.map((f) => (f.id === id ? { ...f, is_checked: !f.is_checked } : f));
-      const checkedIds = next.filter((f) => f.is_checked).map((f) => f.id);
-      setWhatIfError(null);
-      void runWhatIfProjection(analysisId, checkedIds, 'estimasi_cepat')
-        .then((updated) => {
-          if (updated) setProjection(updated);
-        })
-        .catch((err) => {
+    const nextFixes = fixes.map((f) => (f.id === id ? { ...f, is_checked: !f.is_checked } : f));
+    const checkedIds = nextFixes.filter((f) => f.is_checked).map((f) => f.id);
+
+    setFixes(nextFixes);
+    setWhatIfError(null);
+
+    quickAbortRef.current?.abort();
+    const controller = new AbortController();
+    quickAbortRef.current = controller;
+    const reqSeq = ++quickSeqRef.current;
+    setIsQuickUpdating(true);
+
+    void runWhatIfProjection(analysisId, checkedIds, 'estimasi_cepat', controller.signal)
+      .then((updated) => {
+        if (reqSeq === quickSeqRef.current && updated) {
+          setProjection(updated);
+        }
+      })
+      .catch((err) => {
+        if (err instanceof Error && err.name === 'AbortError') return;
+        if (reqSeq === quickSeqRef.current) {
           setWhatIfError(err instanceof Error ? err.message : 'Gagal menghitung estimasi cepat.');
-        });
-      return next;
-    });
+        }
+      })
+      .finally(() => {
+        if (reqSeq === quickSeqRef.current) {
+          setIsQuickUpdating(false);
+        }
+      });
   };
 
   const handleRunWhatIf = async () => {
+    quickAbortRef.current?.abort();
+    quickSeqRef.current += 1;
+    setIsQuickUpdating(false);
     setIsSimulating(true);
     setWhatIfError(null);
     try {
@@ -141,12 +216,27 @@ function DashboardResultInner() {
       const updated = await runWhatIfProjection(analysisId, checkedIds, 'terverifikasi_simulasi');
       if (updated) {
         setProjection(updated);
+        if (updated.mode === 'terverifikasi_simulasi') {
+          setLastVerifiedProjection(updated);
+          setLastVerifiedCheckedIds(checkedIds);
+        }
       }
     } catch (err) {
       setWhatIfError(err instanceof Error ? err.message : 'Gagal menjalankan simulasi ulang.');
     } finally {
       setIsSimulating(false);
     }
+  };
+
+  const handleRestoreLastVerified = () => {
+    if (!lastVerifiedProjection) return;
+    quickAbortRef.current?.abort();
+    quickSeqRef.current += 1;
+    setIsQuickUpdating(false);
+    setWhatIfError(null);
+    setProjection(lastVerifiedProjection);
+    const verifiedSet = new Set(lastVerifiedCheckedIds);
+    setFixes((prev) => prev.map((f) => ({ ...f, is_checked: verifiedSet.has(f.id) })));
   };
 
   if (loadError) {
@@ -177,6 +267,10 @@ function DashboardResultInner() {
   }
 
   const checkedFixesCount = fixes.filter((f) => f.is_checked).length;
+  const priorityFixes = fixes.filter((f) => f.priority_tag === 'Prioritas');
+  const secondaryFixes = fixes.filter((f) => f.priority_tag !== 'Prioritas');
+  const secondaryCheckedCount = secondaryFixes.filter((f) => f.is_checked).length;
+  const visibleFixes = priorityFixes.length > 0 ? (showSecondaryFixes ? fixes : priorityFixes) : fixes;
   const durationSeconds = Math.round(data.twin_meta?.path_duration_seconds ?? 0);
   const totalAgents = data.total_agents;
   const waypoints = data.waypoints ?? [];
@@ -266,7 +360,11 @@ function DashboardResultInner() {
             icon={TrendingDown}
             tone="friction"
           />
-          <CauseCard title={data.kpi.main_cause_title || '–'} rank={data.kpi.main_cause_cue_rank} />
+          <CauseCard
+            title={data.kpi.main_cause_title || '–'}
+            rank={data.kpi.main_cause_cue_rank}
+            detail={data.kpi.main_cause_detail}
+          />
         </div>
 
         {/* Alur perilaku agen, lalu peringkat semua alasan batal (masing-masing selebar halaman) */}
@@ -349,34 +447,80 @@ function DashboardResultInner() {
           <div className="grid grid-cols-1 items-stretch gap-4 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
           <Card className="flex flex-col p-5 sm:p-6">
             <CardHeader
-              title="Pilih perbaikan"
-              hint="Centang yang ingin dicoba, lalu jalankan simulasi ulang. Hipotesis, bukan janji omzet."
+              title="Rekomendasi & pilih perbaikan"
+              hint="Disaring ke perbaikan paling relevan (Pareto 80/20). Centang untuk estimasi cepat atau simulasi ulang."
             />
             <div className="grid grid-cols-1 gap-3">
-              {fixes.map((fix) => (
-                <div
-                  key={fix.id}
-                  onClick={() => toggleFix(fix.id)}
-                  className={`flex h-full cursor-pointer select-none items-start gap-3 rounded-xl p-3.5 ring-1 transition-colors ${
-                    fix.is_checked ? 'bg-primary-10/50 ring-2 ring-primary-40/70' : 'bg-white ring-line hover:bg-panel'
-                  }`}
-                >
-                  <input
-                    type="checkbox"
-                    checked={fix.is_checked}
-                    onChange={() => {}} // handled by parent div click
-                    className="mt-0.5 size-4 cursor-pointer rounded text-primary-40 focus:ring-primary-40"
-                  />
-                  <div className="flex-1">
-                    <p className="text-xs font-semibold leading-snug text-ink">{fix.title}</p>
-                    <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                      <Badge variant="impact">{fix.impact_label}</Badge>
-                      <Badge>{fix.effort_label}</Badge>
+              {visibleFixes.length === 0 ? (
+                <p className="rounded-xl bg-panel p-4 text-xs text-muted">
+                  Belum ada rekomendasi perbaikan yang relevan dari simulasi ini.
+                </p>
+              ) : (
+                visibleFixes.map((fix) => (
+                  <label
+                    key={fix.id}
+                    className={`flex cursor-pointer select-none items-start gap-3 rounded-xl p-3.5 ring-1 transition-colors ${
+                      fix.is_checked ? 'bg-primary-10/50 ring-2 ring-primary-40/70' : 'bg-white ring-line hover:bg-panel'
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={fix.is_checked}
+                      onChange={() => toggleFix(fix.id)}
+                      className="mt-1 size-4 shrink-0 cursor-pointer rounded text-primary-40 focus:ring-primary-40"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
+                        <Badge variant={fix.priority_tag === 'Prioritas' ? 'primary' : 'neutral'}>
+                          {`${fix.priority_tag} #${fix.rank}`}
+                        </Badge>
+                        {fix.location_zone && (
+                          <span className="inline-flex items-center gap-1 text-[11px] font-medium text-muted">
+                            <MapPin size={11} className="shrink-0" />
+                            {fix.location_zone}
+                          </span>
+                        )}
+                        {fix.cost_rp != null && fix.cost_rp > 0 && (
+                          <span className="ml-auto font-mono text-[11px] font-medium text-ink-soft">
+                            {formatCostShort(fix.cost_rp)}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[13px] font-semibold leading-snug text-ink">{fix.title}</p>
+                      {fix.description && (
+                        <p className="mt-1 text-[12px] leading-relaxed text-muted">{fix.description}</p>
+                      )}
+                      <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+                        <Badge variant="impact">{fix.impact_label}</Badge>
+                        <Badge>{fix.effort_label}</Badge>
+                        {fix.affected_agents_count > 0 && (
+                          <Badge variant="neutral">{`${fix.affected_agents_count} agen terdampak`}</Badge>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                </div>
-              ))}
+                  </label>
+                ))
+              )}
             </div>
+
+            {priorityFixes.length > 0 && secondaryFixes.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setShowSecondaryFixes((prev) => !prev)}
+                className="mt-3 inline-flex items-center justify-center gap-1.5 rounded-xl border border-line bg-panel/60 px-3 py-2 text-[12px] font-medium text-ink-soft transition hover:bg-panel"
+              >
+                {showSecondaryFixes ? (
+                  <>
+                    <ChevronUp size={14} /> Sembunyikan {secondaryFixes.length} opsi tambahan (prioritas rendah)
+                  </>
+                ) : (
+                  <>
+                    <ChevronDown size={14} /> Lihat {secondaryFixes.length} opsi tambahan (prioritas rendah
+                    {secondaryCheckedCount > 0 ? ` · ${secondaryCheckedCount} dipilih` : ''})
+                  </>
+                )}
+              </button>
+            )}
 
             <div className="mt-auto flex flex-col gap-2 pt-5">
               <p className="text-center text-[12px] text-subtle">Sekitar 2 menit, memakai agen yang sama</p>
@@ -398,9 +542,16 @@ function DashboardResultInner() {
               hint={`Perbandingan perilaku ${totalAgents} agen yang sama, sebelum dan sesudah perbaikan.`}
               right={
                 <div className="flex flex-col items-end gap-2">
-                  <Badge variant={projection.mode === 'terverifikasi_simulasi' ? 'impact' : 'neutral'}>
-                    {projection.mode === 'terverifikasi_simulasi' ? 'Terverifikasi simulasi' : 'Estimasi cepat'}
-                  </Badge>
+                  <div className="flex items-center gap-2">
+                    {isQuickUpdating && (
+                      <span className="inline-flex items-center gap-1 text-[11px] font-medium text-primary-40">
+                        <LoaderCircle size={12} className="animate-spin" /> Menghitung…
+                      </span>
+                    )}
+                    <Badge variant={projection.mode === 'terverifikasi_simulasi' ? 'impact' : 'neutral'}>
+                      {projection.mode === 'terverifikasi_simulasi' ? 'Terverifikasi simulasi' : 'Estimasi cepat'}
+                    </Badge>
+                  </div>
                   <div className="flex items-center gap-3 text-xs font-medium text-ink-soft">
                     <span className="flex items-center gap-1.5">
                       <span className="size-2.5 rounded-full bg-subtle/80" /> Saat ini
@@ -419,6 +570,22 @@ function DashboardResultInner() {
               </div>
             )}
 
+            {lastVerifiedProjection && projection.mode !== 'terverifikasi_simulasi' && (
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-primary-20 bg-primary-10/60 px-4 py-2.5 text-xs text-ink-soft">
+                <p className="leading-relaxed">
+                  Pilihan perbaikan diubah setelah simulasi ulang terakhir, sehingga proyeksi kembali ke{' '}
+                  <strong className="font-semibold text-ink">Estimasi cepat</strong>. Jalankan simulasi ulang untuk memverifikasi kombinasi baru.
+                </p>
+                <button
+                  type="button"
+                  onClick={handleRestoreLastVerified}
+                  className="shrink-0 rounded-full bg-white px-3 py-1 text-[11px] font-semibold text-primary-40 ring-1 ring-primary-20 transition hover:bg-primary-10"
+                >
+                  Lihat hasil terverifikasi terakhir
+                </button>
+              </div>
+            )}
+
             {projection.low_accuracy_early_edit && projection.accuracy_note && (
               <div className="flex items-start gap-2.5 rounded-xl border border-friction/40 bg-friction-10 px-4 py-3 text-xs text-friction">
                 <TriangleAlert size={15} className="mt-0.5 shrink-0" />
@@ -429,12 +596,21 @@ function DashboardResultInner() {
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
               <ProjectionStat label="Pembeli" value={`${projection.buyers_projected} agen`} sub={`Naik dari ${projection.buyers_baseline} agen`} icon={TrendingUp} tone="impact" />
               <ProjectionStat label="Penurunan" value={projection.drop_rate_projected} sub={`Sebelumnya ${projection.drop_rate_baseline}`} icon={TrendingDown} tone="impact" />
-              <ProjectionStat label="Perkiraan omzet" value={projection.revenue_lift} sub="Rupiah per hari" icon={TrendingUp} tone="impact" />
+              <ProjectionStat
+                label="Perkiraan omzet"
+                value={projection.revenue_lift}
+                sub={projection.revenue_lift === 'Belum dihitung' ? 'Isi menu & pengunjung harian' : 'Rupiah per hari'}
+                icon={TrendingUp}
+                tone={projection.revenue_lift === 'Belum dihitung' ? 'neutral' : 'impact'}
+              />
               <ProjectionStat label="Modal" value={projection.cost_estimate} sub={`${checkedFixesCount} perbaikan dipilih`} icon={Wallet} tone="neutral" />
             </div>
 
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-              {projection.stages_comparison.map((stage, idx) => (
+              {projection.stages_comparison.map((stage, idx) => {
+                const baseCount = stage.baseline_count ?? Math.round((stage.baseline_pct / 100) * totalAgents);
+                const projCount = stage.projected_count ?? Math.round((stage.projected_pct / 100) * totalAgents);
+                return (
                 <div key={stage.id} className="space-y-2.5 rounded-xl bg-panel p-3.5 ring-1 ring-line/70">
                   <div className="flex items-center justify-between text-xs">
                     <span className="font-semibold text-ink">
@@ -458,7 +634,7 @@ function DashboardResultInner() {
                       />
                     </div>
                     <span className="w-12 shrink-0 text-right font-mono text-[11px] text-muted">
-                      {Math.round((stage.baseline_pct / 100) * totalAgents)}/{totalAgents}
+                      {baseCount}/{totalAgents}
                     </span>
                   </div>
 
@@ -471,11 +647,12 @@ function DashboardResultInner() {
                       />
                     </div>
                     <span className="w-12 shrink-0 text-right font-mono text-[11px] font-semibold text-primary-40">
-                      {Math.round((stage.projected_pct / 100) * totalAgents)}/{totalAgents}
+                      {projCount}/{totalAgents}
                     </span>
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
 
             <div className="rounded-xl bg-primary-10/60 p-4 text-xs ring-1 ring-primary-20">

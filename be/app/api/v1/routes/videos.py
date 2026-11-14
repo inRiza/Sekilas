@@ -1,18 +1,30 @@
-"""Halaman 3-4: simpan metadata video terburam, URL unggah Supabase Storage, dan antrean job (F2, F3, F7)."""
+"""Halaman 3-4: simpan metadata video terburam, Signed URL Supabase Storage, dan antrean job (F2, F3, F7)."""
 
 import json
+import mimetypes
 import re
 import subprocess
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import APIRouter, Header, HTTPException, UploadFile, status
-from sqlalchemy import select
+from fastapi import APIRouter, Header, HTTPException, Query, Request, Response, UploadFile, status
+from sqlalchemy import func, select
 
 from app.core.auth import CurrentUserDep
 from app.core.config import get_settings
 from app.core.db import SessionDep
-from app.models.entities import JobRecord, VideoAsset
+from app.core.storage import (
+    DEFAULT_VIDEO_BUCKET,
+    build_authorized_media_url,
+    build_backend_media_url,
+    create_supabase_signed_upload_url,
+    download_supabase_object,
+    extract_bearer_token,
+    extract_bucket_object_key,
+    sign_media_query,
+    verify_media_signature,
+)
+from app.models.entities import JobRecord, TranscriptSegment, VideoAsset
 from app.schemas.common import JobState, JobStatus
 from app.schemas.video import (
     VideoCompleteRequest,
@@ -37,8 +49,10 @@ router = APIRouter(prefix="/analyses/{analysis_id}/video", tags=["video"])
 @router.get("", response_model=VideoMetadataOut)
 def get_video_metadata(
     analysis_id: str,
+    request: Request,
     session: SessionDep,
     _user: CurrentUserDep,
+    authorization: Annotated[str | None, Header()] = None,
 ) -> VideoMetadataOut:
     """Ambil metadata video terburam & stempel waktu kasir untuk analisis ini."""
     analysis = load_analysis_with_relations(session, analysis_id)
@@ -65,17 +79,23 @@ def get_video_metadata(
             blurred_faces_count=0,
             blurred_plates_count=0,
         )
-    return video_model_to_schema(video)
+    return video_model_to_schema(
+        video,
+        bearer_token=extract_bearer_token(authorization),
+        base_url=str(request.base_url).rstrip("/"),
+    )
 
 
 @router.post("/upload-url", response_model=VideoUploadUrlResponse)
 def get_video_upload_url(
     analysis_id: str,
     body: VideoUploadUrlRequest,
+    request: Request,
     session: SessionDep,
     _user: CurrentUserDep,
+    authorization: Annotated[str | None, Header()] = None,
 ) -> VideoUploadUrlResponse:
-    """PRD 4.4.2: Hasilkan path storage (`storage_key`) pada bucket `videos` di Supabase Storage."""
+    """PRD 4.4.2: Hasilkan Signed Upload URL & Signed Read URL berotorisasi di bucket `videos`."""
     analysis = load_analysis_with_relations(session, analysis_id)
     if analysis is None:
         raise HTTPException(
@@ -84,12 +104,100 @@ def get_video_upload_url(
 
     safe_name = re.sub(r"[^a-zA-Z0-9._-]", "_", body.filename.strip() or "video_toko.mp4")
     storage_key = f"{analysis.id}/{safe_name}"
-    base_url = get_settings().supabase_url.rstrip("/")
-    public_url = f"{base_url}/storage/v1/object/public/videos/{storage_key}"
+    bearer = extract_bearer_token(authorization)
+    base_url = str(request.base_url).rstrip("/")
+    ttl = get_settings().signed_url_ttl_seconds
+
+    signed_upload = create_supabase_signed_upload_url(storage_key, bearer_token=bearer)
+    upload_token: str | None = None
+    if signed_upload is not None:
+        upload_url, upload_token = signed_upload
+    else:
+        expires, sig = sign_media_query(analysis.id, storage_key, ttl_seconds=ttl)
+        api_prefix = get_settings().api_prefix.rstrip("/")
+        upload_url = (
+            f"{base_url}{api_prefix}/analyses/{analysis.id}/video/file"
+            f"?key={storage_key}&expires={expires}&sig={sig}"
+        )
+
+    signed_read_url = build_authorized_media_url(
+        analysis.id,
+        storage_key,
+        bearer_token=bearer,
+        base_url=base_url,
+        expires_in=ttl,
+    ) or build_backend_media_url(analysis.id, storage_key, base_url=base_url, ttl_seconds=ttl)
+
     return VideoUploadUrlResponse(
-        bucket="videos",
+        bucket=DEFAULT_VIDEO_BUCKET,
         storage_key=storage_key,
-        public_url=public_url,
+        signed_url=signed_read_url,
+        upload_url=upload_url,
+        upload_token=upload_token,
+        expires_in=ttl,
+        public_url=signed_read_url,
+    )
+
+
+@router.get("/media")
+def get_signed_video_media(
+    analysis_id: str,
+    key: Annotated[str, Query()],
+    expires: Annotated[int, Query()],
+    sig: Annotated[str, Query()],
+    session: SessionDep,
+) -> Response:
+    """Sajikan video/frame secara terotorisasi setelah memverifikasi Signed URL HMAC & expiry."""
+    analysis = load_analysis_with_relations(session, analysis_id)
+    if analysis is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Analisis tidak ditemukan"
+        )
+    clean_key = extract_bucket_object_key(key, analysis_id=analysis.id)
+    if clean_key is None or not clean_key.startswith(f"{analysis.id}/"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Kunci media tidak valid."
+        )
+    if not verify_media_signature(analysis.id, clean_key, expires, sig):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Signed URL media tidak valid atau sudah kedaluwarsa.",
+        )
+
+    # 1. Cek penyimpanan lokal (upload melalui /video/file)
+    storage_candidate = (get_settings().storage_dir / DEFAULT_VIDEO_BUCKET / clean_key).resolve()
+    storage_root = (get_settings().storage_dir / DEFAULT_VIDEO_BUCKET).resolve()
+    if storage_candidate.is_relative_to(storage_root) and storage_candidate.is_file():
+        mime = mimetypes.guess_type(storage_candidate.name)[0] or "application/octet-stream"
+        return Response(
+            content=storage_candidate.read_bytes(),
+            media_type=mime,
+            headers={"Cache-Control": "private, max-age=300"},
+        )
+
+    # Cek salinan video lokal <analysis_id>.ext jika bukan subfolder frames/
+    if "/frames/" not in clean_key:
+        local_vid = find_local_video(analysis.id)
+        if local_vid is not None and local_vid.is_file():
+            mime = mimetypes.guess_type(local_vid.name)[0] or "video/mp4"
+            return Response(
+                content=local_vid.read_bytes(),
+                media_type=mime,
+                headers={"Cache-Control": "private, max-age=300"},
+            )
+
+    # 2. Ambil secara server-side dari Supabase Storage tanpa mengekspos URL publik
+    downloaded = download_supabase_object(clean_key, bucket=DEFAULT_VIDEO_BUCKET)
+    if downloaded is not None:
+        content, content_type = downloaded
+        return Response(
+            content=content,
+            media_type=content_type or mimetypes.guess_type(clean_key)[0] or "application/octet-stream",
+            headers={"Cache-Control": "private, max-age=300"},
+        )
+
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND, detail="File media tidak ditemukan."
     )
 
 
@@ -98,8 +206,10 @@ def get_video_upload_url(
 def save_video_metadata(
     analysis_id: str,
     body: VideoMetadataIn,
+    request: Request,
     session: SessionDep,
     user: CurrentUserDep,
+    authorization: Annotated[str | None, Header()] = None,
 ) -> VideoMetadataOut:
     """Simpan atau perbarui metadata video terburam serta stempel waktu kasir (F2)."""
     analysis = load_analysis_with_relations(session, analysis_id)
@@ -107,7 +217,14 @@ def save_video_metadata(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Analisis tidak ditemukan"
         )
-    return upsert_video_metadata(session, analysis, body, actor=user.id)
+    return upsert_video_metadata(
+        session,
+        analysis,
+        body,
+        actor=user.id,
+        bearer_token=extract_bearer_token(authorization),
+        base_url=str(request.base_url).rstrip("/"),
+    )
 
 
 @router.post(
@@ -116,9 +233,11 @@ def save_video_metadata(
 def complete_video_upload(
     analysis_id: str,
     body: VideoCompleteRequest,
+    request: Request,
     session: SessionDep,
     user: CurrentUserDep,
     idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+    authorization: Annotated[str | None, Header()] = None,
 ) -> VideoCompleteResponse:
     """PRD 4.4.2: Konfirmasi titik kasir (`cashier_at_s`) dan antrekan job transkrip VLM + Visual Twin 3D."""
     analysis = load_analysis_with_relations(session, analysis_id)
@@ -133,7 +252,13 @@ def complete_video_upload(
         )
     try:
         return complete_video_and_enqueue_jobs(
-            session, analysis, body, actor=user.id, idempotency_key=idempotency_key
+            session,
+            analysis,
+            body,
+            actor=user.id,
+            idempotency_key=idempotency_key,
+            bearer_token=extract_bearer_token(authorization),
+            base_url=str(request.base_url).rstrip("/"),
         )
     except LLMUnavailableError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
@@ -177,11 +302,28 @@ def processing_status(
             else None,
         )
 
+    segments_count = (
+        session.scalar(
+            select(func.count(TranscriptSegment.id)).where(
+                TranscriptSegment.analysis_id == analysis.id
+            )
+        )
+        or 0
+    )
+    if segments_count > 0:
+        return JobState(
+            job_id=f"job_proc_{analysis.id}",
+            status=JobStatus.done,
+            progress=1.0,
+            stage="Transkrip VLM siap",
+        )
+
     return JobState(
         job_id=f"job_proc_{analysis.id}",
-        status=JobStatus.done,
-        progress=1.0,
-        stage="Transkrip VLM & 3D Visual Twin siap",
+        status=JobStatus.queued,
+        progress=0.0,
+        stage="Menunggu video dikirim",
+        message="Video belum dikirim untuk diproses.",
     )
 
 

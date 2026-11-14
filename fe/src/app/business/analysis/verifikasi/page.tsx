@@ -15,6 +15,7 @@ import {
   fetchAnalysis,
   fetchTranscriptSegments,
   isAnalysisComplete,
+  resolveMediaUrl,
   updateTranscriptSegment,
 } from '@/lib/api/crud';
 import { TranscriptSegment } from '@/types/api';
@@ -31,22 +32,12 @@ function mmss(seconds: number) {
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
-function resolveFrameUrl(rawKey?: string, analysisId?: string): string | null {
-  if (!rawKey) return null;
-  if (rawKey.startsWith('http://') || rawKey.startsWith('https://') || rawKey.startsWith('data:image/')) {
-    return rawKey;
-  }
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://qqfyitqxrcufjskwaldp.supabase.co';
-  const cleanKey = rawKey.replace(/^\/+/, '');
-  if (cleanKey.includes('/')) {
-    return `${supabaseUrl}/storage/v1/object/public/videos/${cleanKey}`;
-  }
-  return `${supabaseUrl}/storage/v1/object/public/videos/${analysisId || 'frames'}/frames/${cleanKey}`;
+function resolveFrameUrl(rawKey?: string): string | null {
+  return resolveMediaUrl(rawKey);
 }
 
 function FrameProofThumbnail({
   frameKey,
-  analysisId,
   vantage,
   timestampStart,
   timestampEnd,
@@ -58,7 +49,7 @@ function FrameProofThumbnail({
   timestampEnd: number;
 }) {
   const [loadError, setLoadError] = useState(false);
-  const resolvedUrl = resolveFrameUrl(frameKey, analysisId);
+  const resolvedUrl = resolveFrameUrl(frameKey);
 
   if (resolvedUrl && !loadError) {
     return (

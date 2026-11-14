@@ -288,6 +288,13 @@ def test_dashboard_kpi_drop_off_shows_percentage_and_matches_highest_stage(clien
     kpi = dash["kpi"]
     assert kpi["drop_off_rate_text"].endswith("%")
     assert "agen" not in kpi["drop_off_rate_text"]
+    assert kpi["potential_loss_amount"] == "Belum dihitung"
+    assert dash["what_if_projection"]["revenue_lift"] == "Belum dihitung"
+    assert len(dash["recommendations"]) >= 1
+    first_rec = dash["recommendations"][0]
+    assert first_rec["cost_rp"] is not None
+    assert len(first_rec["segment_ids"]) >= 1
+    assert first_rec["affected_agents_count"] >= 1
 
     highest_stage = next(s for s in dash["funnel_stages"] if s.get("is_highest_friction"))
     expected_pct = f"{highest_stage['drop_off_rate']:.1f}".rstrip("0").rstrip(".").replace(".", ",") + "%"
@@ -298,3 +305,263 @@ def test_dashboard_kpi_drop_off_shows_percentage_and_matches_highest_stage(clien
         assert (kpi["drop_off_from_stage"], kpi["drop_off_to_stage"]) == ("Berhenti", "Masuk")
     else:
         assert (kpi["drop_off_from_stage"], kpi["drop_off_to_stage"]) == ("Masuk", "Memesan")
+
+
+def test_dashboard_aligns_main_cause_detail_and_dynamic_key_insights(client: TestClient) -> None:
+    from app.core.db import get_session
+    from app.models.entities import AgentDecisionRecord, SimulationRun
+
+    biz_res = client.post(
+        "/api/v1/businesses",
+        json={"name": "Warung Uji Selaras", "branch_name": "Utama", "category": "warung"},
+    )
+    assert biz_res.status_code == 201
+    anl_res = client.post(
+        f"/api/v1/businesses/{biz_res.json()['id']}/analyses",
+        json={"name": "Tes Selaras"},
+    )
+    assert anl_res.status_code == 201
+    anl_id = anl_res.json()["id"]
+
+    seg_res = client.post(
+        f"/api/v1/analyses/{anl_id}/transcript/segments",
+        json={
+            "timestamp_start": 0.0,
+            "timestamp_end": 15.0,
+            "vantage": "dalam",
+            "narrative": "Pengunjung masuk ke area kasir.",
+            "not_visible": "Metode bayar QRIS belum terlihat.",
+        },
+    )
+    assert seg_res.status_code == 201
+    seg_id = seg_res.json()["id"]
+
+    override_gen = app.dependency_overrides[get_session]()
+    session = next(override_gen)
+    try:
+        run = SimulationRun(
+            id="run_align",
+            analysis_id=anl_id,
+            run_type="baseline",
+            status="selesai",
+            n_agents=4,
+            succeeded_agents=4,
+        )
+        session.add(run)
+        session.flush()
+
+        # 4 agen masuk tanpa memesan (100% bocor di kasir!), mayoritas menunjuk H11 meski 2 agen menulis deciding_factor H1
+        for i in range(1, 5):
+            session.add(
+                AgentDecisionRecord(
+                    id=f"dec_align_{i}",
+                    run_id=run.id,
+                    analysis_id=anl_id,
+                    agent_id=i,
+                    batch_id=1,
+                    monologue="Masuk ke dalam tapi batal di kasir.",
+                    final_decision="masuk_tanpa_memesan",
+                    stopped_at_segment_id=seg_id,
+                    deciding_factor="Plang depan agak kecil" if i <= 2 else "Tidak ada info QRIS di kasir",
+                    factor_segment_ids=[seg_id],
+                    segment_traces=[{"segment_id": seg_id, "monologue": "Cek kasir.", "action": "berhenti"}],
+                    attributions=[
+                        {
+                            "cue_code": "H11",
+                            "direction": "menghambat",
+                            "relevance_score": 3,
+                            "evidence": "Tidak terlihat stiker QRIS saat mau membayar.",
+                        }
+                    ],
+                    primary_hypothesis_id="H11",
+                )
+            )
+        session.commit()
+    finally:
+        try:
+            next(override_gen)
+        except StopIteration:
+            pass
+
+    dash_res = client.get(f"/api/v1/analyses/{anl_id}/dashboard?require_existing=true")
+    assert dash_res.status_code == 200
+    dash = dash_res.json()
+    assert dash["kpi"]["main_cause_title"].startswith("H11 ·")
+    assert "QRIS" in dash["kpi"]["main_cause_detail"]
+    assert "Plang depan agak kecil" not in dash["kpi"]["main_cause_detail"]
+    # Insight 03 tidak boleh hardcoded type="positive" saat 0/4 agen memesan di kasir
+    assert dash["key_insights"][2]["type"] == "friction"
+    assert "Kasir" in dash["key_insights"][0]["title"] or "Dalam" in dash["key_insights"][0]["title"]
+
+
+def test_dynamic_waypoints_stage_counts_and_measurement_plan_targets(client: TestClient) -> None:
+    biz_res = client.post(
+        "/api/v1/businesses",
+        json={"name": "Kopi Lantai Satu", "branch_name": "Cabang A", "category": "kedai"},
+    )
+    assert biz_res.status_code == 201
+    anl_res = client.post(
+        f"/api/v1/businesses/{biz_res.json()['id']}/analyses",
+        json={"name": "Uji P2"},
+    )
+    assert anl_res.status_code == 201
+    anl_id = anl_res.json()["id"]
+
+    # Hanya buat segmen 'jalan' & 'dalam' (tanpa segmen 'pintu'/tangga)
+    assert (
+        client.post(
+            f"/api/v1/analyses/{anl_id}/transcript/segments",
+            json={
+                "timestamp_start": 0.0,
+                "timestamp_end": 12.0,
+                "vantage": "jalan",
+                "narrative": "Trotoar depan kedai.",
+                "not_visible": "Papan nama belum terlihat.",
+            },
+        ).status_code
+        == 201
+    )
+    assert (
+        client.post(
+            f"/api/v1/analyses/{anl_id}/transcript/segments",
+            json={
+                "timestamp_start": 12.0,
+                "timestamp_end": 25.0,
+                "vantage": "dalam",
+                "narrative": "Masuk ke meja kasir di lantai dasar.",
+                "not_visible": "Menu dan harga belum terlihat.",
+            },
+        ).status_code
+        == 201
+    )
+
+    # Panggil measurement-plan sebelum simulasi -> terbuat versi awal
+    mp_before = client.get(f"/api/v1/analyses/{anl_id}/measurement-plan")
+    assert mp_before.status_code == 200
+
+    # Jalankan simulasi mock (20 agen) lalu periksa dashboard + refresh measurement-plan
+    assert client.post(f"/api/v1/analyses/{anl_id}/simulation", json={"n_agents": 20, "seed": 42}).status_code == 202
+    dash = client.get(f"/api/v1/analyses/{anl_id}/dashboard?require_existing=true").json()
+
+    # 1. Waypoints hanya memuat 'jalan' & 'kasir' (tidak mengarang 'tangga')
+    wp_ids = [w["id"] for w in dash["waypoints"]]
+    assert wp_ids == ["jalan", "kasir"]
+    assert "tangga" not in wp_ids
+
+    # 2. WhatIfStageComparisonOut mengirim baseline_count & projected_count integer langsung
+    stages = dash["what_if_projection"]["stages_comparison"]
+    assert len(stages) == 4
+    for s in stages:
+        assert isinstance(s["baseline_count"], int)
+        assert isinstance(s["projected_count"], int)
+    assert stages[-1]["baseline_count"] == dash["what_if_projection"]["buyers_baseline"]
+    assert stages[-1]["projected_count"] == dash["what_if_projection"]["buyers_projected"]
+
+    # 3. MeasurementPlan tersinkron dengan target pasca-perbaikan (tidak terkunci statis 20, 14, 9, 7)
+    mp_after = client.get(f"/api/v1/analyses/{anl_id}/measurement-plan").json()
+    targets = [m["target_count"] for m in mp_after["metrics"]]
+    assert len(targets) == 4
+    assert targets[0] >= targets[1] >= targets[2] >= targets[3]
+    assert targets[0] == 20
+    assert targets[3] == dash["what_if_projection"]["buyers_projected"]
+
+
+def test_p3_signed_urls_processing_default_and_empty_dashboard_guard(
+    client: TestClient, tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from urllib.parse import urlparse
+
+    from app.core.config import get_settings
+    from app.core.storage import build_backend_media_url
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "storage_dir", tmp_path)
+
+    biz = client.post(
+        "/api/v1/businesses",
+        json={
+            "name": "Bakmi P3",
+            "branch_name": "Pusat",
+            "category": "kedai",
+            "address": "Jl. Merdeka 10",
+        },
+    ).json()
+    anl_id = client.post(f"/api/v1/businesses/{biz['id']}/analyses", json={}).json()["id"]
+
+    # 1. Status processing & simulation sebelum ada job / keputusan agen bukan 'done'
+    proc_before = client.get(f"/api/v1/analyses/{anl_id}/video/processing")
+    assert proc_before.status_code == 200
+    assert proc_before.json()["status"] == "queued"
+    assert proc_before.json()["progress"] == 0.0
+
+    sim_before = client.get(f"/api/v1/analyses/{anl_id}/simulation")
+    assert sim_before.status_code == 200
+    assert sim_before.json()["status"] == "queued"
+    assert sim_before.json()["progress"] == 0.0
+
+    # 2. Guard GET /dashboard tanpa require_existing=true saat decisions kosong
+    dash_empty = client.get(f"/api/v1/analyses/{anl_id}/dashboard")
+    assert dash_empty.status_code == 200
+    body_empty = dash_empty.json()
+    assert body_empty["total_agents"] == 0
+    assert body_empty["what_if_projection"] is None
+    assert body_empty["kpi"]["buyers_rate_text"] == "0 dari 0 agen simulasi"
+    assert len(body_empty["funnel_stages"]) == 4
+    assert all(s["count"] == 0 and s["percentage"] == 0.0 and not s["is_highest_friction"] for s in body_empty["funnel_stages"])
+
+    # 3. Signed URL dari upload-url, GET /video, GET /transcript, dan endpoint /video/media
+    url_res = client.post(
+        f"/api/v1/analyses/{anl_id}/video/upload-url",
+        json={"filename": "fasad_uji.mp4", "content_type": "video/mp4"},
+    )
+    assert url_res.status_code == 200
+    url_json = url_res.json()
+    assert "/storage/v1/object/public/" not in url_json["signed_url"]
+    assert "/storage/v1/object/public/" not in url_json["upload_url"]
+    assert "/storage/v1/object/public/" not in (url_json["public_url"] or "")
+    assert "sig=" in url_json["signed_url"] and "expires=" in url_json["signed_url"]
+
+    up_file = client.post(
+        f"/api/v1/analyses/{anl_id}/video/file",
+        files={"file": ("fasad_uji.mp4", b"FAKE-MP4-BYTES-P3", "video/mp4")},
+    )
+    assert up_file.status_code == 200
+    vid_meta = client.get(f"/api/v1/analyses/{anl_id}/video").json()
+    signed_media_url = vid_meta["public_url"]
+    assert signed_media_url and "/storage/v1/object/public/" not in signed_media_url
+
+    parsed = urlparse(signed_media_url)
+    media_ok = client.get(f"{parsed.path}?{parsed.query}")
+    assert media_ok.status_code == 200
+    assert media_ok.content == b"FAKE-MP4-BYTES-P3"
+
+    tampered = client.get(f"{parsed.path}?{parsed.query[:-1]}{'0' if parsed.query[-1] != '0' else '1'}")
+    assert tampered.status_code == 403
+
+    expired_url = build_backend_media_url(anl_id, f"{anl_id}/fasad_uji.mp4", ttl_seconds=-10)
+    # Bypass min clamp by overriding expires directly
+    bad_exp = client.get(
+        f"/api/v1/analyses/{anl_id}/video/media?key={anl_id}/fasad_uji.mp4&expires=1&sig=deadbeef"
+    )
+    assert bad_exp.status_code == 403
+    assert expired_url
+
+    trav = client.get(
+        f"/api/v1/analyses/{anl_id}/video/media?key=../secret.mp4&expires=9999999999&sig=deadbeef"
+    )
+    assert trav.status_code == 400
+
+    # Complete video -> job processing menjadi done & frame_keys bertanda tangan
+    assert (
+        client.post(
+            f"/api/v1/analyses/{anl_id}/video/complete",
+            json={"cashier_at_s": 30.0, "duration_s": 35.0},
+        ).status_code
+        == 202
+    )
+    assert client.get(f"/api/v1/analyses/{anl_id}/video/processing").json()["status"] == "done"
+    segs = client.get(f"/api/v1/analyses/{anl_id}/transcript").json()
+    assert segs
+    for seg in segs:
+        for fk in seg["frame_keys"]:
+            assert "/storage/v1/object/public/" not in fk

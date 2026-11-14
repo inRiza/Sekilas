@@ -116,8 +116,8 @@ function ProsesInner() {
   const twinPercent = job ? Math.round(job.progress * 100) : twinDone ? 100 : 0;
 
   const [segments, setSegments] = useState<TranscriptSegment[]>([]);
-  // Job transkrip VLM asli: dipoll sampai selesai/gagal, lalu segmennya dimuat.
-  const [transcriptJob, setTranscriptJob] = useState<ProcessingJob | null>(null);
+  // Job transkrip VLM asli: dimulai sebagai undefined sampai status pertama dari backend terbaca.
+  const [transcriptJob, setTranscriptJob] = useState<ProcessingJob | null | undefined>(undefined);
   useEffect(() => {
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -134,7 +134,7 @@ function ProsesInner() {
     };
   }, [analysisId]);
   // Backend tidak terjangkau (null) tetap memuat segmen dari cadangan lokal.
-  const transcriptReady = transcriptJob === null || transcriptJob.status === 'done';
+  const transcriptReady = transcriptJob === null || transcriptJob?.status === 'done';
   const transcriptFailed = transcriptJob?.status === 'failed';
 
   useEffect(() => {
@@ -162,7 +162,12 @@ function ProsesInner() {
   }, [shown]);
 
   const transcriptDone = transcriptReady && log.length > 0 && shown >= log.length;
-  const progress = log.length > 0 ? Math.round((shown / log.length) * 100) : 100;
+  const progress =
+    log.length > 0
+      ? Math.round((shown / log.length) * 100)
+      : transcriptJob
+        ? Math.round(transcriptJob.progress * 100)
+        : 0;
   const segmentsRead = log.slice(0, shown).filter((l) => l.kind === 'segment').length;
 
   return (

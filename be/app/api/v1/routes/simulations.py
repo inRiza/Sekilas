@@ -1,9 +1,11 @@
 """Halaman 6 Menjalankan Simulasi dan halaman 8 Jelajah Agen (F5)."""
 
 from fastapi import APIRouter, HTTPException, Query, status
+from sqlalchemy import func, select
 
 from app.core.auth import CurrentUserDep
 from app.core.db import SessionDep
+from app.models.entities import AgentDecisionRecord
 from app.schemas.common import JobState, JobStatus
 from app.schemas.simulation import AgentDecisionOut, SimulationRequest
 from app.services.crud import (
@@ -53,11 +55,27 @@ def simulation_status(
     analysis = load_analysis_with_relations(session, analysis_id)
     if analysis is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Analisis tidak ditemukan")
+    decisions_count = (
+        session.scalar(
+            select(func.count(AgentDecisionRecord.id)).where(
+                AgentDecisionRecord.analysis_id == analysis.id
+            )
+        )
+        or 0
+    )
+    if decisions_count > 0:
+        return JobState(
+            job_id=f"job_sim_{analysis.id}",
+            status=JobStatus.done,
+            progress=1.0,
+            stage=f"Simulasi {decisions_count} agen selesai",
+        )
     return JobState(
         job_id=f"job_sim_{analysis.id}",
-        status=JobStatus.done,
-        progress=1.0,
-        stage=f"Simulasi {analysis.total_agents} agen selesai",
+        status=JobStatus.queued,
+        progress=0.0,
+        stage="Menunggu simulasi agen dijalankan",
+        message="Simulasi agen belum dijalankan.",
     )
 
 

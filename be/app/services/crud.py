@@ -8,7 +8,7 @@ from uuid import uuid4
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
-from app.core.config import get_settings
+from app.core.storage import build_authorized_media_url, extract_bucket_object_key
 from app.models.entities import (
     AgentDecisionRecord,
     AuditLog,
@@ -430,28 +430,40 @@ def count_analyses_by_business(session: Session, business_ids: list[str]) -> dic
 # ============================================================================
 # F2: Video Asset CRUD
 # ============================================================================
-def _resolve_video_public_url(storage_key: str | None) -> str | None:
-    if not storage_key:
+def _resolve_video_public_url(
+    storage_key: str | None,
+    *,
+    analysis_id: str | None = None,
+    bearer_token: str | None = None,
+    base_url: str | None = None,
+) -> str | None:
+    if not storage_key or not analysis_id:
         return None
-    if storage_key.startswith(("http://", "https://")):
-        return storage_key
-    # Legacy seed placeholder keys don't exist as actual files in bucket
-    if storage_key.startswith("videos/selasar-kopi/"):
-        return None
-    base_url = get_settings().supabase_url.rstrip("/")
-    if not base_url:
-        return None
-    clean_key = storage_key.removeprefix("videos/")
-    return f"{base_url}/storage/v1/object/public/videos/{clean_key}"
+    return build_authorized_media_url(
+        analysis_id,
+        storage_key,
+        bearer_token=bearer_token,
+        base_url=base_url,
+    )
 
 
-def video_model_to_schema(video: VideoAsset) -> VideoMetadataOut:
+def video_model_to_schema(
+    video: VideoAsset,
+    *,
+    bearer_token: str | None = None,
+    base_url: str | None = None,
+) -> VideoMetadataOut:
     return VideoMetadataOut(
         id=video.id,
         analysis_id=video.analysis_id,
         original_filename=video.original_filename,
         storage_key=video.storage_key,
-        public_url=_resolve_video_public_url(video.storage_key),
+        public_url=_resolve_video_public_url(
+            video.storage_key,
+            analysis_id=video.analysis_id,
+            bearer_token=bearer_token,
+            base_url=base_url,
+        ),
         duration_s=video.duration_s,
         cashier_at_s=video.cashier_at_s,
         width=video.width,
@@ -468,6 +480,9 @@ def upsert_video_metadata(
     analysis: AnalysisModel,
     payload: VideoMetadataIn,
     actor: str = "owner",
+    *,
+    bearer_token: str | None = None,
+    base_url: str | None = None,
 ) -> VideoMetadataOut:
     stmt = select(VideoAsset).where(VideoAsset.analysis_id == analysis.id)
     video = session.scalars(stmt).first()
@@ -478,13 +493,17 @@ def upsert_video_metadata(
     )
     checks = payload.quality_checks or evaluated_checks
     accepted = payload.accepted and quality.accepted
+    normalized_key = (
+        extract_bucket_object_key(payload.storage_key, analysis_id=analysis.id)
+        or payload.storage_key
+    )
 
     if video is None:
         video = VideoAsset(
             id=f"vid_{uuid4().hex[:12]}",
             analysis_id=analysis.id,
             original_filename=payload.original_filename,
-            storage_key=payload.storage_key or f"{analysis.id}/{payload.original_filename}",
+            storage_key=normalized_key or f"{analysis.id}/{payload.original_filename}",
             duration_s=payload.duration_s,
             cashier_at_s=payload.cashier_at_s if payload.cashier_at_s is not None else payload.duration_s,
             width=payload.width or 1920,
@@ -497,8 +516,8 @@ def upsert_video_metadata(
         session.add(video)
     else:
         video.original_filename = payload.original_filename
-        if payload.storage_key:
-            video.storage_key = payload.storage_key
+        if normalized_key:
+            video.storage_key = normalized_key
         video.duration_s = payload.duration_s
         if payload.cashier_at_s is not None:
             video.cashier_at_s = payload.cashier_at_s
@@ -524,7 +543,7 @@ def upsert_video_metadata(
     )
     session.flush()
     session.commit()
-    return video_model_to_schema(video)
+    return video_model_to_schema(video, bearer_token=bearer_token, base_url=base_url)
 
 
 def _generate_contextual_segments(
@@ -565,9 +584,8 @@ def _generate_contextual_segments(
     t2 = round(end_time * 0.55, 1)
     t3 = round(end_time * 0.80, 1)
 
-    settings = get_settings()
-    base_prefix = f"{settings.supabase_url.rstrip('/')}/storage/v1/object/public/videos/{analysis.id}/frames"
-    fk = list(frame_keys or [])
+    base_prefix = f"{analysis.id}/frames"
+    fk = [extract_bucket_object_key(k, analysis_id=analysis.id, default_subdir="frames") or k for k in (frame_keys or [])]
     f1 = [fk[0]] if len(fk) >= 1 else [f"{base_prefix}/frame_01.jpg"]
     f2 = [fk[1]] if len(fk) >= 2 else (f1 if fk else [f"{base_prefix}/frame_02.jpg"])
     f3 = [fk[2]] if len(fk) >= 3 else (f2 if fk else [f"{base_prefix}/frame_03.jpg"])
@@ -651,6 +669,9 @@ def complete_video_and_enqueue_jobs(
     body: VideoCompleteRequest,
     actor: str = "owner",
     idempotency_key: str | None = None,
+    *,
+    bearer_token: str | None = None,
+    base_url: str | None = None,
 ) -> VideoCompleteResponse:
     """PRD 4.4.2: Kirim cashier_at_s, simpan video, dan antrekan job transkrip + 3D paralel."""
     stmt = select(VideoAsset).where(VideoAsset.analysis_id == analysis.id)
@@ -671,7 +692,14 @@ def complete_video_and_enqueue_jobs(
         if body.blurred_plates_count is not None
         else (existing.blurred_plates_count if existing else 0),
     )
-    video_out = upsert_video_metadata(session, analysis, meta_in, actor=actor)
+    video_out = upsert_video_metadata(
+        session,
+        analysis,
+        meta_in,
+        actor=actor,
+        bearer_token=bearer_token,
+        base_url=base_url,
+    )
 
     transcript_job = JobRecord(
         id=f"job_tr_{uuid4().hex[:10]}",
@@ -728,21 +756,32 @@ def complete_video_and_enqueue_jobs(
 # ============================================================================
 # F3 & F4: Transcript Segment CRUD + AuditLog + Stale Marking
 # ============================================================================
-def resolve_frame_public_url(frame_key: str, analysis_id: str) -> str:
-    """Konversi storage key atau filename relatif menjadi URL publik Supabase Storage."""
+def resolve_frame_public_url(
+    frame_key: str,
+    analysis_id: str,
+    *,
+    bearer_token: str | None = None,
+    base_url: str | None = None,
+) -> str:
+    """Konversi storage key atau filename relatif menjadi Signed URL berotorisasi."""
     if not frame_key:
         return ""
-    if frame_key.startswith(("http://", "https://", "data:image/")):
-        return frame_key
-    settings = get_settings()
-    base = settings.supabase_url.rstrip("/")
-    clean = frame_key.lstrip("/")
-    if "/" in clean:
-        return f"{base}/storage/v1/object/public/videos/{clean}"
-    return f"{base}/storage/v1/object/public/videos/{analysis_id}/frames/{clean}"
+    resolved = build_authorized_media_url(
+        analysis_id,
+        frame_key,
+        bearer_token=bearer_token,
+        base_url=base_url,
+        default_subdir="frames",
+    )
+    return resolved or ""
 
 
-def segment_model_to_schema(seg: TranscriptSegment) -> TranscriptSegmentOut:
+def segment_model_to_schema(
+    seg: TranscriptSegment,
+    *,
+    bearer_token: str | None = None,
+    base_url: str | None = None,
+) -> TranscriptSegmentOut:
     pose = None
     if isinstance(seg.camera_pose, dict):
         pos = seg.camera_pose.get("position")
@@ -756,8 +795,16 @@ def segment_model_to_schema(seg: TranscriptSegment) -> TranscriptSegmentOut:
     vantage = seg.vantage if seg.vantage in ("jalan", "pintu", "dalam") else "jalan"
     conf = seg.confidence if seg.confidence in ("stabil", "tidak_pasti") else "stabil"
     resolved_frames = [
-        resolve_frame_public_url(k, seg.analysis_id) for k in (seg.frame_keys or []) if k
+        resolve_frame_public_url(
+            k,
+            seg.analysis_id,
+            bearer_token=bearer_token,
+            base_url=base_url,
+        )
+        for k in (seg.frame_keys or [])
+        if k
     ]
+    resolved_frames = [f for f in resolved_frames if f]
     return TranscriptSegmentOut(
         id=seg.id,
         timestamp_start=seg.timestamp_start,
@@ -784,7 +831,13 @@ def mark_transcript_changed(analysis: AnalysisModel) -> None:
         analysis.stale_reasons = reasons
 
 
-def list_transcript_segments(session: Session, analysis_id: str) -> list[TranscriptSegmentOut]:
+def list_transcript_segments(
+    session: Session,
+    analysis_id: str,
+    *,
+    bearer_token: str | None = None,
+    base_url: str | None = None,
+) -> list[TranscriptSegmentOut]:
     stmt = (
         select(TranscriptSegment)
         .where(TranscriptSegment.analysis_id == analysis_id)
@@ -807,7 +860,10 @@ def list_transcript_segments(session: Session, analysis_id: str) -> list[Transcr
             session.flush()
             session.commit()
             rows = seeded
-    return [segment_model_to_schema(r) for r in rows]
+    return [
+        segment_model_to_schema(r, bearer_token=bearer_token, base_url=base_url)
+        for r in rows
+    ]
 
 
 def create_transcript_segment(
@@ -1099,6 +1155,11 @@ def run_simulation_for_analysis(
         target_seg = seg_map.get(rec.segment_ids[0]) if rec.segment_ids else segs[0]
         time_str = _mmss(target_seg.timestamp_start) if target_seg else "00:00"
         impact_lbl = "Tinggi" if rec.impact_score >= 18 else ("Sedang" if rec.impact_score >= 9 else "Rendah")
+        est_lift_agents = (
+            min(rec.affected_agents_count, max(1, round(rec.affected_agents_count * rec.efficacy)))
+            if rec.affected_agents_count > 0
+            else max(1, round(rec.efficacy * 6))
+        )
         session.add(
             RecommendationItem(
                 id=f"rec_{analysis.id}_{rank_idx}",
@@ -1112,8 +1173,14 @@ def run_simulation_for_analysis(
                 description=rec.description,
                 impact=impact_lbl,
                 effort=rec.effort,
-                estimated_lift_range=f"+{max(1, round(rec.efficacy * 6))} dari {total} agen",
+                share=rec.share_pct,
+                lift=rec.lift,
+                estimated_lift_range=f"+{est_lift_agents} dari {total} agen",
+                cost_min_rp=rec.cost_rp,
+                cost_max_rp=rec.cost_rp,
                 location_zone=f"{(target_seg.vantage if target_seg else 'jalan').title()} (Detik {time_str})",
+                segment_ids=list(rec.segment_ids),
+                quote_agent_ids=list(rec.quote_agent_ids),
             )
         )
 
@@ -1136,6 +1203,8 @@ def list_agent_decisions_for_analysis(
     analysis_id: str,
     final_decision: str | None = None,
     segment: str | None = None,
+    *,
+    auto_simulate: bool = False,
 ) -> list[AgentDecisionOut]:
     dec_stmt = (
         select(AgentDecisionRecord)
@@ -1144,8 +1213,8 @@ def list_agent_decisions_for_analysis(
     )
     all_decisions = list(session.scalars(dec_stmt).all())
 
-    # Jika analisis belum punya record keputusan agen sama sekali, jalankan simulasi otomatis
-    if not all_decisions:
+    # Hanya jalankan simulasi otomatis bila diminta secara eksplisit (GET read path tidak boleh memfabrikasi data)
+    if not all_decisions and auto_simulate:
         analysis = load_analysis_with_relations(session, analysis_id)
         if analysis is not None:
             return run_simulation_for_analysis(
@@ -1245,16 +1314,20 @@ def compute_what_if_projection(
     from app.services.simulation.runner import AgentRunResult, SegmentInput
 
     biz = analysis.business
+    ctx = analysis.context
     bname = (
         biz.name
         if biz is not None
-        else (analysis.context.business_name if analysis.context is not None else analysis.name)
+        else (ctx.business_name if ctx is not None else analysis.name)
     )
+    btype = ctx.business_type if ctx and ctx.business_type else "usaha kuliner"
+    loc_desc = (ctx.location_description if ctx and ctx.location_description else "") or f"fasad depan {bname}"
     total = max(1, analysis.total_agents or 20)
     menus = list(analysis.menu_items or [])
-    avg_ticket = round(sum(m.price for m in menus) / len(menus)) if menus else 20000
+    avg_ticket = round(sum(m.price for m in menus) / len(menus)) if menus else None
 
-    active_ids = set(checked_ids) if checked_ids is not None else {r.id for r in recommendations}
+    priority_ids = {r.id for r in recommendations if r.priority_tag == "Prioritas"}
+    active_ids = set(checked_ids) if checked_ids is not None else (priority_ids or {r.id for r in recommendations})
     checked_recs = [r for r in recommendations if r.id in active_ids]
     rec_row_by_id = {r.id: r for r in (rec_rows or [])}
 
@@ -1271,6 +1344,11 @@ def compute_what_if_projection(
 
     low_accuracy = False
     active_mode = "estimasi_cepat"
+
+    base_stop_cnt = s_stop.count if s_stop else round(total * base_stop_pct / 100)
+    base_enter_cnt = s_enter.count if s_enter else round(total * base_enter_pct / 100)
+    proj_stop_cnt = base_stop_cnt
+    proj_enter_cnt = base_enter_cnt
 
     if decisions and segments:
         seg_inputs = [
@@ -1292,12 +1370,16 @@ def compute_what_if_projection(
             )
             for d in decisions
         ]
+        valid_seg_ids = {s.id for s in segments}
         checked_actions: list[tuple[str, list[str]]] = []
         for r in checked_recs:
             row = rec_row_by_id.get(r.id)
             action_id = row.action_id if row else "A8.1"
-            target_sids = [s.id for s in segments if s.vantage in r.location_zone.lower()] or (
-                [segments[0].id] if segments else []
+            stored_sids = [sid for sid in (row.segment_ids or []) if sid in valid_seg_ids] if row else []
+            target_sids = (
+                stored_sids
+                or [s.id for s in segments if s.vantage in r.location_zone.lower()]
+                or ([segments[0].id] if segments else [])
             )
             checked_actions.append((action_id, target_sids))
 
@@ -1319,14 +1401,16 @@ def compute_what_if_projection(
                 personas=persona_specs,
                 segments=seg_inputs,
                 baseline_results=baseline_runs,
-                business_summary=f"{bname}",
+                business_summary=f"{bname} ({btype}), berlokasi di {loc_desc}.",
                 checked_actions=[(aid, sids, None) for aid, sids in checked_actions],
                 batch_size=10,
                 seed=persona_specs[0].seed if persona_specs else 42,
             )
             buyers_proj = verified.buyers_verified_count
-            proj_stop_pct = round((verified.stage_verified_counts["tertarik"] / total) * 100)
-            proj_enter_pct = round((verified.stage_verified_counts["masuk"] / total) * 100)
+            proj_stop_cnt = verified.stage_verified_counts["tertarik"]
+            proj_enter_cnt = verified.stage_verified_counts["masuk"]
+            proj_stop_pct = round((proj_stop_cnt / total) * 100)
+            proj_enter_pct = round((proj_enter_cnt / total) * 100)
             proj_order_pct = round((buyers_proj / total) * 100)
             total_cost_rp = sum(
                 ACTION_BY_ID[aid].cost_rp for aid, _ in checked_actions if aid in ACTION_BY_ID
@@ -1340,8 +1424,10 @@ def compute_what_if_projection(
                 checked_actions=checked_actions,
             )
             buyers_proj = quick.buyers_projected_count
-            proj_stop_pct = round((quick.stage_projected_counts["tertarik"] / total) * 100)
-            proj_enter_pct = round((quick.stage_projected_counts["masuk"] / total) * 100)
+            proj_stop_cnt = quick.stage_projected_counts["tertarik"]
+            proj_enter_cnt = quick.stage_projected_counts["masuk"]
+            proj_stop_pct = round((proj_stop_cnt / total) * 100)
+            proj_enter_pct = round((proj_enter_cnt / total) * 100)
             proj_order_pct = round((buyers_proj / total) * 100)
             total_cost_rp = quick.total_cost_rp
             low_accuracy = quick.low_accuracy_early_edit
@@ -1358,20 +1444,18 @@ def compute_what_if_projection(
     highest_drop = max((s.drop_off_rate for s in funnel_stages[:3]), default=50.0)
     proj_drop = max(10.0, highest_drop - max(0, proj_order_pct - base_order_pct) * 0.9)
 
-    daily_visitors = (analysis.context.daily_visitors if analysis.context and analysis.context.daily_visitors else None) or 60
-    extra_daily_buyers = max(0, round(daily_visitors * ((buyers_proj - buyers_base) / total)))
-    daily_rev_lift = extra_daily_buyers * avg_ticket
-    rev_lift_str = f"+{_format_rp_short(daily_rev_lift).replace('Rp ', '')}" if daily_rev_lift > 0 else "Rp 0"
+    daily_visitors = ctx.daily_visitors if ctx and ctx.daily_visitors else None
+    if daily_visitors and avg_ticket:
+        extra_daily_buyers = max(0, round(daily_visitors * ((buyers_proj - buyers_base) / total)))
+        daily_rev_lift = extra_daily_buyers * avg_ticket
+        rev_lift_str = f"+{_format_rp_short(daily_rev_lift).replace('Rp ', '')}" if daily_rev_lift > 0 else "Rp 0"
+    else:
+        rev_lift_str = "Belum dihitung"
     cost_str = _format_rp_short(total_cost_rp) if total_cost_rp > 0 else "Rp 0"
 
     def _delta(base: int, proj: int) -> str:
         diff = proj - base
         return "Tetap" if diff <= 0 else f"+{diff} dari {total} agen"
-
-    base_stop_cnt = s_stop.count if s_stop else round(total * base_stop_pct / 100)
-    base_enter_cnt = s_enter.count if s_enter else round(total * base_enter_pct / 100)
-    proj_stop_cnt = round(total * proj_stop_pct / 100)
-    proj_enter_cnt = round(total * proj_enter_pct / 100)
 
     stages_comp = [
         WhatIfStageComparisonOut(
@@ -1380,6 +1464,8 @@ def compute_what_if_projection(
             baseline_pct=base_see_pct,
             projected_pct=proj_see_pct,
             delta_label="Tetap",
+            baseline_count=total,
+            projected_count=total,
         ),
         WhatIfStageComparisonOut(
             id="tertarik",
@@ -1387,6 +1473,8 @@ def compute_what_if_projection(
             baseline_pct=base_stop_pct,
             projected_pct=proj_stop_pct,
             delta_label=_delta(base_stop_cnt, proj_stop_cnt),
+            baseline_count=base_stop_cnt,
+            projected_count=proj_stop_cnt,
         ),
         WhatIfStageComparisonOut(
             id="masuk",
@@ -1394,6 +1482,8 @@ def compute_what_if_projection(
             baseline_pct=base_enter_pct,
             projected_pct=proj_enter_pct,
             delta_label=_delta(base_enter_cnt, proj_enter_cnt),
+            baseline_count=base_enter_cnt,
+            projected_count=proj_enter_cnt,
         ),
         WhatIfStageComparisonOut(
             id="memesan",
@@ -1401,6 +1491,8 @@ def compute_what_if_projection(
             baseline_pct=base_order_pct,
             projected_pct=proj_order_pct,
             delta_label=_delta(buyers_base, buyers_proj),
+            baseline_count=buyers_base,
+            projected_count=buyers_proj,
         ),
     ]
 
@@ -1437,6 +1529,301 @@ def compute_what_if_projection(
     )
 
 
+def _format_pct_id(pct: float) -> str:
+    txt = f"{pct:.1f}".rstrip("0").rstrip(".")
+    return f"{txt.replace('.', ',')}%"
+
+
+def _resolve_top_cue_detail(
+    top_cue: Any,
+    non_buyers: list[AgentDecisionOut],
+    business_name: str,
+) -> str:
+    """Bangun penjelasan detail KPI 'Penyebab utama batal' yang konsisten dengan top_cue."""
+    if top_cue is not None:
+        affected_ids = set(top_cue.affected_agent_ids or [])
+        matching = [
+            d
+            for d in non_buyers
+            if (d.agent_id in affected_ids)
+            or any(
+                a.cue_code == top_cue.cue_code and a.direction == "menghambat" and a.relevance_score > 0
+                for a in (d.attributions or [])
+            )
+        ]
+        quote = next((q.strip() for q in (top_cue.sample_quotes or []) if q and q.strip()), "")
+        if quote:
+            return f'Sering muncul pada {top_cue.affected_agents_count} agen ({top_cue.cue_code}): "{quote}"'
+        matching_factors = Counter(d.deciding_factor for d in matching if d.deciding_factor)
+        if matching_factors:
+            return matching_factors.most_common(1)[0][0]
+        return f"{top_cue.title} memengaruhi {top_cue.affected_agents_count} dari {top_cue.total_non_buyers} agen batal."
+
+    factor_counts = Counter(d.deciding_factor for d in non_buyers if d.deciding_factor)
+    return factor_counts.most_common(1)[0][0] if factor_counts else f"Tidak ada hambatan dominan di {business_name}."
+
+
+def _build_dynamic_key_insights(
+    *,
+    analysis_id: str,
+    business_name: str,
+    total_agents: int,
+    lewat_cnt: int,
+    berhenti_cnt: int,
+    berhenti_pergi_cnt: int,
+    masuk_cnt: int,
+    masuk_tanpa_cnt: int,
+    memesan_cnt: int,
+    r_lewat: float,
+    r_berhenti: float,
+    r_masuk: float,
+    top_from: str,
+    non_h0_cues: list[Any],
+    top_cause_detail: str,
+) -> list[KeyInsightOut]:
+    """Susun 3 temuan utama secara dinamis berdasarkan titik bocor tertinggi, isyarat terkuat, dan konversi kasir."""
+    total_lost = lewat_cnt + berhenti_pergi_cnt + masuk_tanpa_cnt
+    if total_lost == 0:
+        ins1 = KeyInsightOut(
+            id=f"ins_{analysis_id}_1",
+            number="01",
+            type="positive",
+            title=f"Konversi Penuh di {business_name} ({memesan_cnt} dari {total_agents} agen)",
+            description=(
+                f"Seluruh {total_agents} agen melewati area depan, pintu, dan kasir {business_name} "
+                "hingga memesan tanpa hambatan berarti."
+            ),
+        )
+    elif top_from == "Melihat":
+        ins1 = KeyInsightOut(
+            id=f"ins_{analysis_id}_1",
+            number="01",
+            type="friction",
+            title=f"Kebocoran Terbesar di Jalur Jalan ({lewat_cnt} dari {total_agents} agen lewat)",
+            description=(
+                f"{_format_pct_id(r_lewat)} agen langsung melewati {business_name} dari trotoar sebelum sempat berhenti. "
+                f"{top_cause_detail}"
+            ),
+        )
+    elif top_from == "Berhenti":
+        ins1 = KeyInsightOut(
+            id=f"ins_{analysis_id}_1",
+            number="01",
+            type="friction",
+            title=f"Kebocoran Terbesar di Akses Masuk ({berhenti_pergi_cnt} dari {berhenti_cnt} agen batal)",
+            description=(
+                f"Dari {berhenti_cnt} agen yang sempat berhenti mengamati {business_name}, "
+                f"{berhenti_pergi_cnt} agen ({_format_pct_id(r_berhenti)}) urung masuk. {top_cause_detail}"
+            ),
+        )
+    else:
+        ins1 = KeyInsightOut(
+            id=f"ins_{analysis_id}_1",
+            number="01",
+            type="friction",
+            title=f"Kebocoran Terbesar di Area Dalam/Kasir ({masuk_tanpa_cnt} dari {masuk_cnt} agen batal)",
+            description=(
+                f"Dari {masuk_cnt} agen yang sudah masuk ke {business_name}, "
+                f"{masuk_tanpa_cnt} agen ({_format_pct_id(r_masuk)}) batal memesan di kasir. {top_cause_detail}"
+            ),
+        )
+
+    if len(non_h0_cues) >= 2:
+        c1, c2 = non_h0_cues[0], non_h0_cues[1]
+        q_hint = f' Contoh reaksi: "{c1.sample_quotes[0][:90]}".' if c1.sample_quotes else ""
+        ins2 = KeyInsightOut(
+            id=f"ins_{analysis_id}_2",
+            number="02",
+            type="friction",
+            title=f"Pemicu Dominan: {c1.cue_code} ({c1.share_pct:g}%) & {c2.cue_code} ({c2.share_pct:g}%)",
+            description=(
+                f"{c1.title} memengaruhi {c1.affected_agents_count}/{c1.total_non_buyers} agen batal "
+                f"(Lift {c1.lift}x), diikuti {c2.title.lower()} ({c2.affected_agents_count} agen).{q_hint}"
+            ),
+        )
+    elif len(non_h0_cues) == 1:
+        c1 = non_h0_cues[0]
+        ins2 = KeyInsightOut(
+            id=f"ins_{analysis_id}_2",
+            number="02",
+            type="friction",
+            title=f"Faktor Tunggal Terkuat: {c1.cue_code} ({c1.share_pct:g}% porsi)",
+            description=f"{c1.title}. {top_cause_detail}",
+        )
+    else:
+        ins2 = KeyInsightOut(
+            id=f"ins_{analysis_id}_2",
+            number="02",
+            type="positive",
+            title=f"Daya Tarik Fasad dari Jalan ({berhenti_cnt} dari {total_agents} agen berhenti)",
+            description=f"{berhenti_cnt} dari {total_agents} agen berhenti memperhatikan {business_name} dari arah jalan.",
+        )
+
+    if masuk_cnt == 0:
+        ins3 = KeyInsightOut(
+            id=f"ins_{analysis_id}_3",
+            number="03",
+            type="friction",
+            title=f"Belum Ada Agen Mencapai Kasir (0 dari {total_agents} agen)",
+            description=(
+                f"Seluruh {total_agents} agen tertahan di area jalan atau pintu {business_name}; "
+                "perkuat tampilan luar terlebih dulu sebelum menguji konversi kasir."
+            ),
+        )
+    elif r_masuk < 40.0:
+        conv_pct = _format_pct_id(round((memesan_cnt / max(masuk_cnt, 1)) * 100, 1))
+        ins3 = KeyInsightOut(
+            id=f"ins_{analysis_id}_3",
+            number="03",
+            type="positive",
+            title=f"Konversi Area Kasir Baik ({memesan_cnt} dari {masuk_cnt} agen memesan)",
+            description=(
+                f"Begitu melewati pintu masuk {business_name}, {conv_pct} pengunjung bertahan hingga memesan; "
+                "hambatan terbesar bukan berada di area kasir."
+            ),
+        )
+    else:
+        conv_pct = _format_pct_id(round((memesan_cnt / max(masuk_cnt, 1)) * 100, 1))
+        ins3 = KeyInsightOut(
+            id=f"ins_{analysis_id}_3",
+            number="03",
+            type="friction",
+            title=f"Friksi di Area Dalam/Kasir ({masuk_tanpa_cnt} dari {masuk_cnt} agen batal)",
+            description=(
+                f"Hanya {memesan_cnt} dari {masuk_cnt} agen yang masuk jadi memesan ({conv_pct}); "
+                "perjelas alur pesan, keterbacaan menu/harga, antrean, atau info bayar non-tunai."
+            ),
+        )
+
+    return [ins1, ins2, ins3]
+
+
+def _build_dynamic_waypoints(
+    *,
+    business_name: str,
+    segs: list[TranscriptSegment],
+    checkpoints: list[TranscriptCheckpoint],
+    decisions: list[AgentDecisionRecord],
+    total_agents: int,
+    lewat_cnt: int,
+    r_lewat: float,
+    r_berhenti: float,
+    r_masuk: float,
+    max_drop: float,
+) -> list[WaypointOut]:
+    """Bangun titik pantau (waypoints) dinamis sesuai zona/vantage dan titik henti nyata di transkrip."""
+    if not segs:
+        return []
+
+    stops_per_seg = Counter(d.stopped_at_segment_id for d in decisions if d.stopped_at_segment_id)
+    seg_by_id = {s.id: s for s in segs}
+
+    def _pick_zone_seg(vantage: str) -> TranscriptSegment | None:
+        cands = [s for s in segs if s.vantage == vantage]
+        if not cands:
+            return None
+        return max(cands, key=lambda s: (stops_per_seg.get(s.id, 0), -s.timestamp_start))
+
+    present_vantages = list(
+        dict.fromkeys(s.vantage for s in segs if s.vantage in ("jalan", "pintu", "dalam"))
+    )
+    waypoints: list[WaypointOut] = []
+    used_seg_ids: set[str] = set()
+    zone_stop_counts: dict[str, int] = {}
+
+    for vantage in present_vantages:
+        seg = _pick_zone_seg(vantage)
+        if seg is None:
+            continue
+        used_seg_ids.add(seg.id)
+        if vantage == "jalan":
+            wp_id = "jalan"
+            waypoints.append(
+                WaypointOut(
+                    id=wp_id,
+                    time=_mmss(seg.timestamp_start),
+                    name=f"Jalur Jalan Depan {business_name}",
+                    status=(
+                        f"{round(100 - r_lewat, 1):g}% menoleh · {lewat_cnt}/{total_agents} lewat"
+                        if total_agents > 0
+                        else "Menunggu simulasi agen"
+                    ),
+                    is_hotspot=(max_drop > 0 and r_lewat == max_drop and r_lewat > r_berhenti and r_lewat > r_masuk),
+                )
+            )
+            zone_stop_counts[wp_id] = sum(stops_per_seg.get(s.id, 0) for s in segs if s.vantage == "jalan")
+        elif vantage == "pintu":
+            has_stairs = any(
+                "tangga" in f"{s.narrative} {s.not_visible}".lower() for s in segs if s.vantage == "pintu"
+            )
+            wp_id = "tangga" if has_stairs else "pintu"
+            wp_name = (
+                f"Akses Tangga & Pintu {business_name}" if has_stairs else f"Akses Pintu Masuk {business_name}"
+            )
+            waypoints.append(
+                WaypointOut(
+                    id=wp_id,
+                    time=_mmss(seg.timestamp_start),
+                    name=wp_name,
+                    status=f"{r_berhenti:g}% batal masuk" if total_agents > 0 else "Menunggu simulasi agen",
+                    is_hotspot=(max_drop > 0 and r_berhenti == max_drop and r_berhenti >= r_lewat and r_berhenti > r_masuk),
+                )
+            )
+            zone_stop_counts[wp_id] = sum(stops_per_seg.get(s.id, 0) for s in segs if s.vantage == "pintu")
+        elif vantage == "dalam":
+            # Sisipkan titik menu jika checkpoint menandakan segmen menu tersendiri sebelum kasir
+            menu_cp = next(
+                (
+                    cp
+                    for cp in checkpoints
+                    if cp.kind == "menu_dan_harga"
+                    and cp.segment_id
+                    and cp.segment_id in seg_by_id
+                    and cp.segment_id not in used_seg_ids
+                    and cp.segment_id != seg.id
+                ),
+                None,
+            )
+            if menu_cp is not None and menu_cp.segment_id is not None and len(waypoints) < 3:
+                mseg = seg_by_id[menu_cp.segment_id]
+                used_seg_ids.add(mseg.id)
+                menu_hits = stops_per_seg.get(mseg.id, 0)
+                waypoints.append(
+                    WaypointOut(
+                        id="menu",
+                        time=_mmss(mseg.timestamp_start),
+                        name=f"Area Menu & Harga {business_name}",
+                        status=(
+                            f"{menu_hits} agen berhenti di sini"
+                            if total_agents > 0
+                            else "Menunggu simulasi agen"
+                        ),
+                        is_hotspot=False,
+                    )
+                )
+                zone_stop_counts["menu"] = menu_hits
+
+            wp_id = "kasir"
+            waypoints.append(
+                WaypointOut(
+                    id=wp_id,
+                    time=_mmss(seg.timestamp_start),
+                    name=f"Titik Pesan / Kasir {business_name}",
+                    status=f"{round(100 - r_masuk, 1):g}% memesan" if total_agents > 0 else "Menunggu simulasi agen",
+                    is_hotspot=(max_drop > 0 and r_masuk == max_drop and r_masuk >= r_lewat and r_masuk >= r_berhenti),
+                )
+            )
+            zone_stop_counts[wp_id] = sum(stops_per_seg.get(s.id, 0) for s in segs if s.vantage == "dalam")
+
+    if max_drop > 0 and waypoints and not any(w.is_hotspot for w in waypoints):
+        top_wp = max(waypoints, key=lambda w: zone_stop_counts.get(w.id, 0))
+        waypoints = [
+            w.model_copy(update={"is_hotspot": w.id == top_wp.id})
+            for w in waypoints
+        ]
+    return waypoints
+
+
 def build_dashboard_data(
     session: Session,
     analysis: AnalysisModel,
@@ -1451,9 +1838,9 @@ def build_dashboard_data(
     )
     branch_name = biz.branch_name if biz is not None else "Pusat"
 
-    # Pastikan keputusan agen tersedia (jalankan simulasi otomatis bila belum ada)
+    # Ambil keputusan agen nyata dari DB (tanpa memfabrikasi angka saat simulasi belum ada)
     decisions = list_agent_decisions_for_analysis(session, analysis.id)
-    total_agents = len(decisions) or (analysis.total_agents or 20)
+    total_agents = len(decisions)
 
     # Ambil segmen transkrip untuk penentuan titik pantau (waypoints) dan lokasi gesekan
     segs = list(
@@ -1461,6 +1848,13 @@ def build_dashboard_data(
             select(TranscriptSegment)
             .where(TranscriptSegment.analysis_id == analysis.id)
             .order_by(TranscriptSegment.timestamp_start.asc())
+        ).all()
+    )
+    checkpoints = list(
+        session.scalars(
+            select(TranscriptCheckpoint)
+            .where(TranscriptCheckpoint.analysis_id == analysis.id)
+            .order_by(TranscriptCheckpoint.timestamp_s.asc())
         ).all()
     )
     vid = session.scalars(select(VideoAsset).where(VideoAsset.analysis_id == analysis.id)).first()
@@ -1486,39 +1880,56 @@ def build_dashboard_data(
             id="melihat",
             name="1. Melihat Toko",
             count=total_agents,
-            percentage=100.0,
+            percentage=100.0 if total_agents > 0 else 0.0,
             drop_off_count=lewat_cnt,
             drop_off_rate=r_lewat,
-            is_highest_friction=(r_lewat == max_drop and r_lewat > r_berhenti and r_lewat > r_masuk),
+            is_highest_friction=(
+                total_agents > 0
+                and r_lewat == max_drop
+                and r_lewat > r_berhenti
+                and r_lewat > r_masuk
+            ),
         ),
         FunnelStageDataOut(
             id="berhenti",
             name="2. Berhenti Sejenak",
             count=berhenti_cnt,
-            percentage=round((berhenti_cnt / max(total_agents, 1)) * 100, 1),
+            percentage=round((berhenti_cnt / total_agents) * 100, 1) if total_agents > 0 else 0.0,
             drop_off_count=berhenti_pergi_cnt,
             drop_off_rate=r_berhenti,
-            is_highest_friction=(r_berhenti == max_drop and r_berhenti >= r_lewat and r_berhenti > r_masuk),
+            is_highest_friction=(
+                total_agents > 0
+                and r_berhenti == max_drop
+                and r_berhenti >= r_lewat
+                and r_berhenti > r_masuk
+            ),
         ),
         FunnelStageDataOut(
             id="masuk",
             name="3. Masuk ke Dalam",
             count=masuk_cnt,
-            percentage=round((masuk_cnt / max(total_agents, 1)) * 100, 1),
+            percentage=round((masuk_cnt / total_agents) * 100, 1) if total_agents > 0 else 0.0,
             drop_off_count=masuk_tanpa_cnt,
             drop_off_rate=r_masuk,
-            is_highest_friction=(r_masuk == max_drop and r_masuk >= r_lewat and r_masuk >= r_berhenti),
+            is_highest_friction=(
+                total_agents > 0
+                and r_masuk == max_drop
+                and r_masuk >= r_lewat
+                and r_masuk >= r_berhenti
+            ),
         ),
         FunnelStageDataOut(
             id="memesan",
             name="4. Jadi Memesan",
             count=memesan_cnt,
-            percentage=round((memesan_cnt / max(total_agents, 1)) * 100, 1),
+            percentage=round((memesan_cnt / total_agents) * 100, 1) if total_agents > 0 else 0.0,
             drop_off_count=0,
             drop_off_rate=0.0,
             is_highest_friction=False,
         ),
     ]
+
+    from app.services.simulation.catalog import ACTION_BY_ID
 
     # Recommendations from DB
     rec_stmt = (
@@ -1538,6 +1949,13 @@ def build_dashboard_data(
             effort=r.effort,
             estimated_lift_range=r.estimated_lift_range,
             location_zone=r.location_zone,
+            cost_rp=(
+                r.cost_min_rp
+                if r.cost_min_rp is not None
+                else (ACTION_BY_ID[r.action_id].cost_rp if r.action_id in ACTION_BY_ID else None)
+            ),
+            segment_ids=list(r.segment_ids or []),
+            affected_agents_count=len(r.quote_agent_ids or []),
         )
         for r in rec_rows
     ]
@@ -1558,7 +1976,7 @@ def build_dashboard_data(
     else:
         twin_meta = None  # Visual Twin belum dibangun; dasbor tidak mengarang metrik 3D.
 
-    # Waypoints dinamis dari segmen transkrip
+    # Waypoints dinamis dari struktur segmen & checkpoint transkrip nyata
     seg_jalan = next((s for s in segs if s.vantage == "jalan"), segs[0] if segs else None)
     seg_pintu = next((s for s in segs if s.vantage == "pintu"), segs[min(1, len(segs) - 1)] if segs else None)
     seg_dalam = next((s for s in segs if s.vantage == "dalam"), segs[-1] if segs else None)
@@ -1567,31 +1985,70 @@ def build_dashboard_data(
     t_pintu = _mmss(seg_pintu.timestamp_start if seg_pintu else duration_s * 0.35)
     t_dalam = _mmss(seg_dalam.timestamp_end if seg_dalam else duration_s)
 
-    waypoints = [
-        WaypointOut(
-            id="jalan",
-            time=t_jalan,
-            name=f"Jalur Jalan Depan {business_name}",
-            status=f"{round(100 - r_lewat, 1):g}% menoleh",
-            is_hotspot=(r_lewat == max_drop and r_lewat > r_berhenti and r_lewat > r_masuk),
-        ),
-        WaypointOut(
-            id="tangga",
-            time=t_pintu,
-            name=f"Akses Masuk {business_name}",
-            status=f"{r_berhenti:g}% bocor",
-            is_hotspot=(r_berhenti == max_drop and r_berhenti >= r_lewat and r_berhenti > r_masuk),
-        ),
-        WaypointOut(
-            id="kasir",
-            time=t_dalam,
-            name=f"Titik Pesan / Kasir {business_name}",
-            status=f"{round(100 - r_masuk, 1):g}% memesan",
-            is_hotspot=(r_masuk == max_drop and r_masuk >= r_lewat and r_masuk >= r_berhenti),
-        ),
-    ]
+    waypoints = _build_dynamic_waypoints(
+        business_name=business_name,
+        segs=segs,
+        checkpoints=checkpoints,
+        decisions=decisions,
+        total_agents=total_agents,
+        lewat_cnt=lewat_cnt,
+        r_lewat=r_lewat,
+        r_berhenti=r_berhenti,
+        r_masuk=r_masuk,
+        max_drop=max_drop,
+    )
 
-    # Agregasi faktor penyebab batal tertinggi dari Katalog Isyarat (H1-H10)
+    if total_agents == 0:
+        return DashboardDataOut(
+            analysis_id=analysis.id,
+            business_id=analysis.business_id,
+            business_name=business_name,
+            branch_name=branch_name,
+            created_at=analysis.created_at.isoformat()
+            if hasattr(analysis.created_at, "isoformat")
+            else str(analysis.created_at),
+            total_agents=0,
+            is_stale=bool(analysis.stale),
+            kpi=DashboardKpiOut(
+                buyers_count=0,
+                buyers_rate_text="0 dari 0 agen simulasi",
+                buyers_description=(
+                    f"Belum ada hasil simulasi agen untuk {business_name}. Jalankan simulasi terlebih dahulu."
+                ),
+                drop_off_rate_text="0%",
+                drop_off_from_stage="Melihat",
+                drop_off_to_stage="Berhenti",
+                drop_off_location="Belum disimulasikan",
+                drop_off_description="Simulasi agen belum dijalankan; belum ada data penurunan pelanggan.",
+                main_cause_title="Simulasi agen belum dijalankan",
+                main_cause_cue_rank="Belum ada peringkat",
+                main_cause_detail=(
+                    "Jalankan simulasi agen terlebih dahulu untuk mengidentifikasi faktor pembatalan pelanggan."
+                ),
+                potential_loss_amount="Belum dihitung",
+                potential_loss_basis="Menunggu simulasi agen",
+                potential_loss_detail="Potensi omzet lepas baru dihitung setelah simulasi agen selesai.",
+            ),
+            funnel_stages=funnel_stages,
+            cue_ranking=[],
+            key_insights=[
+                KeyInsightOut(
+                    id="ins_pending",
+                    number="01",
+                    type="neutral",
+                    title="Simulasi agen belum dijalankan",
+                    description=(
+                        f"Jalankan simulasi agen terlebih dahulu pada {business_name} untuk melihat titik kebocoran dan alasan pembatalan pelanggan."
+                    ),
+                )
+            ],
+            recommendations=recommendations,
+            twin_meta=twin_meta,
+            waypoints=waypoints,
+            what_if_projection=None,
+        )
+
+    # Agregasi faktor penyebab batal tertinggi dari Katalog Isyarat (H1-H14)
     from app.services.simulation.pareto import aggregate_cue_scores
     from app.services.simulation.runner import AgentRunResult
 
@@ -1627,15 +2084,10 @@ def build_dashboard_data(
     top_cue = non_h0_cues[0] if non_h0_cues else (cue_ranks[0] if cue_ranks else None)
 
     non_buyers = [d for d in decisions if d.final_decision != "memesan"]
-    factor_counts = Counter(d.deciding_factor for d in non_buyers if d.deciding_factor)
-    top_factor_text = (
-        factor_counts.most_common(1)[0][0]
-        if factor_counts
-        else (top_cue.title if top_cue else f"Informasi menu & harga {business_name} belum terlihat dari jalan")
-    )
+    top_factor_text = _resolve_top_cue_detail(top_cue, non_buyers, business_name)
     main_cause_short = f"{top_cue.cue_code} · {top_cue.title}" if top_cue else "Info Depan Toko"
     main_cause_rank_str = (
-        f"Peringkat 1 Katalog Isyarat ({top_cue.affected_agents_count} dari {top_cue.total_non_buyers} agen batal · Lift {top_cue.lift}x)"
+        f"Peringkat 1 ({top_cue.share_pct:g}% porsi · {top_cue.affected_agents_count}/{top_cue.total_non_buyers} agen batal · Lift {top_cue.lift}x)"
         if top_cue
         else f"Peringkat 1 ({len(non_buyers)} dari {total_agents} agen batal)"
     )
@@ -1650,43 +2102,6 @@ def build_dashboard_data(
         monthly_lost_visitors = round(daily_vis * (berhenti_pergi_cnt / max(total_agents, 1)) * 15)
         loss_low = monthly_lost_visitors * avg_price
         loss_high = round(loss_low * 1.35)
-
-    key_insights = [
-        KeyInsightOut(
-            id=f"ins_{analysis.id}_1",
-            number="01",
-            type="friction",
-            title=f"Friksi Utama di Akses Masuk {business_name} ({berhenti_pergi_cnt} dari {berhenti_cnt} agen batal)",
-            description=(
-                f"Dari {berhenti_cnt} agen yang tertarik berhenti di depan {business_name}, "
-                f"{berhenti_pergi_cnt} agen urung masuk. Alasan terkuat: {top_factor_text}"
-            ),
-        ),
-        KeyInsightOut(
-            id=f"ins_{analysis.id}_2",
-            number="02",
-            type="friction" if lewat_cnt >= 5 else "positive",
-            title=f"Daya Tarik Fasad dari Jalan ({berhenti_cnt} dari {total_agents} agen berhenti)",
-            description=(
-                f"{berhenti_cnt} dari {total_agents} agen pejalan kaki menoleh ke {business_name}, "
-                f"namun {lewat_cnt} agen langsung lewat karena penanda dari arah jalan belum terbaca cepat."
-            ),
-        ),
-        KeyInsightOut(
-            id=f"ins_{analysis.id}_3",
-            number="03",
-            type="positive",
-            title=f"Konversi Area Kasir ({memesan_cnt} dari {masuk_cnt} agen memesan)",
-            description=(
-                f"Begitu calon pelanggan melewati pintu masuk {business_name}, "
-                f"{memesan_cnt} dari {masuk_cnt} agen memesan di kasir."
-            ),
-        ),
-    ]
-
-    def _format_pct_id(pct: float) -> str:
-        txt = f"{pct:.1f}".rstrip("0").rstrip(".")
-        return f"{txt.replace('.', ',')}%"
 
     drop_candidates = [
         (
@@ -1720,6 +2135,24 @@ def build_dashboard_data(
     valid_drops = [d for d in drop_candidates if d[2] > 0]
     top_rate, _, _, top_from, top_to, top_loc, top_desc = max(
         valid_drops or drop_candidates[:1], key=lambda d: (d[0], d[1])
+    )
+
+    key_insights = _build_dynamic_key_insights(
+        analysis_id=analysis.id,
+        business_name=business_name,
+        total_agents=total_agents,
+        lewat_cnt=lewat_cnt,
+        berhenti_cnt=berhenti_cnt,
+        berhenti_pergi_cnt=berhenti_pergi_cnt,
+        masuk_cnt=masuk_cnt,
+        masuk_tanpa_cnt=masuk_tanpa_cnt,
+        memesan_cnt=memesan_cnt,
+        r_lewat=r_lewat,
+        r_berhenti=r_berhenti,
+        r_masuk=r_masuk,
+        top_from=top_from,
+        non_h0_cues=non_h0_cues,
+        top_cause_detail=top_factor_text,
     )
 
     kpi = DashboardKpiOut(
@@ -1788,6 +2221,164 @@ def build_dashboard_data(
     )
 
 
+def _build_measurement_spec(
+    *,
+    session: Session,
+    analysis: AnalysisModel,
+    business_name: str,
+) -> tuple[str, str, list[str], list[dict[str, Any]], list[str], bool]:
+    """Turunkan target pengukuran lapangan dari data simulasi/proyeksi & konteks usaha nyata."""
+    from app.services.simulation.ablation import compute_quick_estimate_projection
+    from app.services.simulation.runner import AgentRunResult, SegmentInput
+
+    ctx = analysis.context
+    loc_desc = (ctx.location_description if ctx and ctx.location_description else "") or f"area depan {business_name}"
+    rush_list = list(ctx.rush_hours or []) if ctx and ctx.rush_hours else [{"start": "12:00", "end": "14:00"}]
+    rec_times = [
+        f"{r.get('start', '12:00')} – {r.get('end', '14:00')} (Jam ramai operasional)"
+        for r in rush_list
+        if isinstance(r, dict)
+    ] or ["11:30 – 13:30 (Jam makan siang)", "18:00 – 20:00 (Jam ramai sore/malam)"]
+
+    decisions = list(
+        session.scalars(
+            select(AgentDecisionRecord)
+            .where(AgentDecisionRecord.analysis_id == analysis.id)
+            .order_by(AgentDecisionRecord.agent_id.asc())
+        ).all()
+    )
+    rec_rows = list(
+        session.scalars(
+            select(RecommendationItem)
+            .where(RecommendationItem.analysis_id == analysis.id)
+            .order_by(RecommendationItem.rank.asc())
+        ).all()
+    )
+    segs = list(
+        session.scalars(
+            select(TranscriptSegment)
+            .where(TranscriptSegment.analysis_id == analysis.id)
+            .order_by(TranscriptSegment.timestamp_start.asc())
+        ).all()
+    )
+
+    daily_vis = ctx.daily_visitors if ctx and ctx.daily_visitors else None
+    n_sim = len(decisions)
+    has_sim = n_sim > 0
+    if daily_vis and daily_vis > 0:
+        sample_base = max(10, min(60, round(daily_vis * 0.15)))
+    elif has_sim:
+        sample_base = n_sim
+    else:
+        sample_base = max(10, analysis.total_agents or 20)
+
+    if has_sim:
+        lewat_cnt = sum(1 for d in decisions if d.final_decision == "lewat")
+        masuk_tanpa_cnt = sum(1 for d in decisions if d.final_decision == "masuk_tanpa_memesan")
+        memesan_cnt = sum(1 for d in decisions if d.final_decision == "memesan")
+        proj_stop = max(0, n_sim - lewat_cnt)
+        proj_enter = max(0, masuk_tanpa_cnt + memesan_cnt)
+        proj_order = memesan_cnt
+
+        prio_recs = [r for r in rec_rows if r.priority_tag == "Prioritas"] or rec_rows[:3]
+        if prio_recs and segs:
+            seg_inputs = [
+                SegmentInput(id=s.id, vantage=s.vantage, narrative=s.narrative, not_visible=s.not_visible or "")
+                for s in segs
+            ]
+            baseline_runs = [
+                AgentRunResult(
+                    agent_id=d.agent_id,
+                    batch_id=1 if d.agent_id <= 10 else 2,
+                    monologue=d.monologue,
+                    final_decision=d.final_decision,
+                    stopped_at_segment_id=d.stopped_at_segment_id,
+                    deciding_factor=d.deciding_factor,
+                    factor_segment_ids=list(d.factor_segment_ids or []),
+                    segment_traces=list(d.segment_traces or []),
+                    attributions=list(d.attributions or []),
+                    primary_hypothesis_id=d.primary_hypothesis_id,
+                )
+                for d in decisions
+            ]
+            valid_seg_ids = {s.id for s in segs}
+            checked_actions = [
+                (
+                    r.action_id,
+                    [sid for sid in (r.segment_ids or []) if sid in valid_seg_ids] or [segs[0].id],
+                )
+                for r in prio_recs
+            ]
+            quick = compute_quick_estimate_projection(
+                segments=seg_inputs,
+                baseline_results=baseline_runs,
+                checked_actions=checked_actions,
+            )
+            proj_stop = quick.stage_projected_counts["tertarik"]
+            proj_enter = quick.stage_projected_counts["masuk"]
+            proj_order = quick.stage_projected_counts["memesan"]
+
+        m1_target = sample_base
+        m2_target = min(m1_target, max(0, round(sample_base * (proj_stop / n_sim))))
+        m3_target = min(m2_target, max(0, round(sample_base * (proj_enter / n_sim))))
+        m4_target = min(m3_target, max(0, round(sample_base * (proj_order / n_sim))))
+    else:
+        m1_target = sample_base
+        m2_target = round(sample_base * 0.50)
+        m3_target = min(m2_target, round(sample_base * 0.30))
+        m4_target = min(m3_target, round(sample_base * 0.20))
+
+    top_rec = next((r for r in rec_rows if r.priority_tag == "Prioritas"), rec_rows[0] if rec_rows else None)
+    focus_zone = (top_rec.location_zone if top_rec and top_rec.location_zone else "area depan & akses masuk").lower()
+    focus_action_hint = f" khususnya setelah penerapan '{top_rec.title}'" if top_rec else ""
+
+    obs_title = (
+        f"Pengamatan Target Pasca-Perbaikan di {top_rec.location_zone or 'Depan Toko'} ({business_name})"
+        if top_rec
+        else f"Pengamatan Konversi Akses Masuk & Fasad {business_name}"
+    )
+    obs_spot = (
+        f"Ambil posisi pandang dari seberang atau sisi trotoar sehingga {loc_desc} "
+        f"dan {focus_zone} {business_name} terlihat bersamaan."
+    )
+    metrics = [
+        {
+            "id": "m1",
+            "stage_name": "Melintas & Menoleh",
+            "physical_cue": f"Pejalan kaki/pengendara menoleh ke arah plang atau fasad {business_name}",
+            "target_count": m1_target,
+        },
+        {
+            "id": "m2",
+            "stage_name": "Berhenti & Memperhatikan",
+            "physical_cue": f"Berhenti minimal 3 detik mengamati {focus_zone} {business_name}{focus_action_hint}",
+            "target_count": m2_target,
+        },
+        {
+            "id": "m3",
+            "stage_name": "Melangkah Masuk",
+            "physical_cue": f"Melewati pintu/akses masuk menuju bagian dalam {business_name}",
+            "target_count": m3_target,
+        },
+        {
+            "id": "m4",
+            "stage_name": "Memesan di Kasir",
+            "physical_cue": f"Melakukan pemesanan atau pembayaran di titik kasir {business_name}",
+            "target_count": m4_target,
+        },
+    ]
+    tips = [
+        f"Lakukan pengamatan selama 30 menit sebelum memasang perbaikan di {business_name}, lalu 30 menit pada jam ramai yang sama setelah dipasang.",
+        "Gunakan kolom turus (IIII) untuk mencatat setiap pejalan kaki sesuai target jendela 30 menit tanpa perlu mengajak bicara.",
+        (
+            f"Pantau perubahan respons tepat pada {focus_zone} setelah menjalankan '{top_rec.title}'."
+            if top_rec
+            else "Bandingkan rasio pengunjung yang jadi melangkah masuk setelah melihat daftar menu & harga."
+        ),
+    ]
+    return obs_title, obs_spot, rec_times, metrics, tips, has_sim
+
+
 def get_or_create_measurement_plan(
     session: Session,
     analysis: AnalysisModel,
@@ -1798,14 +2389,11 @@ def get_or_create_measurement_plan(
         if biz is not None
         else (analysis.context.business_name if analysis.context is not None else analysis.name)
     )
-    ctx = analysis.context
-    loc_desc = (ctx.location_description if ctx and ctx.location_description else "") or f"area depan {business_name}"
-    rush_list = list(ctx.rush_hours or []) if ctx and ctx.rush_hours else [{"start": "12:00", "end": "14:00"}]
-    rec_times = [
-        f"{r.get('start', '12:00')} – {r.get('end', '14:00')} (Jam ramai operasional)"
-        for r in rush_list
-        if isinstance(r, dict)
-    ] or ["11:30 – 13:30 (Jam makan siang)", "18:00 – 20:00 (Jam ramai sore/malam)"]
+    obs_title, obs_spot, rec_times, dyn_metrics, dyn_tips, has_sim = _build_measurement_spec(
+        session=session,
+        analysis=analysis,
+        business_name=business_name,
+    )
 
     stmt = select(MeasurementPlanRecord).where(MeasurementPlanRecord.analysis_id == analysis.id)
     plan = session.scalars(stmt).first()
@@ -1813,44 +2401,23 @@ def get_or_create_measurement_plan(
         plan = MeasurementPlanRecord(
             id=f"mp_{uuid4().hex[:10]}",
             analysis_id=analysis.id,
-            observation_title=f"Pengamatan Konversi Akses Masuk & Fasad {business_name}",
-            observation_spot=f"Ambil posisi pandang dari seberang atau sisi trotoar sehingga {loc_desc} dan pintu masuk {business_name} terlihat bersamaan.",
+            observation_title=obs_title,
+            observation_spot=obs_spot,
             recommended_times=rec_times,
             suggested_duration_minutes=30,
-            metrics=[
-                {
-                    "id": "m1",
-                    "stage_name": "Melintas & Menoleh",
-                    "physical_cue": f"Pejalan kaki/pengendara menoleh ke arah plang atau fasad {business_name}",
-                    "target_count": 20,
-                },
-                {
-                    "id": "m2",
-                    "stage_name": "Berhenti di Depan Akses Masuk",
-                    "physical_cue": f"Berhenti minimal 3 detik memperhatikan daftar menu/harga di depan {business_name}",
-                    "target_count": 14,
-                },
-                {
-                    "id": "m3",
-                    "stage_name": "Melangkah Masuk",
-                    "physical_cue": f"Melewati pintu/akses masuk menuju bagian dalam {business_name}",
-                    "target_count": 9,
-                },
-                {
-                    "id": "m4",
-                    "stage_name": "Memesan di Kasir",
-                    "physical_cue": f"Melakukan pemesanan atau pembayaran di titik kasir {business_name}",
-                    "target_count": 7,
-                },
-            ],
-            practical_tips=[
-                f"Lakukan pengamatan selama 30 menit sebelum memasang perbaikan di {business_name}, lalu 30 menit pada jam ramai yang sama setelah dipasang.",
-                "Gunakan kolom turus (IIII) untuk mencatat setiap pejalan kaki tanpa perlu mengajak bicara.",
-                "Bandingkan rasio pengunjung yang jadi melangkah masuk setelah melihat daftar menu & harga.",
-            ],
+            metrics=dyn_metrics,
+            practical_tips=dyn_tips,
         )
         session.add(plan)
         session.flush()
+        session.commit()
+    elif has_sim and (plan.metrics != dyn_metrics or plan.observation_title != obs_title):
+        # Segarkan target pengukuran yang sempat tersimpan sebelum simulasi/rekomendasi selesai
+        plan.observation_title = obs_title
+        plan.observation_spot = obs_spot
+        plan.recommended_times = rec_times
+        plan.metrics = dyn_metrics
+        plan.practical_tips = dyn_tips
         session.commit()
 
     metrics_out = [
