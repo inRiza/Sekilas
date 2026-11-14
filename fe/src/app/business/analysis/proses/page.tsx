@@ -107,7 +107,9 @@ function ProsesInner() {
     businessId ? `&businessId=${encodeURIComponent(businessId)}` : ''
   }`;
 
-  const [segments, setSegments] = useState<TranscriptSegment[]>(MOCK_TRANSCRIPT);
+  const [segments, setSegments] = useState<TranscriptSegment[]>(
+    analysisId === 'selasar-kopi' ? MOCK_TRANSCRIPT : [],
+  );
   useEffect(() => {
     void fetchTranscriptSegments(analysisId).then((list) => {
       if (list.length > 0) setSegments(list);
