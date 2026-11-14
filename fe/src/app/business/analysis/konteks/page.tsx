@@ -644,7 +644,7 @@ function KonteksUsahaInner() {
                     <Label requiredText="wajib">Jam buka</Label>
                     <div className="flex items-center gap-3">
                       <TimeSelect aria-label="Jam buka" value={openHour} onChange={setOpenHour} />
-                      <span className="shrink-0 text-[13px] text-muted">sampai</span>
+                      <span className="shrink-0 text-[13px] text-muted">-</span>
                       <TimeSelect aria-label="Jam tutup" value={closeHour} onChange={setCloseHour} />
                     </div>
                     {overnight && <Helper>{`Tutup melewati tengah malam, pukul ${closeHour.replace(':', '.')} keesokan harinya.`}</Helper>}
@@ -661,7 +661,7 @@ function KonteksUsahaInner() {
                               value={r.start}
                               onChange={(v) => setRushRanges((p) => p.map((x) => (x.id === r.id ? { ...x, start: v } : x)))}
                             />
-                            <span className="shrink-0 text-[13px] text-muted">sampai</span>
+                            <span className="shrink-0 text-[13px] text-muted">-</span>
                             <TimeSelect
                               aria-label="Selesai ramai"
                               value={r.end}

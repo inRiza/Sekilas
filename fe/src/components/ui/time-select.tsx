@@ -2,16 +2,7 @@
 
 import React from 'react';
 
-import { Select, type SelectOption } from '@/components/ui/select';
-
-/** Pilihan jam format 24 jam, tiap 30 menit: '00:00' .. '23:30' ditampilkan sebagai '00.00' .. '23.30'. */
-const TIME_OPTIONS: SelectOption<string>[] = Array.from({ length: 48 }, (_, i) => {
-  const h = String(Math.floor(i / 2)).padStart(2, '0');
-  const m = i % 2 ? '30' : '00';
-  return { value: `${h}:${m}`, label: `${h}.${m}` };
-});
-
-/** Pemilih jam 24 jam (bukan input waktu native yang bisa tampil AM/PM). */
+/** Input jam 24 jam (native), lebar tetap agar pasangan start/end sejajar. */
 export function TimeSelect({
   value,
   onChange,
@@ -24,9 +15,15 @@ export function TimeSelect({
   'aria-label'?: string;
 }) {
   return (
-    <div className="w-full" aria-label={ariaLabel}>
-      <Select id={id} value={value} onChange={onChange} options={TIME_OPTIONS} placeholder="--.--" />
-    </div>
+    <input
+      id={id}
+      type="time"
+      step={60}
+      value={value}
+      aria-label={ariaLabel}
+      onChange={(e) => onChange(e.target.value)}
+      className="h-10 w-[7.5rem] shrink-0 rounded-md border border-line bg-white px-2.5 text-[13px] text-ink tabular-nums transition-colors focus:border-primary-40 focus:outline-none focus:ring-2 focus:ring-primary-10"
+    />
   );
 }
 
