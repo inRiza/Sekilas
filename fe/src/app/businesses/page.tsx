@@ -1,30 +1,65 @@
 'use client';
 
-import React, { useCallback, useState } from 'react';
-import Link from 'next/link';
-import { MOCK_BUSINESSES } from '@/lib/mock/business';
-import { MOCK_ANALYSES } from '@/lib/mock/analyses';
-import { Business, BusinessType } from '@/types/api';
+import { ArrowRight, CircleAlert, LoaderCircle, Plus, Store } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import React, { useCallback, useEffect, useState } from 'react';
+
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Dialog } from '@/components/ui/dialog';
 import { Input, Label } from '@/components/ui/form';
 import { Select, type SelectOption } from '@/components/ui/select';
-import { StoreIcon, PlusIcon, FileTextIcon, SettingsIcon, ArrowRightIcon } from '@/components/ui/icons';
+import { ApiError, backend, type BusinessSummary } from '@/lib/backend';
 
-const CATEGORY_OPTIONS: SelectOption<BusinessType>[] = [
+type Category = BusinessSummary['category'];
+
+const CATEGORY_OPTIONS: SelectOption<Category>[] = [
   { value: 'warung', label: 'Warung makan' },
   { value: 'kedai', label: 'Kedai kopi' },
   { value: 'kafe', label: 'Kafe santai' },
   { value: 'resto_ruko', label: 'Restoran ruko' },
 ];
+const CATEGORY_LABEL = Object.fromEntries(CATEGORY_OPTIONS.map((o) => [o.value, o.label])) as Record<Category, string>;
+
+const STATUS_LABEL: Record<string, string> = {
+  draft: 'Draf',
+  konteks: 'Isi konteks',
+  video: 'Menunggu video',
+  memproses: 'Diproses',
+  verifikasi: 'Verifikasi',
+  simulasi: 'Simulasi',
+  siap: 'Siap',
+};
 
 export default function BusinessesPage() {
-  const [businesses, setBusinesses] = useState<Business[]>(MOCK_BUSINESSES);
+  const router = useRouter();
+  const [businesses, setBusinesses] = useState<BusinessSummary[] | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [creatingFor, setCreatingFor] = useState<string | null>(null);
+
   const [showAddModal, setShowAddModal] = useState(false);
   const [newBizName, setNewBizName] = useState('');
   const [newBranchName, setNewBranchName] = useState('');
   const [newAddress, setNewAddress] = useState('');
-  const [newCategory, setNewCategory] = useState<BusinessType>('kedai');
+  const [newCategory, setNewCategory] = useState<Category>('kedai');
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      setBusinesses(await backend.listBusinesses());
+      setLoadError(null);
+    } catch (e) {
+      setLoadError(e instanceof ApiError ? e.message : 'Gagal memuat daftar bisnis.');
+    }
+  }, []);
+
+  useEffect(() => {
+    // Muat sekali saat halaman dibuka; setState terjadi setelah fetch selesai.
+    void (async () => {
+      await load();
+    })();
+  }, [load]);
 
   const closeAddModal = useCallback(() => {
     setShowAddModal(false);
@@ -32,145 +67,127 @@ export default function BusinessesPage() {
     setNewBranchName('');
     setNewAddress('');
     setNewCategory('kedai');
+    setSaveError(null);
   }, []);
 
-  const handleAddBusiness = (e: React.FormEvent) => {
+  const handleAddBusiness = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newBizName.trim()) return;
+    setSaving(true);
+    try {
+      await backend.createBusiness({
+        name: newBizName.trim(),
+        branch_name: newBranchName.trim(),
+        category: newCategory,
+        address: newAddress.trim(),
+      });
+      closeAddModal();
+      await load();
+    } catch (err) {
+      setSaveError(err instanceof ApiError ? err.message : 'Gagal menyimpan.');
+    } finally {
+      setSaving(false);
+    }
+  };
 
-    const newBiz: Business = {
-      id: `biz_${Date.now()}`,
-      user_id: 'usr_01',
-      name: newBizName,
-      branch_name: newBranchName || 'Pusat',
-      category: newCategory,
-      address: newAddress || 'Alamat tempat usaha baru',
-      context: {
-        business_name: newBizName,
-        business_type: newCategory,
-        location_name: newAddress || 'Alamat tempat usaha baru',
-        location_description: 'Akses masuk dari jalan raya',
-        surroundings_type: 'jalan_utama',
-        passersby: ['mahasiswa', 'pekerja_kantor'],
-        business_goal: 'lebih_banyak_pembeli_baru',
-        calculated_price_level: 'hemat',
-        fixed_constraints: [],
-        menu_items: [],
-        opening_hours: { open: '08:00', close: '22:00' },
-        rush_hours: [{ start: '12:00', end: '14:00' }],
-        nearby_competitors: '',
-      },
-      created_at: new Date().toISOString(),
-    };
-
-    setBusinesses([...businesses, newBiz]);
-    closeAddModal();
+  const startAnalysis = async (bid: string) => {
+    setCreatingFor(bid);
+    try {
+      const analysis = await backend.createAnalysis(bid);
+      router.push(analysis.next_action.route);
+    } catch (e) {
+      setLoadError(e instanceof ApiError ? e.message : 'Gagal membuat analisis.');
+      setCreatingFor(null);
+    }
   };
 
   return (
-    <div className="flex min-h-full flex-col justify-between bg-white">
-      <main className="section flex-1 py-8 sm:py-12">
-        <div className="col space-y-8">
-          {/* Header Title */}
-          <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 pb-4">
+    <div className="flex min-h-full flex-col bg-white">
+      <main className="flex-1 px-4 pb-16 pt-10 sm:px-6">
+        <div className="mx-auto w-full max-w-5xl space-y-8">
+          <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
             <div>
-              <span className="font-mono text-[11px] uppercase tracking-wider text-muted font-semibold">
-                Manajemen Bisnis
-              </span>
-              <h1 className="text-2xl sm:text-[32px] font-normal tracking-[-0.035em] text-ink mt-1">
-                Daftar Tempat Usaha
-              </h1>
-              <p className="text-xs sm:text-[13px] text-muted mt-1">
-                Kelola unit bisnis, cabang fisik, dan konteks profil usaha untuk simulasi agen.
-              </p>
+              <h1 className="text-2xl font-normal tracking-[-0.03em] text-ink sm:text-[28px]">Daftar bisnis</h1>
+              <p className="mt-1 text-[13px] text-muted">Pilih tempat usaha untuk membuka analisis utamanya, atau mulai analisis baru.</p>
             </div>
-
-            <button
-              type="button"
-              onClick={() => setShowAddModal(true)}
-              className="btn-primary inline-flex h-9 items-center gap-2 rounded-md px-4 text-xs font-semibold text-white shadow-xs transition shrink-0"
-            >
-              <PlusIcon size={14} />
-              <span>Tambah Tempat Usaha Baru</span>
-            </button>
+            <Button variant="primary" size="md" className="!rounded-md" onClick={() => setShowAddModal(true)}>
+              <Plus size={15} /> Tambah tempat usaha
+            </Button>
           </div>
 
-          {/* Business Cards Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-            {businesses.map((biz) => {
-              const bizAnalyses = MOCK_ANALYSES.filter((a) => a.business_id === biz.id);
+          {loadError && (
+            <div className="flex items-start gap-3 rounded-md bg-friction-10 p-4 text-[13px] text-friction">
+              <CircleAlert size={16} className="mt-0.5 shrink-0" />
+              <div className="flex-1">{loadError}</div>
+              <button type="button" onClick={load} className="font-medium underline">
+                Coba lagi
+              </button>
+            </div>
+          )}
 
-              return (
-                <div
-                  key={biz.id}
-                  className="rounded-xl border border-line bg-white p-5 sm:p-6 hover:!border-[#d3d7dd] transition flex flex-col justify-between"
-                >
-                  <div>
-                    <div className="flex items-center justify-between gap-2 mb-2">
-                      <span className="font-mono text-[11px] uppercase tracking-wider text-primary-40 bg-primary-10 px-2 py-0.5 rounded-full font-semibold">
-                        {biz.category}
-                      </span>
-                      <span className="font-mono text-[11px] text-subtle">
-                        {bizAnalyses.length} Analisis Video
-                      </span>
-                    </div>
-
-                    <h2 className="text-lg sm:text-xl font-semibold text-ink flex items-center gap-2">
-                      <StoreIcon size={18} className="text-muted shrink-0" />
-                      <span>{biz.name}</span>
-                    </h2>
-                    <p className="text-xs font-medium text-muted mt-0.5">
-                      Cabang: {biz.branch_name}
-                    </p>
-                    <p className="text-xs text-subtle mt-1.5 leading-relaxed">
-                      {biz.address}
-                    </p>
-
-                    <div className="mt-4 pt-3 flex items-center justify-between text-xs">
-                      <span className="text-muted">Konteks Usaha</span>
-                      <span className="font-mono text-[11px] font-medium text-impact">
-                        Lengkap (7/7 terisi)
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="mt-6 pt-4 flex flex-wrap items-center justify-between gap-2">
-                    <Link
-                      href="/businesses/analyses"
-                      className="inline-flex h-8.5 items-center gap-1.5 rounded-md border border-line bg-white px-3.5 text-xs font-medium text-ink hover:bg-panel transition"
-                    >
-                      <FileTextIcon size={13} className="text-muted" />
-                      <span>Lihat Analisis</span>
-                      <ArrowRightIcon size={13} className="text-muted" />
-                    </Link>
-
-                    <div className="flex items-center gap-2">
-                      <Link
-                        href="/business/analysis/konteks"
-                        className="inline-flex h-8.5 items-center gap-1.5 rounded-md border border-line bg-white px-3 text-xs font-medium text-muted hover:text-ink hover:bg-panel transition"
-                        title="Edit Konteks Usaha"
+          {businesses === null && !loadError ? (
+            <div className="flex h-40 items-center justify-center">
+              <LoaderCircle size={20} className="animate-spin text-subtle" />
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              {(businesses ?? []).map((biz) => {
+                const primary = biz.primary_analysis;
+                return (
+                  <article key={biz.id} className="flex flex-col rounded-md border border-line bg-white transition-colors hover:border-[#d3d7dd]">
+                    <button type="button" onClick={() => router.push(biz.next_action.route)} className="flex-1 p-5 text-left">
+                      <div className="flex items-start gap-3">
+                        <span className="grid size-9 shrink-0 place-items-center rounded-md bg-primary-10 text-primary-40">
+                          <Store size={17} />
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <h2 className="truncate text-[15px] font-semibold text-ink">{biz.name}</h2>
+                          <p className="mt-0.5 truncate text-[13px] text-muted">{biz.address || 'Alamat belum diisi'}</p>
+                        </div>
+                      </div>
+                      <div className="mt-4 flex flex-wrap items-center gap-1.5">
+                        <Badge>{biz.branch_name}</Badge>
+                        <Badge>{CATEGORY_LABEL[biz.category] ?? biz.category}</Badge>
+                        <Badge>{`${biz.analysis_count} analisis`}</Badge>
+                        {primary && (
+                          <Badge variant={primary.status === 'siap' ? 'impact' : 'primary'}>{STATUS_LABEL[primary.status] ?? primary.status}</Badge>
+                        )}
+                        {primary?.is_demo && <Badge>Demo</Badge>}
+                      </div>
+                      {primary && (
+                        <p className="mt-3 text-[13px] text-ink-soft">
+                          Analisis utama: <span className="font-medium text-ink">{primary.name}</span>
+                          {primary.quality_label ? `, Visual Twin ${primary.quality_label.toLowerCase()}` : ''}
+                        </p>
+                      )}
+                    </button>
+                    <div className="flex items-center justify-between gap-2 rounded-b-md bg-panel px-5 py-3">
+                      <button
+                        type="button"
+                        onClick={() => router.push(biz.next_action.route)}
+                        className="inline-flex items-center gap-1.5 text-[13px] font-medium text-primary-40 hover:underline"
                       >
-                        <SettingsIcon size={13} />
-                        <span>Konteks</span>
-                      </Link>
-
-                      <Link
-                        href="/business/analysis/video"
-                        className="btn-primary inline-flex h-8.5 items-center gap-1 rounded-md px-3 text-xs font-semibold text-white shadow-2xs transition"
+                        {biz.next_action.label} <ArrowRight size={14} />
+                      </button>
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        className="!rounded-md"
+                        disabled={creatingFor === biz.id}
+                        onClick={() => startAnalysis(biz.id)}
                       >
-                        <PlusIcon size={13} />
-                        <span>Analisis Baru</span>
-                      </Link>
+                        {creatingFor === biz.id ? <LoaderCircle size={13} className="animate-spin" /> : <Plus size={13} />}
+                        Analisis baru
+                      </Button>
                     </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+                  </article>
+                );
+              })}
+            </div>
+          )}
         </div>
       </main>
 
-      {/* Modal Tambah Bisnis Baru */}
       <Dialog
         open={showAddModal}
         onClose={closeAddModal}
@@ -181,7 +198,14 @@ export default function BusinessesPage() {
             <Button type="button" variant="secondary" size="md" className="!rounded-md" onClick={closeAddModal}>
               Batal
             </Button>
-            <Button type="submit" form="add-business-form" variant="primary" size="md" className="!rounded-md" disabled={!newBizName.trim()}>
+            <Button
+              type="submit"
+              form="add-business-form"
+              variant="primary"
+              size="md"
+              className="!rounded-md"
+              disabled={!newBizName.trim() || saving}
+            >
               Simpan
             </Button>
           </>
@@ -189,21 +213,30 @@ export default function BusinessesPage() {
       >
         <form id="add-business-form" onSubmit={handleAddBusiness} className="space-y-5">
           <div>
-            <Label requiredText="wajib" htmlFor="biz-name">Nama tempat usaha</Label>
+            <Label requiredText="wajib" htmlFor="biz-name">
+              Nama tempat usaha
+            </Label>
             <Input id="biz-name" autoFocus placeholder="Contoh: Kopi Toko Djawa" value={newBizName} onChange={(e) => setNewBizName(e.target.value)} />
           </div>
           <div>
-            <Label requiredText="opsional" htmlFor="biz-branch">Nama cabang</Label>
+            <Label requiredText="opsional" htmlFor="biz-branch">
+              Nama cabang
+            </Label>
             <Input id="biz-branch" placeholder="Contoh: Braga" value={newBranchName} onChange={(e) => setNewBranchName(e.target.value)} />
           </div>
           <div>
-            <Label requiredText="wajib" htmlFor="biz-category">Jenis usaha</Label>
+            <Label requiredText="wajib" htmlFor="biz-category">
+              Jenis usaha
+            </Label>
             <Select id="biz-category" value={newCategory} onChange={setNewCategory} options={CATEGORY_OPTIONS} />
           </div>
           <div>
-            <Label requiredText="opsional" htmlFor="biz-address">Alamat</Label>
+            <Label requiredText="opsional" htmlFor="biz-address">
+              Alamat
+            </Label>
             <Input id="biz-address" placeholder="Contoh: Jl. Braga No. 12, Bandung" value={newAddress} onChange={(e) => setNewAddress(e.target.value)} />
           </div>
+          {saveError && <p className="text-[12px] text-friction">{saveError}</p>}
         </form>
       </Dialog>
     </div>

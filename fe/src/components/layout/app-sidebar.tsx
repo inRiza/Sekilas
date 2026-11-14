@@ -1,8 +1,8 @@
 'use client';
 
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
-import React, { useState } from 'react';
+import { usePathname, useSearchParams } from 'next/navigation';
+import React, { useEffect, useState } from 'react';
 
 import { SekilasLogo, SekilasLogoIcon } from '@/components/brand/logo';
 import { Badge } from '@/components/ui/badge';
@@ -19,26 +19,29 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from '@/components/ui/sidebar';
-import { MOCK_ANALYSES } from '@/lib/mock/analyses';
-import { CURRENT_USER, MOCK_BUSINESSES } from '@/lib/mock/business';
-import type { Analysis, Business } from '@/types/api';
+import { backend, type AnalysisStatus, type AnalysisSummary, type BusinessSummary } from '@/lib/backend';
+import { CURRENT_USER } from '@/lib/mock/business';
 
 const NEW_ANALYSIS_HREF = '/business/analysis/konteks';
 
-const STATUS_LABEL: Record<Analysis['status'], string> = {
-  ready: 'selesai',
-  processing: 'diproses',
+const STATUS_LABEL: Record<AnalysisStatus, string> = {
   draft: 'draf',
-  stale: 'perlu diperbarui',
-  failed: 'gagal',
+  konteks: 'isi konteks',
+  video: 'menunggu video',
+  memproses: 'diproses',
+  verifikasi: 'verifikasi',
+  simulasi: 'simulasi',
+  siap: 'siap',
 };
 
-const STATUS_VARIANT: Record<Analysis['status'], 'impact' | 'primary' | 'friction' | 'neutral'> = {
-  ready: 'impact',
-  processing: 'primary',
+const STATUS_VARIANT: Record<AnalysisStatus, 'impact' | 'primary' | 'friction' | 'neutral'> = {
   draft: 'neutral',
-  stale: 'neutral',
-  failed: 'friction',
+  konteks: 'neutral',
+  video: 'neutral',
+  memproses: 'primary',
+  verifikasi: 'primary',
+  simulasi: 'primary',
+  siap: 'impact',
 };
 
 const shortDate = new Intl.DateTimeFormat('id-ID', { day: 'numeric', month: 'short' });
@@ -52,33 +55,25 @@ function initials(name: string) {
     .join('');
 }
 
-function analysesOf(businessId: string) {
-  return MOCK_ANALYSES.filter((a) => a.business_id === businessId).sort((a, b) =>
-    b.created_at.localeCompare(a.created_at),
-  );
-}
 
-/** Analisis selesai membuka dasbor; yang belum selesai membuka langkah pemrosesannya. */
-function analysisHref(a: Analysis) {
-  return a.status === 'ready' ? '/business/analysis' : '/business/analysis/proses';
-}
 
 /** Satu cabang usaha (induk) dengan daftar analisisnya (anak). */
 function BusinessNode({
   business,
   expanded,
   onToggle,
+  analyses,
   activeAnalysisId,
   onOpenAnalysis,
 }: {
-  business: Business;
+  business: BusinessSummary;
+  analyses: AnalysisSummary[];
   expanded: boolean;
   onToggle: () => void;
   activeAnalysisId: string | null;
   onOpenAnalysis: (id: string) => void;
 }) {
   const { open: sidebarOpen, setOpen, setOpenMobile } = useSidebar();
-  const analyses = analysesOf(business.id);
 
   return (
     <li className="list-none">
@@ -120,7 +115,7 @@ function BusinessNode({
             return (
               <li key={a.id}>
                 <Link
-                  href={analysisHref(a)}
+                  href={a.next_action.route}
                   onClick={() => {
                     onOpenAnalysis(a.id);
                     setOpenMobile(false);
@@ -141,7 +136,7 @@ function BusinessNode({
           })}
           <li>
             <Link
-              href={NEW_ANALYSIS_HREF}
+              href={`${NEW_ANALYSIS_HREF}?bid=${business.id}`}
               onClick={() => setOpenMobile(false)}
               className="flex items-center gap-2 rounded-lg px-2.5 py-2 text-[12px] text-muted transition-colors hover:bg-hover hover:text-ink"
             >
@@ -157,18 +152,37 @@ function BusinessNode({
 
 export function AppSidebar() {
   const pathname = usePathname();
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({
-    [MOCK_BUSINESSES[0]!.id]: true,
-  });
+  const searchParams = useSearchParams();
+  const [businesses, setBusinesses] = useState<BusinessSummary[]>([]);
+  const [analysesByBiz, setAnalysesByBiz] = useState<Record<string, AnalysisSummary[]>>({});
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [openedAnalysisId, setOpenedAnalysisId] = useState<string | null>(null);
+
+  // Muat ulang dari backend setiap pindah halaman, agar analisis baru langsung muncul.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const list = await backend.listBusinesses();
+        const entries = await Promise.all(list.map(async (b) => [b.id, await backend.listAnalyses(b.id)] as const));
+        if (cancelled) return;
+        setBusinesses(list);
+        setAnalysesByBiz(Object.fromEntries(entries));
+        setExpanded((prev) => (Object.keys(prev).length || !list[0] ? prev : { [list[0].id]: true }));
+      } catch {
+        // backend mati: sidebar kosong, halaman menampilkan pesannya sendiri
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [pathname]);
 
   // Sorot analisis hanya di halaman hasil (dasbor & jelajah agen); halaman alur
   // (konteks, video, dst.) adalah pembuatan analisis baru, jadi tidak ada yang disorot.
   const onAnalysisPage = pathname === '/business/analysis' || pathname === '/business/analysis/agents';
-  const latestReady = MOCK_ANALYSES.filter((a) => a.status === 'ready').sort((a, b) =>
-    b.created_at.localeCompare(a.created_at),
-  )[0];
-  const activeAnalysisId = onAnalysisPage ? (openedAnalysisId ?? latestReady?.id ?? null) : null;
+  const urlAid = searchParams.get('aid');
+  const activeAnalysisId = urlAid ?? (onAnalysisPage ? (openedAnalysisId ?? 'ana_demo') : null);
 
   return (
     <Sidebar>
@@ -209,10 +223,11 @@ export function AppSidebar() {
         <SidebarGroup>
           <SidebarGroupLabel>Bisnis & analisis</SidebarGroupLabel>
           <ul className="flex flex-col gap-0.5">
-            {MOCK_BUSINESSES.map((b) => (
+            {businesses.map((b) => (
               <BusinessNode
                 key={b.id}
                 business={b}
+                analyses={analysesByBiz[b.id] ?? []}
                 expanded={!!expanded[b.id]}
                 onToggle={() => setExpanded((prev) => ({ ...prev, [b.id]: !prev[b.id] }))}
                 activeAnalysisId={activeAnalysisId}
