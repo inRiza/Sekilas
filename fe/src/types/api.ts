@@ -177,6 +177,16 @@ export interface FunnelStageData {
   is_highest_friction?: boolean;
 }
 
+export interface CueRank {
+  rank: number;
+  cue_code: string;
+  title: string;
+  share_pct: number; // skor: porsi suara agen yang batal, 0..100
+  affected_agents_count: number;
+  total_non_buyers: number;
+  lift: number;
+}
+
 export interface KeyInsight {
   id: string;
   number: string;
@@ -268,6 +278,7 @@ export interface DashboardData {
     potential_loss_detail: string;
   };
   funnel_stages: FunnelStageData[];
+  cue_ranking?: CueRank[];
   key_insights: KeyInsight[];
   recommendations: ParetoRecommendation[];
   twin_meta: VisualTwinMeta;
