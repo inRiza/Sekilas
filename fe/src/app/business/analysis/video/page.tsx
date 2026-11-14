@@ -289,7 +289,9 @@ function VideoUploadInner() {
     const video = videoElRef.current;
     if (!video) return;
     if (video.paused || video.ended) {
-      void video.play();
+      void video.play().catch(() => {
+        // Pemutaran bisa dibatalkan jika sumber video berubah atau dimuat ulang.
+      });
     } else {
       video.pause();
     }
