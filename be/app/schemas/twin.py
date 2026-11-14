@@ -1,6 +1,6 @@
 from enum import StrEnum
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.schemas.common import JobState, Vec3
 
@@ -68,6 +68,11 @@ class TwinBuildAssets(BaseModel):
     quality_label: str
     path_duration_seconds: float = 0.0
     diagnosis_summary: str | None = None
+    zones: list[Zone] = []
+
+
+class ZoneRename(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
 
 
 class TwinBuild(BaseModel):
