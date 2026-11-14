@@ -13,6 +13,23 @@ uv run arq app.workers.tasks.WorkerSettings # job transkrip & simulasi
 uv run pytest
 ```
 
+## Demo Visual Twin (tanpa agen)
+
+Alur yang sudah tersambung ke database: bisnis -> analisis -> unggah video -> job Visual Twin
+(pipeline lokal `twin/scripts/local_twin.sh`, PRD 11.2) -> dasbor menampilkan splat.
+
+```bash
+docker compose -f ../docker-compose.yml up -d db   # Postgres
+uv run uvicorn app.main:app --port 8000            # tabel dibuat otomatis + data demo
+cd ../fe && bun dev                                # http://localhost:3000/businesses
+```
+
+- Prasyarat pipeline lokal: `twin/scripts/setup_local.sh` (COLMAP + Brush) dan `ffmpeg`.
+- Job dijalankan di thread dalam proses API (tanpa Redis); hasil 3D diterbitkan ke
+  `fe/public/samples/<id>.*` dan metadatanya disimpan di tabel `twin_assets`.
+- Bisnis demo `biz_demo` / analisis `ana_demo` (baca-saja) memakai hasil 3D contoh yang sudah ada.
+- Transkrip VLM dan simulasi agen belum tersambung; halaman itu masih memakai data contoh.
+
 ## Struktur
 
 ```
