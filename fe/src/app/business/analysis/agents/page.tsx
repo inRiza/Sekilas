@@ -106,7 +106,7 @@ function AgentItem({
             </div>
           </div>
 
-          <Button variant="secondary" size="sm" className="!rounded-md" onClick={onPlay3d}>
+          <Button variant="secondary" size="sm" className="w-full !rounded-md sm:w-auto" onClick={onPlay3d}>
             <Route size={14} /> Putar perjalanannya di Visual Twin
           </Button>
         </div>
@@ -208,7 +208,7 @@ function AgenExplorerInner() {
 
             {/* Kaki container */}
             <div className="flex items-center rounded-b-md bg-panel px-6 py-5 sm:px-10">
-              <Button variant="secondary" size="lg" onClick={() => router.push(`/business/analysis${querySuffix}`)} className="!rounded-md">
+              <Button variant="secondary" size="lg" onClick={() => router.push(`/business/analysis${querySuffix}`)} className="w-full !rounded-md sm:w-auto">
                 <ArrowLeftIcon size={16} /> Kembali ke dasbor
               </Button>
             </div>
