@@ -32,6 +32,11 @@ def get_session() -> Iterator[Session]:
 SessionDep = Annotated[Session, Depends(get_session)]
 
 
+def is_local_db() -> bool:
+    """True untuk Postgres di mesin ini atau SQLite; False untuk Supabase/remote."""
+    return engine.dialect.name == "sqlite" or engine.url.host in ("localhost", "127.0.0.1", "::1")
+
+
 MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "supabase" / "migrations"
 
 

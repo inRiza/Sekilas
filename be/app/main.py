@@ -6,17 +6,19 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1.router import api_router
 from app.core.config import get_settings
-from app.core.db import init_db
+from app.core.db import init_db, is_local_db
 from app.core.seed import seed_demo
-from app.services.twin.local_runner import fail_orphaned_jobs
+from app.services.twin.local_runner import resume_orphaned_jobs
 
 settings = get_settings()
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-    init_db()
-    fail_orphaned_jobs()
+    # Skema Supabase dikelola lewat supabase/migrations; hanya DB lokal yang disiapkan di sini.
+    if is_local_db():
+        init_db()
+    resume_orphaned_jobs()
     seed_demo()
     yield
 
