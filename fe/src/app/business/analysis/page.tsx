@@ -2,12 +2,18 @@
 
 import React, { useEffect, useState, Suspense } from 'react';
 import Link from 'next/link';
-import { useSearchParams } from 'next/navigation';
-import { TrendingDown, TrendingUp, TriangleAlert, Wallet, type LucideIcon } from 'lucide-react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { LoaderCircle, TrendingDown, TrendingUp, TriangleAlert, Wallet, type LucideIcon } from 'lucide-react';
 import { InfoIcon, TrendingUpIcon } from '@/components/ui/icons';
 import { Badge } from '@/components/ui/badge';
 import { TwinViewer } from '@/components/dashboard/twin-viewer';
-import { fetchDashboardData, runWhatIfProjection, subscribeCrudChanges } from '@/lib/api/crud';
+import {
+  cloneAnalysisWithTranscript,
+  fetchDashboardData,
+  runWhatIfProjection,
+  SimulationRequiredError,
+  subscribeCrudChanges,
+} from '@/lib/api/crud';
 import { MOCK_DASHBOARD, MOCK_WHAT_IF_PROJECTION, WhatIfFix } from '@/lib/mock/dashboard';
 import type { DashboardData, WaypointData, WhatIfProjectionData } from '@/types/api';
 
@@ -89,6 +95,7 @@ function KpiCard({
 }
 
 function DashboardResultInner() {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const analysisId = searchParams.get('analysisId') || 'selasar-kopi';
   const businessId = searchParams.get('businessId');
@@ -96,65 +103,130 @@ function DashboardResultInner() {
     businessId ? `&businessId=${encodeURIComponent(businessId)}` : ''
   }`;
 
-  const [data, setData] = useState<DashboardData>(MOCK_DASHBOARD);
-  const [projection, setProjection] = useState<WhatIfProjectionData>(
-    MOCK_DASHBOARD.what_if_projection ?? MOCK_WHAT_IF_PROJECTION,
+  const [data, setData] = useState<DashboardData | null>(
+    analysisId === 'selasar-kopi' ? MOCK_DASHBOARD : null,
+  );
+  const [projection, setProjection] = useState<WhatIfProjectionData | null>(
+    analysisId === 'selasar-kopi' ? (MOCK_DASHBOARD.what_if_projection ?? MOCK_WHAT_IF_PROJECTION) : null,
   );
   const [activeWaypoint, setActiveWaypoint] = useState<string>('tangga');
   const [fixes, setFixes] = useState<WhatIfFix[]>([]);
   const [isSimulating, setIsSimulating] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [whatIfError, setWhatIfError] = useState<string | null>(null);
+  const [elapsedSec, setElapsedSec] = useState(0);
+
+  useEffect(() => {
+    if (data || loadError) return;
+    const timer = window.setInterval(() => setElapsedSec((s) => s + 1), 1000);
+    return () => window.clearInterval(timer);
+  }, [data, loadError]);
 
   useEffect(() => {
     const load = () => {
-      void fetchDashboardData(analysisId).then((res) => {
-        setData(res);
-        if (res.what_if_projection) {
-          setProjection(res.what_if_projection);
-        }
-        if (res.recommendations && res.recommendations.length > 0) {
-          setFixes(
-            res.recommendations.map((rec, idx) => ({
-              id: rec.id,
-              title: rec.title,
-              impact_label: idx === 0 ? 'Dampak tinggi' : 'Dampak sedang',
-              effort_label: rec.rank === 1 ? 'Usaha rendah' : 'Usaha sedang',
-              is_checked: true,
-            })),
-          );
-        }
-        if (res.waypoints && res.waypoints.length > 0) {
-          const hotspot = res.waypoints.find((w) => w.is_hotspot) ?? res.waypoints[0];
-          if (hotspot) setActiveWaypoint(hotspot.id);
-        }
-      });
+      setLoadError(null);
+      void fetchDashboardData(analysisId)
+        .then((res) => {
+          setData(res);
+          if (res.what_if_projection) {
+            setProjection(res.what_if_projection);
+          }
+          if (res.recommendations && res.recommendations.length > 0) {
+            setFixes(
+              res.recommendations.map((rec, idx) => ({
+                id: rec.id,
+                title: rec.title,
+                impact_label: rec.estimated_lift_range || (idx === 0 ? 'Dampak tinggi' : 'Dampak sedang'),
+                effort_label:
+                  rec.effort === 'Rendah'
+                    ? 'Usaha rendah'
+                    : rec.effort === 'Tinggi'
+                      ? 'Usaha tinggi'
+                      : 'Usaha sedang',
+                is_checked: true,
+              })),
+            );
+          }
+          if (res.waypoints && res.waypoints.length > 0) {
+            const hotspot = res.waypoints.find((w) => w.is_hotspot) ?? res.waypoints[0];
+            if (hotspot) setActiveWaypoint(hotspot.id);
+          }
+        })
+        .catch((err) => {
+          if (err instanceof SimulationRequiredError || (err instanceof Error && err.message === 'SIMULATION_REQUIRED')) {
+            router.replace(`/business/analysis/verifikasi${querySuffix}`);
+            return;
+          }
+          setLoadError(err instanceof Error ? err.message : 'Gagal memuat dasbor.');
+        });
     };
     load();
     return subscribeCrudChanges(load);
-  }, [analysisId]);
+  }, [analysisId, querySuffix, router]);
 
   const toggleFix = (id: string) => {
     setFixes((prev) => {
       const next = prev.map((f) => (f.id === id ? { ...f, is_checked: !f.is_checked } : f));
       const checkedIds = next.filter((f) => f.is_checked).map((f) => f.id);
-      void runWhatIfProjection(analysisId, checkedIds, 'estimasi_cepat').then((updated) => {
-        if (updated) setProjection(updated);
-      });
+      setWhatIfError(null);
+      void runWhatIfProjection(analysisId, checkedIds, 'estimasi_cepat')
+        .then((updated) => {
+          if (updated) setProjection(updated);
+        })
+        .catch((err) => {
+          setWhatIfError(err instanceof Error ? err.message : 'Gagal menghitung estimasi cepat.');
+        });
       return next;
     });
   };
 
   const handleRunWhatIf = async () => {
     setIsSimulating(true);
+    setWhatIfError(null);
     try {
       const checkedIds = fixes.filter((f) => f.is_checked).map((f) => f.id);
       const updated = await runWhatIfProjection(analysisId, checkedIds, 'terverifikasi_simulasi');
       if (updated) {
         setProjection(updated);
       }
+    } catch (err) {
+      setWhatIfError(err instanceof Error ? err.message : 'Gagal menjalankan simulasi ulang.');
     } finally {
       setIsSimulating(false);
     }
   };
+
+  if (loadError) {
+    return (
+      <div className="flex min-h-full items-center justify-center bg-white px-4 py-16">
+        <div className="max-w-md rounded-xl border border-friction/40 bg-friction-10 p-6 text-center text-friction">
+          <p className="text-sm font-semibold">Gagal memuat dasbor analisis</p>
+          <p className="mt-1 text-xs">{loadError}</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!data || !projection) {
+    const stageText =
+      elapsedSec < 3
+        ? 'Mengambil data dasbor dan keputusan 20 agen dari server...'
+        : elapsedSec < 10
+          ? 'Belum ada hasil simulasi tersimpan — menjalankan simulasi 20 agen (2 batch paralel)...'
+          : 'Meranking Katalog Isyarat dan menyusun rekomendasi perbaikan...';
+    return (
+      <div className="flex min-h-full items-center justify-center bg-white px-4 py-16">
+        <div className="max-w-md rounded-xl border border-line bg-white p-6 text-center shadow-sm">
+          <div className="mx-auto flex size-10 items-center justify-center rounded-full bg-primary-10 text-primary-40">
+            <LoaderCircle size={20} className="animate-spin" />
+          </div>
+          <p className="mt-3 text-sm font-medium text-ink">Memuat hasil simulasi dan dasbor</p>
+          <p className="mt-1 text-xs leading-relaxed text-muted">{stageText}</p>
+          <p className="mt-2 font-mono text-[11px] text-subtle">Waktu tunggu: {elapsedSec} dtk</p>
+        </div>
+      </div>
+    );
+  }
 
   const checkedFixesCount = fixes.filter((f) => f.is_checked).length;
   const durationSeconds = Math.max(1, Math.round(data.twin_meta?.path_duration_seconds || 48));
@@ -195,6 +267,23 @@ function DashboardResultInner() {
                 Data berubah • Jalankan ulang
               </Link>
             )}
+            <button
+              type="button"
+              onClick={async () => {
+                try {
+                  const cloned = await cloneAnalysisWithTranscript(analysisId);
+                  const bId = businessId || cloned.business_id;
+                  router.push(
+                    `/business/analysis/konteks?analysisId=${encodeURIComponent(cloned.id)}${bId ? `&businessId=${encodeURIComponent(bId)}` : ''}`,
+                  );
+                } catch (err) {
+                  setWhatIfError(err instanceof Error ? err.message : 'Gagal membuat analisis baru.');
+                }
+              }}
+              className="inline-flex h-9 items-center rounded-md border border-line bg-white px-3.5 text-xs font-medium text-ink hover:bg-panel transition"
+            >
+              Analisis baru (transkrip sama)
+            </button>
             <Link
               href={`/business/analysis/agents${querySuffix}`}
               className="inline-flex h-9 items-center rounded-md border border-line bg-white px-3.5 text-xs font-medium text-ink hover:bg-panel transition"
@@ -420,9 +509,14 @@ function DashboardResultInner() {
               {/* Header & Legend */}
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3">
                 <div>
-                  <h3 className="text-base font-semibold text-ink">Proyeksi pasca simulasi</h3>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h3 className="text-base font-semibold text-ink">Proyeksi pasca simulasi</h3>
+                    <Badge variant={projection.mode === 'terverifikasi_simulasi' ? 'impact' : 'neutral'}>
+                      {projection.mode === 'terverifikasi_simulasi' ? 'Terverifikasi simulasi' : 'Estimasi cepat'}
+                    </Badge>
+                  </div>
                   <p className="text-xs text-muted mt-0.5">
-                    Perbandingan perilaku agen yang sama, sebelum dan sesudah perbaikan.
+                    Perbandingan perilaku {data.total_agents || 20} agen yang sama, sebelum dan sesudah perbaikan (contoh awal).
                   </p>
                 </div>
                 <div className="flex items-center gap-3 text-xs font-medium text-ink-soft shrink-0">
@@ -434,6 +528,19 @@ function DashboardResultInner() {
                   </span>
                 </div>
               </div>
+
+              {whatIfError && (
+                <div className="rounded-md border border-friction/40 bg-friction-10 px-4 py-2.5 text-xs text-friction">
+                  {whatIfError}
+                </div>
+              )}
+
+              {projection.low_accuracy_early_edit && projection.accuracy_note && (
+                <div className="flex items-start gap-2.5 rounded-md border border-friction/40 bg-friction-10 px-4 py-3 text-xs text-friction">
+                  <TriangleAlert size={15} className="mt-0.5 shrink-0" />
+                  <p className="leading-relaxed">{projection.accuracy_note}</p>
+                </div>
+              )}
 
               {/* 4 metrik ringkas: angka hitam seragam, arah perubahan lewat ikon berwarna */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -471,8 +578,8 @@ function DashboardResultInner() {
                           style={{ width: `${stage.baseline_pct}%` }}
                         />
                       </div>
-                      <span className="font-mono text-[11px] text-muted w-10 text-right shrink-0">
-                        {stage.baseline_pct}%
+                      <span className="font-mono text-[11px] text-muted w-12 text-right shrink-0">
+                        {Math.round((stage.baseline_pct / 100) * (data.total_agents || 20))}/{data.total_agents || 20}
                       </span>
                     </div>
 
@@ -485,8 +592,8 @@ function DashboardResultInner() {
                           style={{ width: `${stage.projected_pct}%` }}
                         />
                       </div>
-                      <span className="font-mono text-[11px] text-primary-40 font-semibold w-10 text-right shrink-0">
-                        {stage.projected_pct}%
+                      <span className="font-mono text-[11px] text-primary-40 font-semibold w-12 text-right shrink-0">
+                        {Math.round((stage.projected_pct / 100) * (data.total_agents || 20))}/{data.total_agents || 20}
                       </span>
                     </div>
                   </div>

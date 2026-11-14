@@ -16,6 +16,7 @@ from typing import Any
 
 import httpx
 from google import genai
+from google.genai import errors as genai_errors
 from google.genai import types
 
 from app.core.config import Settings, get_settings
@@ -30,6 +31,14 @@ def _extract_json_payload(raw_text: str) -> dict[str, Any] | list[Any]:
         text = re.sub(r"^```(?:json)?\s*", "", text)
         text = re.sub(r"\s*```$", "", text)
     return json.loads(text)
+
+
+class LLMUnavailableError(RuntimeError):
+    """Galat ketika model LLM yang diwajibkan (mis. Gemini VLM) tidak tersedia / 503."""
+
+    def __init__(self, message: str, *, status_code: int = 503) -> None:
+        super().__init__(message)
+        self.status_code = status_code
 
 
 @dataclass
@@ -67,7 +76,10 @@ class LLMRouter:
         if not self.settings.gemini_api_key:
             return None
         if self._gemini_client is None:
-            self._gemini_client = genai.Client(api_key=self.settings.gemini_api_key)
+            self._gemini_client = genai.Client(
+                api_key=self.settings.gemini_api_key,
+                http_options=types.HttpOptions(timeout=35_000),
+            )
         return self._gemini_client
 
     def generate_multimodal_json(
@@ -89,8 +101,10 @@ class LLMRouter:
 
         client = self._get_gemini_client()
         if client is None:
-            logger.warning("GEMINI_API_KEY belum diatur; melewati panggilan multimodal Gemini.")
-            return None
+            raise LLMUnavailableError(
+                "GEMINI_API_KEY belum diatur. Layanan transkrip multimodal Gemini tidak tersedia.",
+                status_code=503,
+            )
 
         contents: list[Any] = [user_prompt]
         for idx, kf in enumerate(keyframes, start=1):
@@ -105,11 +119,23 @@ class LLMRouter:
             max_output_tokens=max_output_tokens,
             response_mime_type="application/json",
         )
-        response = client.models.generate_content(
-            model=self.settings.gemini_model,
-            contents=contents,
-            config=config,
-        )
+        try:
+            response = client.models.generate_content(
+                model=self.settings.gemini_model,
+                contents=contents,
+                config=config,
+            )
+        except genai_errors.APIError as exc:
+            code = int(getattr(exc, "code", 503) or 503)
+            if code == 503:
+                raise LLMUnavailableError(
+                    f"Model Gemini ({self.settings.gemini_model}) sedang mengalami lonjakan permintaan (503 UNAVAILABLE). Silakan coba beberapa saat lagi.",
+                    status_code=503,
+                ) from exc
+            raise LLMUnavailableError(
+                f"Layanan Gemini mengembalikan galat ({code}): {getattr(exc, 'message', str(exc))}",
+                status_code=code if 400 <= code < 600 else 502,
+            ) from exc
         raw_text = response.text or "{}"
         parsed = _extract_json_payload(raw_text)
         usage = getattr(response, "usage_metadata", None)
@@ -130,45 +156,22 @@ class LLMRouter:
         max_output_tokens: int = 3072,
         allow_openai_fallback: bool = True,
     ) -> LLMCallResult | None:
-        """Kirim prompt teks JSON ke Gemini; otomatis fallback ke OpenAI bila gagal."""
+        """Kirim prompt teks JSON untuk simulasi agent swarm & rekomendasi ke OpenAI (gpt-6-luna)."""
         if self.is_mock_mode:
             return None
 
-        client = self._get_gemini_client()
-        if client is not None:
-            try:
-                config = types.GenerateContentConfig(
-                    system_instruction=system_prompt,
-                    temperature=temperature,
-                    max_output_tokens=max_output_tokens,
-                    response_mime_type="application/json",
-                )
-                response = client.models.generate_content(
-                    model=self.settings.gemini_model,
-                    contents=user_prompt,
-                    config=config,
-                )
-                parsed = _extract_json_payload(response.text or "{}")
-                usage = getattr(response, "usage_metadata", None)
-                return LLMCallResult(
-                    data=parsed,
-                    provider="gemini",
-                    model=self.settings.gemini_model,
-                    prompt_tokens=int(getattr(usage, "prompt_token_count", 0) or 0),
-                    completion_tokens=int(getattr(usage, "candidates_token_count", 0) or 0),
-                )
-            except (httpx.HTTPError, ValueError, RuntimeError, KeyError, TypeError, OSError) as exc:  # pragma: no cover - bergantung jaringan/kuota eksternal
-                logger.warning("Panggilan Gemini gagal (%s); mencoba fallback OpenAI.", exc)
-
-        if allow_openai_fallback and self.settings.openai_api_key:
-            return self._call_openai_json(
-                system_prompt=system_prompt,
-                user_prompt=user_prompt,
-                temperature=temperature,
-                max_output_tokens=max_output_tokens,
+        if not self.settings.openai_api_key:
+            raise LLMUnavailableError(
+                "OPENAI_API_KEY belum diatur untuk menjalankan simulasi agent swarm.",
+                status_code=503,
             )
 
-        return None
+        return self._call_openai_json(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            temperature=temperature,
+            max_output_tokens=max_output_tokens,
+        )
 
     def _call_openai_json(
         self,
@@ -178,28 +181,69 @@ class LLMRouter:
         temperature: float,
         max_output_tokens: int,
     ) -> LLMCallResult | None:
-        """Fallback panggilan teks/JSON ke OpenAI Chat Completions API."""
+        """Panggilan teks/JSON ke OpenAI Chat Completions API (tidak fallback ke model lain)."""
         headers = {
             "Authorization": f"Bearer {self.settings.openai_api_key}",
             "Content-Type": "application/json",
         }
-        payload = {
+        payload: dict[str, Any] = {
             "model": self.settings.openai_model,
             "temperature": temperature,
-            "max_tokens": max_output_tokens,
+            "max_completion_tokens": max_output_tokens,
             "response_format": {"type": "json_object"},
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
         }
-        with httpx.Client(timeout=45.0) as http:
-            resp = http.post("https://api.openai.com/v1/chat/completions", headers=headers, json=payload)
-            resp.raise_for_status()
-            body = resp.json()
 
-        content = body["choices"][0]["message"]["content"]
-        parsed = _extract_json_payload(content)
+        def _post_once(req_payload: dict[str, Any]) -> dict[str, Any]:
+            with httpx.Client(timeout=60.0) as http:
+                resp = http.post("https://api.openai.com/v1/chat/completions", headers=headers, json=req_payload)
+                if not resp.is_success:
+                    err_msg = resp.text[:300]
+                    try:
+                        err_json = resp.json()
+                        if isinstance(err_json, dict) and isinstance(err_json.get("error"), dict):
+                            err_msg = str(err_json["error"].get("message") or err_msg)
+                    except (ValueError, TypeError):
+                        pass
+                    code = int(resp.status_code)
+                    # Jika model OpenAI ini tidak mendukung parameter temperature kustom, coba ulang tanpa temperature pada model yang SAMA.
+                    if code == 400 and "temperature" in err_msg.lower() and "temperature" in req_payload:
+                        stripped = {k: v for k, v in req_payload.items() if k != "temperature"}
+                        return _post_once(stripped)
+                    raise LLMUnavailableError(
+                        f"Model OpenAI ({self.settings.openai_model}) mengembalikan galat ({code}): {err_msg}",
+                        status_code=code if code in (429, 503) else 502,
+                    )
+                return resp.json()
+
+        try:
+            body = _post_once(payload)
+        except LLMUnavailableError:
+            raise
+        except (httpx.HTTPError, ValueError, KeyError, TypeError, OSError) as exc:  # pragma: no cover
+            raise LLMUnavailableError(
+                f"Gagal memanggil model OpenAI ({self.settings.openai_model}): {exc}",
+                status_code=503,
+            ) from exc
+
+        choice = (body.get("choices") or [{}])[0]
+        content = (choice.get("message") or {}).get("content") or ""
+        if not content.strip():
+            finish_reason = choice.get("finish_reason", "unknown")
+            raise LLMUnavailableError(
+                f"Model OpenAI ({self.settings.openai_model}) mengembalikan respons kosong (finish_reason={finish_reason}).",
+                status_code=502,
+            )
+        try:
+            parsed = _extract_json_payload(content)
+        except (ValueError, TypeError) as exc:
+            raise LLMUnavailableError(
+                f"Respons JSON dari model OpenAI ({self.settings.openai_model}) tidak valid atau terpotong: {exc}",
+                status_code=502,
+            ) from exc
         usage = body.get("usage") or {}
         return LLMCallResult(
             data=parsed,

@@ -705,8 +705,13 @@ export async function completeVideoUpload(
   payload: Partial<VideoMetadata> & { cashier_at_s: number },
 ): Promise<VideoMetadata> {
   const saved = await saveVideoMetadata(analysisId, payload);
-  await tryApiFetch(`/analyses/${analysisId}/video/complete`, {
+  const authHeader = await getAuthHeaders();
+  const res = await fetch(`${API_BASE}/analyses/${analysisId}/video/complete`, {
     method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...authHeader,
+    },
     body: JSON.stringify({
       cashier_at_s: payload.cashier_at_s,
       storage_key: saved.storage_key,
@@ -720,6 +725,16 @@ export async function completeVideoUpload(
       frame_timestamps_s: payload.frame_timestamps_s,
     }),
   });
+  if (!res.ok) {
+    let detail = `Gagal memproses video (HTTP ${res.status}).`;
+    try {
+      const errBody = (await res.json()) as { detail?: string };
+      if (errBody?.detail) detail = errBody.detail;
+    } catch {
+      // ignore non-JSON body
+    }
+    throw new Error(detail);
+  }
   return saved;
 }
 
@@ -838,53 +853,139 @@ export async function deleteTranscriptSegment(analysisId: string, segmentId: str
 
 /* ---------------- Dashboard, Agent Decisions, What-If & Measurement Plan (F5, F6, F7) ---------------- */
 
+export class SimulationRequiredError extends Error {
+  readonly code = 'SIMULATION_REQUIRED';
+  constructor() {
+    super('SIMULATION_REQUIRED');
+    this.name = 'SimulationRequiredError';
+  }
+}
+
 export async function fetchDashboardData(analysisId?: string | null): Promise<DashboardData> {
   const id = analysisId || 'selasar-kopi';
-  const remote = await tryApiFetch<DashboardData>(`/analyses/${id}/dashboard`);
-  if (remote) return remote;
-
-  const anl = getLocalAnalyses().find((a) => a.id === id);
-  if (anl) {
-    return {
-      ...MOCK_DASHBOARD,
-      analysis_id: anl.id,
-      business_id: anl.business_id,
-      business_name: anl.business_name,
-      branch_name: anl.branch_name,
-      is_stale: Boolean(anl.stale),
-    };
+  const authHeader = await getAuthHeaders();
+  try {
+    const res = await fetch(`${API_BASE}/analyses/${id}/dashboard?require_existing=true`, {
+      headers: {
+        'Content-Type': 'application/json',
+        ...authHeader,
+      },
+    });
+    if (res.status === 409) {
+      throw new SimulationRequiredError();
+    }
+    if (res.ok) {
+      return (await res.json()) as DashboardData;
+    }
+  } catch (err) {
+    if (err instanceof SimulationRequiredError) throw err;
   }
-  return MOCK_DASHBOARD;
+
+  if (id === 'selasar-kopi') {
+    return MOCK_DASHBOARD;
+  }
+  throw new Error('Gagal memuat data dasbor dari server.');
+}
+
+function formatApiErrorDetail(errBody: unknown, fallback: string): string {
+  if (!errBody || typeof errBody !== 'object') return fallback;
+  const detail = (errBody as { detail?: unknown }).detail;
+  if (typeof detail === 'string' && detail.trim()) return detail;
+  if (Array.isArray(detail)) {
+    const msgs = detail
+      .map((item) => (item && typeof item === 'object' && 'msg' in item ? String((item as { msg: unknown }).msg) : ''))
+      .filter(Boolean);
+    if (msgs.length > 0) return msgs.join('; ');
+  }
+  return fallback;
 }
 
 export async function runWhatIfProjection(
   analysisId: string,
   checkedRecommendationIds: string[],
   mode: 'estimasi_cepat' | 'terverifikasi_simulasi' = 'estimasi_cepat',
-): Promise<WhatIfProjectionData | null> {
-  return await tryApiFetch<WhatIfProjectionData>(`/analyses/${analysisId}/dashboard/what-if`, {
+): Promise<WhatIfProjectionData> {
+  const authHeader = await getAuthHeaders();
+  const res = await fetch(`${API_BASE}/analyses/${analysisId}/dashboard/what-if`, {
     method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...authHeader,
+    },
     body: JSON.stringify({ checked_recommendation_ids: checkedRecommendationIds, mode }),
   });
+  if (!res.ok) {
+    let detail = `Gagal menghitung proyeksi simulasi (HTTP ${res.status}).`;
+    try {
+      detail = formatApiErrorDetail(await res.json(), detail);
+    } catch {
+      // ignore non-JSON body
+    }
+    throw new Error(detail);
+  }
+  return (await res.json()) as WhatIfProjectionData;
 }
 
 export async function fetchAgentDecisions(analysisId?: string | null): Promise<AgentDecision[]> {
   const id = analysisId || 'selasar-kopi';
   const remote = await tryApiFetch<AgentDecision[]>(`/analyses/${id}/simulation/agents`);
   if (remote !== null) return remote;
-  return MOCK_AGENTS;
+  return id === 'selasar-kopi' ? MOCK_AGENTS : [];
 }
 
 export async function triggerSimulationRun(analysisId?: string | null): Promise<void> {
   const id = analysisId || 'selasar-kopi';
-  await tryApiFetch(`/analyses/${id}/simulation`, {
+  const authHeader = await getAuthHeaders();
+  const res = await fetch(`${API_BASE}/analyses/${id}/simulation`, {
     method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...authHeader,
+    },
     body: JSON.stringify({ n_agents: 20, seed: 42 }),
   });
+  if (!res.ok) {
+    let detail = `Gagal menjalankan simulasi agen (HTTP ${res.status}).`;
+    try {
+      detail = formatApiErrorDetail(await res.json(), detail);
+    } catch {
+      // ignore non-JSON body
+    }
+    throw new Error(detail);
+  }
   await updateAnalysis(id, { status: 'ready', stale: false });
 }
 
 export async function fetchMeasurementPlan(analysisId?: string | null): Promise<MeasurementPlanData | null> {
   const id = analysisId || 'selasar-kopi';
   return await tryApiFetch<MeasurementPlanData>(`/analyses/${id}/measurement-plan`);
+}
+
+export async function cloneAnalysisWithTranscript(
+  sourceAnalysisId: string,
+  name?: string,
+): Promise<Analysis> {
+  const authHeader = await getAuthHeaders();
+  const res = await fetch(`${API_BASE}/analyses/${encodeURIComponent(sourceAnalysisId)}/clone`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...authHeader,
+    },
+    body: JSON.stringify(name ? { name } : {}),
+  });
+  if (!res.ok) {
+    let detail = `Gagal menyalin analisis dengan transkrip (HTTP ${res.status}).`;
+    try {
+      const errBody = (await res.json()) as { detail?: string };
+      if (errBody?.detail) detail = errBody.detail;
+    } catch {
+      // ignore non-JSON body
+    }
+    throw new Error(detail);
+  }
+  const cloned = (await res.json()) as Analysis;
+  const list = getLocalAnalyses();
+  setLocalAnalyses([cloned, ...list.filter((a) => a.id !== cloned.id)]);
+  return cloned;
 }

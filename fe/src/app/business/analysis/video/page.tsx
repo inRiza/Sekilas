@@ -81,6 +81,7 @@ function VideoUploadInner() {
   const [videoName, setVideoName] = useState<string | null>(null);
   const [sampledFrames, setSampledFrames] = useState<string[]>([]);
   const [sampledTimestamps, setSampledTimestamps] = useState<number[]>([]);
+  const [uploadError, setUploadError] = useState<string | null>(null);
   const [durationSec, setDurationSec] = useState<number>(48);
   const [widthPx, setWidthPx] = useState<number>(1920);
   const [heightPx, setHeightPx] = useState<number>(1080);
@@ -310,6 +311,7 @@ function VideoUploadInner() {
 
   const handleContinue = async () => {
     if (!canContinue || !videoName || cashierSec === null) return;
+    setUploadError(null);
     setSaving(true);
     try {
       let storageKey: string | undefined;
@@ -392,6 +394,9 @@ function VideoUploadInner() {
         frame_timestamps_s: timestampsToSend.length > 0 ? timestampsToSend : undefined,
       });
       router.push(`/business/analysis/proses${querySuffix}`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Gagal memproses video. Silakan coba beberapa saat lagi.';
+      setUploadError(msg);
     } finally {
       setSaving(false);
       setUploadStage(null);
@@ -746,6 +751,12 @@ function VideoUploadInner() {
             </div>
 
             {/* Kaki container: kembali & lanjut */}
+            {uploadError && (
+              <div className="mx-6 mb-4 rounded-md border border-friction/40 bg-friction-10 px-4 py-3 text-[13px] text-friction sm:mx-10">
+                <p className="font-medium">Gagal mengekstrak transkrip video</p>
+                <p className="mt-0.5 text-[12px]">{uploadError}</p>
+              </div>
+            )}
             <div className="flex flex-col-reverse gap-3 rounded-b-md bg-panel px-6 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-10">
               <Button
                 variant="secondary"
