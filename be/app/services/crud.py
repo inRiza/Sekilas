@@ -1459,6 +1459,175 @@ def compute_what_if_projection(
     )
 
 
+def _format_pct_id(pct: float) -> str:
+    txt = f"{pct:.1f}".rstrip("0").rstrip(".")
+    return f"{txt.replace('.', ',')}%"
+
+
+def _resolve_top_cue_detail(
+    top_cue: Any,
+    non_buyers: list[AgentDecisionOut],
+    business_name: str,
+) -> str:
+    """Bangun penjelasan detail KPI 'Penyebab utama batal' yang konsisten dengan top_cue."""
+    if top_cue is not None:
+        affected_ids = set(top_cue.affected_agent_ids or [])
+        matching = [
+            d
+            for d in non_buyers
+            if (d.agent_id in affected_ids)
+            or any(
+                a.cue_code == top_cue.cue_code and a.direction == "menghambat" and a.relevance_score > 0
+                for a in (d.attributions or [])
+            )
+        ]
+        quote = next((q.strip() for q in (top_cue.sample_quotes or []) if q and q.strip()), "")
+        if quote:
+            return f'Sering muncul pada {top_cue.affected_agents_count} agen ({top_cue.cue_code}): "{quote}"'
+        matching_factors = Counter(d.deciding_factor for d in matching if d.deciding_factor)
+        if matching_factors:
+            return matching_factors.most_common(1)[0][0]
+        return f"{top_cue.title} memengaruhi {top_cue.affected_agents_count} dari {top_cue.total_non_buyers} agen batal."
+
+    factor_counts = Counter(d.deciding_factor for d in non_buyers if d.deciding_factor)
+    return factor_counts.most_common(1)[0][0] if factor_counts else f"Tidak ada hambatan dominan di {business_name}."
+
+
+def _build_dynamic_key_insights(
+    *,
+    analysis_id: str,
+    business_name: str,
+    total_agents: int,
+    lewat_cnt: int,
+    berhenti_cnt: int,
+    berhenti_pergi_cnt: int,
+    masuk_cnt: int,
+    masuk_tanpa_cnt: int,
+    memesan_cnt: int,
+    r_lewat: float,
+    r_berhenti: float,
+    r_masuk: float,
+    top_from: str,
+    non_h0_cues: list[Any],
+    top_cause_detail: str,
+) -> list[KeyInsightOut]:
+    """Susun 3 temuan utama secara dinamis berdasarkan titik bocor tertinggi, isyarat terkuat, dan konversi kasir."""
+    total_lost = lewat_cnt + berhenti_pergi_cnt + masuk_tanpa_cnt
+    if total_lost == 0:
+        ins1 = KeyInsightOut(
+            id=f"ins_{analysis_id}_1",
+            number="01",
+            type="positive",
+            title=f"Konversi Penuh di {business_name} ({memesan_cnt} dari {total_agents} agen)",
+            description=(
+                f"Seluruh {total_agents} agen melewati area depan, pintu, dan kasir {business_name} "
+                "hingga memesan tanpa hambatan berarti."
+            ),
+        )
+    elif top_from == "Melihat":
+        ins1 = KeyInsightOut(
+            id=f"ins_{analysis_id}_1",
+            number="01",
+            type="friction",
+            title=f"Kebocoran Terbesar di Jalur Jalan ({lewat_cnt} dari {total_agents} agen lewat)",
+            description=(
+                f"{_format_pct_id(r_lewat)} agen langsung melewati {business_name} dari trotoar sebelum sempat berhenti. "
+                f"{top_cause_detail}"
+            ),
+        )
+    elif top_from == "Berhenti":
+        ins1 = KeyInsightOut(
+            id=f"ins_{analysis_id}_1",
+            number="01",
+            type="friction",
+            title=f"Kebocoran Terbesar di Akses Masuk ({berhenti_pergi_cnt} dari {berhenti_cnt} agen batal)",
+            description=(
+                f"Dari {berhenti_cnt} agen yang sempat berhenti mengamati {business_name}, "
+                f"{berhenti_pergi_cnt} agen ({_format_pct_id(r_berhenti)}) urung masuk. {top_cause_detail}"
+            ),
+        )
+    else:
+        ins1 = KeyInsightOut(
+            id=f"ins_{analysis_id}_1",
+            number="01",
+            type="friction",
+            title=f"Kebocoran Terbesar di Area Dalam/Kasir ({masuk_tanpa_cnt} dari {masuk_cnt} agen batal)",
+            description=(
+                f"Dari {masuk_cnt} agen yang sudah masuk ke {business_name}, "
+                f"{masuk_tanpa_cnt} agen ({_format_pct_id(r_masuk)}) batal memesan di kasir. {top_cause_detail}"
+            ),
+        )
+
+    if len(non_h0_cues) >= 2:
+        c1, c2 = non_h0_cues[0], non_h0_cues[1]
+        q_hint = f' Contoh reaksi: "{c1.sample_quotes[0][:90]}".' if c1.sample_quotes else ""
+        ins2 = KeyInsightOut(
+            id=f"ins_{analysis_id}_2",
+            number="02",
+            type="friction",
+            title=f"Pemicu Dominan: {c1.cue_code} ({c1.share_pct:g}%) & {c2.cue_code} ({c2.share_pct:g}%)",
+            description=(
+                f"{c1.title} memengaruhi {c1.affected_agents_count}/{c1.total_non_buyers} agen batal "
+                f"(Lift {c1.lift}x), diikuti {c2.title.lower()} ({c2.affected_agents_count} agen).{q_hint}"
+            ),
+        )
+    elif len(non_h0_cues) == 1:
+        c1 = non_h0_cues[0]
+        ins2 = KeyInsightOut(
+            id=f"ins_{analysis_id}_2",
+            number="02",
+            type="friction",
+            title=f"Faktor Tunggal Terkuat: {c1.cue_code} ({c1.share_pct:g}% porsi)",
+            description=f"{c1.title}. {top_cause_detail}",
+        )
+    else:
+        ins2 = KeyInsightOut(
+            id=f"ins_{analysis_id}_2",
+            number="02",
+            type="positive",
+            title=f"Daya Tarik Fasad dari Jalan ({berhenti_cnt} dari {total_agents} agen berhenti)",
+            description=f"{berhenti_cnt} dari {total_agents} agen berhenti memperhatikan {business_name} dari arah jalan.",
+        )
+
+    if masuk_cnt == 0:
+        ins3 = KeyInsightOut(
+            id=f"ins_{analysis_id}_3",
+            number="03",
+            type="friction",
+            title=f"Belum Ada Agen Mencapai Kasir (0 dari {total_agents} agen)",
+            description=(
+                f"Seluruh {total_agents} agen tertahan di area jalan atau pintu {business_name}; "
+                "perkuat tampilan luar terlebih dulu sebelum menguji konversi kasir."
+            ),
+        )
+    elif r_masuk < 40.0:
+        conv_pct = _format_pct_id(round((memesan_cnt / max(masuk_cnt, 1)) * 100, 1))
+        ins3 = KeyInsightOut(
+            id=f"ins_{analysis_id}_3",
+            number="03",
+            type="positive",
+            title=f"Konversi Area Kasir Baik ({memesan_cnt} dari {masuk_cnt} agen memesan)",
+            description=(
+                f"Begitu melewati pintu masuk {business_name}, {conv_pct} pengunjung bertahan hingga memesan; "
+                "hambatan terbesar bukan berada di area kasir."
+            ),
+        )
+    else:
+        conv_pct = _format_pct_id(round((memesan_cnt / max(masuk_cnt, 1)) * 100, 1))
+        ins3 = KeyInsightOut(
+            id=f"ins_{analysis_id}_3",
+            number="03",
+            type="friction",
+            title=f"Friksi di Area Dalam/Kasir ({masuk_tanpa_cnt} dari {masuk_cnt} agen batal)",
+            description=(
+                f"Hanya {memesan_cnt} dari {masuk_cnt} agen yang masuk jadi memesan ({conv_pct}); "
+                "perjelas alur pesan, keterbacaan menu/harga, antrean, atau info bayar non-tunai."
+            ),
+        )
+
+    return [ins1, ins2, ins3]
+
+
 def build_dashboard_data(
     session: Session,
     analysis: AnalysisModel,
@@ -1622,7 +1791,7 @@ def build_dashboard_data(
         ),
     ]
 
-    # Agregasi faktor penyebab batal tertinggi dari Katalog Isyarat (H1-H10)
+    # Agregasi faktor penyebab batal tertinggi dari Katalog Isyarat (H1-H14)
     from app.services.simulation.pareto import aggregate_cue_scores
     from app.services.simulation.runner import AgentRunResult
 
@@ -1658,15 +1827,10 @@ def build_dashboard_data(
     top_cue = non_h0_cues[0] if non_h0_cues else (cue_ranks[0] if cue_ranks else None)
 
     non_buyers = [d for d in decisions if d.final_decision != "memesan"]
-    factor_counts = Counter(d.deciding_factor for d in non_buyers if d.deciding_factor)
-    top_factor_text = (
-        factor_counts.most_common(1)[0][0]
-        if factor_counts
-        else (top_cue.title if top_cue else f"Informasi menu & harga {business_name} belum terlihat dari jalan")
-    )
+    top_factor_text = _resolve_top_cue_detail(top_cue, non_buyers, business_name)
     main_cause_short = f"{top_cue.cue_code} · {top_cue.title}" if top_cue else "Info Depan Toko"
     main_cause_rank_str = (
-        f"Peringkat 1 Katalog Isyarat ({top_cue.affected_agents_count} dari {top_cue.total_non_buyers} agen batal · Lift {top_cue.lift}x)"
+        f"Peringkat 1 ({top_cue.share_pct:g}% porsi · {top_cue.affected_agents_count}/{top_cue.total_non_buyers} agen batal · Lift {top_cue.lift}x)"
         if top_cue
         else f"Peringkat 1 ({len(non_buyers)} dari {total_agents} agen batal)"
     )
@@ -1681,43 +1845,6 @@ def build_dashboard_data(
         monthly_lost_visitors = round(daily_vis * (berhenti_pergi_cnt / max(total_agents, 1)) * 15)
         loss_low = monthly_lost_visitors * avg_price
         loss_high = round(loss_low * 1.35)
-
-    key_insights = [
-        KeyInsightOut(
-            id=f"ins_{analysis.id}_1",
-            number="01",
-            type="friction",
-            title=f"Friksi Utama di Akses Masuk {business_name} ({berhenti_pergi_cnt} dari {berhenti_cnt} agen batal)",
-            description=(
-                f"Dari {berhenti_cnt} agen yang tertarik berhenti di depan {business_name}, "
-                f"{berhenti_pergi_cnt} agen urung masuk. Alasan terkuat: {top_factor_text}"
-            ),
-        ),
-        KeyInsightOut(
-            id=f"ins_{analysis.id}_2",
-            number="02",
-            type="friction" if lewat_cnt >= 5 else "positive",
-            title=f"Daya Tarik Fasad dari Jalan ({berhenti_cnt} dari {total_agents} agen berhenti)",
-            description=(
-                f"{berhenti_cnt} dari {total_agents} agen pejalan kaki menoleh ke {business_name}, "
-                f"namun {lewat_cnt} agen langsung lewat karena penanda dari arah jalan belum terbaca cepat."
-            ),
-        ),
-        KeyInsightOut(
-            id=f"ins_{analysis.id}_3",
-            number="03",
-            type="positive",
-            title=f"Konversi Area Kasir ({memesan_cnt} dari {masuk_cnt} agen memesan)",
-            description=(
-                f"Begitu calon pelanggan melewati pintu masuk {business_name}, "
-                f"{memesan_cnt} dari {masuk_cnt} agen memesan di kasir."
-            ),
-        ),
-    ]
-
-    def _format_pct_id(pct: float) -> str:
-        txt = f"{pct:.1f}".rstrip("0").rstrip(".")
-        return f"{txt.replace('.', ',')}%"
 
     drop_candidates = [
         (
@@ -1751,6 +1878,24 @@ def build_dashboard_data(
     valid_drops = [d for d in drop_candidates if d[2] > 0]
     top_rate, _, _, top_from, top_to, top_loc, top_desc = max(
         valid_drops or drop_candidates[:1], key=lambda d: (d[0], d[1])
+    )
+
+    key_insights = _build_dynamic_key_insights(
+        analysis_id=analysis.id,
+        business_name=business_name,
+        total_agents=total_agents,
+        lewat_cnt=lewat_cnt,
+        berhenti_cnt=berhenti_cnt,
+        berhenti_pergi_cnt=berhenti_pergi_cnt,
+        masuk_cnt=masuk_cnt,
+        masuk_tanpa_cnt=masuk_tanpa_cnt,
+        memesan_cnt=memesan_cnt,
+        r_lewat=r_lewat,
+        r_berhenti=r_berhenti,
+        r_masuk=r_masuk,
+        top_from=top_from,
+        non_h0_cues=non_h0_cues,
+        top_cause_detail=top_factor_text,
     )
 
     kpi = DashboardKpiOut(

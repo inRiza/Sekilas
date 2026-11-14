@@ -335,7 +335,11 @@ function DashboardResultInner() {
             icon={TrendingDown}
             tone="friction"
           />
-          <CauseCard title={data.kpi.main_cause_title || '–'} rank={data.kpi.main_cause_cue_rank} />
+          <CauseCard
+            title={data.kpi.main_cause_title || '–'}
+            rank={data.kpi.main_cause_cue_rank}
+            detail={data.kpi.main_cause_detail}
+          />
         </div>
 
         {/* Alur perilaku agen, lalu peringkat semua alasan batal (masing-masing selebar halaman) */}

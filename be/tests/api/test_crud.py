@@ -305,3 +305,90 @@ def test_dashboard_kpi_drop_off_shows_percentage_and_matches_highest_stage(clien
         assert (kpi["drop_off_from_stage"], kpi["drop_off_to_stage"]) == ("Berhenti", "Masuk")
     else:
         assert (kpi["drop_off_from_stage"], kpi["drop_off_to_stage"]) == ("Masuk", "Memesan")
+
+
+def test_dashboard_aligns_main_cause_detail_and_dynamic_key_insights(client: TestClient) -> None:
+    from app.core.db import get_session
+    from app.models.entities import AgentDecisionRecord, SimulationRun
+
+    biz_res = client.post(
+        "/api/v1/businesses",
+        json={"name": "Warung Uji Selaras", "branch_name": "Utama", "category": "warung"},
+    )
+    assert biz_res.status_code == 201
+    anl_res = client.post(
+        f"/api/v1/businesses/{biz_res.json()['id']}/analyses",
+        json={"name": "Tes Selaras"},
+    )
+    assert anl_res.status_code == 201
+    anl_id = anl_res.json()["id"]
+
+    seg_res = client.post(
+        f"/api/v1/analyses/{anl_id}/transcript/segments",
+        json={
+            "timestamp_start": 0.0,
+            "timestamp_end": 15.0,
+            "vantage": "dalam",
+            "narrative": "Pengunjung masuk ke area kasir.",
+            "not_visible": "Metode bayar QRIS belum terlihat.",
+        },
+    )
+    assert seg_res.status_code == 201
+    seg_id = seg_res.json()["id"]
+
+    override_gen = app.dependency_overrides[get_session]()
+    session = next(override_gen)
+    try:
+        run = SimulationRun(
+            id="run_align",
+            analysis_id=anl_id,
+            run_type="baseline",
+            status="selesai",
+            n_agents=4,
+            succeeded_agents=4,
+        )
+        session.add(run)
+        session.flush()
+
+        # 4 agen masuk tanpa memesan (100% bocor di kasir!), mayoritas menunjuk H11 meski 2 agen menulis deciding_factor H1
+        for i in range(1, 5):
+            session.add(
+                AgentDecisionRecord(
+                    id=f"dec_align_{i}",
+                    run_id=run.id,
+                    analysis_id=anl_id,
+                    agent_id=i,
+                    batch_id=1,
+                    monologue="Masuk ke dalam tapi batal di kasir.",
+                    final_decision="masuk_tanpa_memesan",
+                    stopped_at_segment_id=seg_id,
+                    deciding_factor="Plang depan agak kecil" if i <= 2 else "Tidak ada info QRIS di kasir",
+                    factor_segment_ids=[seg_id],
+                    segment_traces=[{"segment_id": seg_id, "monologue": "Cek kasir.", "action": "berhenti"}],
+                    attributions=[
+                        {
+                            "cue_code": "H11",
+                            "direction": "menghambat",
+                            "relevance_score": 3,
+                            "evidence": "Tidak terlihat stiker QRIS saat mau membayar.",
+                        }
+                    ],
+                    primary_hypothesis_id="H11",
+                )
+            )
+        session.commit()
+    finally:
+        try:
+            next(override_gen)
+        except StopIteration:
+            pass
+
+    dash_res = client.get(f"/api/v1/analyses/{anl_id}/dashboard?require_existing=true")
+    assert dash_res.status_code == 200
+    dash = dash_res.json()
+    assert dash["kpi"]["main_cause_title"].startswith("H11 ·")
+    assert "QRIS" in dash["kpi"]["main_cause_detail"]
+    assert "Plang depan agak kecil" not in dash["kpi"]["main_cause_detail"]
+    # Insight 03 tidak boleh hardcoded type="positive" saat 0/4 agen memesan di kasir
+    assert dash["key_insights"][2]["type"] == "friction"
+    assert "Kasir" in dash["key_insights"][0]["title"] or "Dalam" in dash["key_insights"][0]["title"]

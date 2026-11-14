@@ -54,9 +54,17 @@ def test_discrete_personas_20_agents_reproducible() -> None:
 
 
 def test_catalog_actions_efficacy_and_shuffling() -> None:
-    assert any(h.cue_code == "H8" for h in HYPOTHESIS_CATALOG)
+    expected_codes = {f"H{i}" for i in range(15)}
+    assert {h.cue_code for h in HYPOTHESIS_CATALOG} == expected_codes
+    for h in HYPOTHESIS_CATALOG:
+        if h.cue_code == "H0":
+            continue
+        acts = [a for a in ACTION_CATALOG if a.cue_code == h.cue_code]
+        assert len(acts) >= 2, f"{h.cue_code} minimal punya 2 kandidat tindakan"
+
     for act in ACTION_CATALOG:
         assert 0.0 <= act.efficacy <= 1.0
+        assert render_action_spec(act.action_id, act.default_slots)
     rendered = render_action_spec("A2.1", {"tanda_status": "BUKA TIAP HARI"})
     assert "BUKA TIAP HARI" in rendered
 
@@ -416,3 +424,92 @@ def test_swarm_alias_mapping_early_stop_and_missing_agent_retry(monkeypatch) -> 
 
     monkeypatch.setenv("LLM_MODE", "mock")
     get_settings.cache_clear()
+
+
+def test_quick_estimate_zero_buyer_prior_and_mode2_selective_not_visible(monkeypatch) -> None:
+    from app.services.simulation.runner import AgentRunResult
+
+    monkeypatch.setenv("LLM_MODE", "mock")
+    get_settings.cache_clear()
+
+    segments = [
+        SegmentInput(
+            id="seg_1",
+            vantage="jalan",
+            narrative="Berjalan di trotoar depan toko.",
+            not_visible="Papan nama belum terlihat; Area parkir belum jelas.",
+        ),
+        SegmentInput(
+            id="seg_2",
+            vantage="pintu",
+            narrative="Melihat kaca depan.",
+            not_visible="Daftar menu dan harga belum terbaca. Kursi tunggu dan bayar QRIS belum terlihat.",
+        ),
+    ]
+    zero_buyer_baseline = [
+        AgentRunResult(
+            agent_id=1,
+            batch_id=1,
+            monologue="tes",
+            final_decision="lewat",
+            stopped_at_segment_id="seg_1",
+            deciding_factor="Plang belum terlihat",
+            factor_segment_ids=["seg_1"],
+            segment_traces=[],
+            attributions=[{"cue_code": "H1", "direction": "menghambat", "relevance_score": 3, "evidence": "plang"}],
+            primary_hypothesis_id="H1",
+        ),
+        AgentRunResult(
+            agent_id=2,
+            batch_id=1,
+            monologue="tes",
+            final_decision="berhenti_lalu_pergi",
+            stopped_at_segment_id="seg_2",
+            deciding_factor="Menu & harga belum tampak",
+            factor_segment_ids=["seg_2"],
+            segment_traces=[],
+            attributions=[{"cue_code": "H8", "direction": "menghambat", "relevance_score": 3, "evidence": "harga"}],
+            primary_hypothesis_id="H8",
+        ),
+    ]
+
+    quick = compute_quick_estimate_projection(
+        segments=segments,
+        baseline_results=zero_buyer_baseline,
+        checked_actions=[("A1.1", ["seg_1"]), ("A8.1", ["seg_2"])],
+    )
+    assert quick.buyers_baseline == 0
+    assert quick.tambahan_memesan > 0
+    assert quick.accuracy_note is not None
+    assert "konservatif" in quick.accuracy_note.lower()
+
+    rewritten, edited_ids, _ = _rewrite_target_segments_from_actions(
+        segments=segments,
+        checked_actions=[("A8.1", ["seg_2"], None)],
+    )
+    assert edited_ids == ["seg_2"]
+    assert "(Setelah perbaikan:" in rewritten[1].narrative
+    assert "Daftar menu dan harga" not in rewritten[1].not_visible
+    assert "Kursi tunggu" in rewritten[1].not_visible
+    assert "QRIS" in rewritten[1].not_visible
+
+
+def test_mock_swarm_exercises_expanded_cues_h11_to_h14(monkeypatch) -> None:
+    monkeypatch.setenv("LLM_MODE", "mock")
+    get_settings.cache_clear()
+
+    personas = generate_discrete_personas(n=20, seed=7)
+    segments = [
+        SegmentInput(id="s1", vantage="jalan", narrative="Tampak dari trotoar.", not_visible="Tulisan papan menu terlalu kecil dan kaca silau."),
+        SegmentInput(id="s2", vantage="pintu", narrative="Mendekati ambang pintu.", not_visible="Ketersediaan tempat duduk dan kursi tunggu tidak terlihat."),
+        SegmentInput(id="s3", vantage="dalam", narrative="Di depan etalase kasir.", not_visible="Stiker QRIS non-tunai dan estimasi waktu saji bungkus cepat belum terlihat."),
+    ]
+    results = run_20_agent_swarm(
+        personas=personas,
+        segments=segments,
+        business_summary="Kedai Kilat",
+        batch_size=10,
+        seed=7,
+    )
+    cue_codes = {c.cue_code for c in aggregate_cue_scores(results)}
+    assert cue_codes & {"H11", "H12", "H13", "H14"}
