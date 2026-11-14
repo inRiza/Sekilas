@@ -67,7 +67,7 @@ export function TwinViewer({
   const showAgents = Boolean(agents) && active === "putar" && source.kind !== "demo" && pathAvailable;
 
   return (
-    <div className="overflow-hidden rounded-md border border-line bg-white">
+    <div className="flex h-full flex-col overflow-hidden rounded-2xl border border-line/70 bg-white shadow-[0_1px_2px_rgba(16,24,40,0.04)]">
       {/* Kepala: judul, info, tab mode */}
       <div className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5">
         <div className="flex flex-wrap items-center gap-2">
@@ -106,27 +106,27 @@ export function TwinViewer({
       </div>
 
       {/* Kanvas */}
-      <div className="relative h-[420px] lg:h-[520px]">
+      <div className="relative h-[420px] flex-1 lg:h-auto lg:min-h-[420px]">
         {loadFailed ? (
           <div className="grid h-full place-items-center bg-panel px-6 text-center text-[13px] text-muted">
             Berkas 3D tidak bisa dimuat. Coba muat ulang halaman.
           </div>
         ) : (
-        <TwinScene
-          source={source}
-          onLoadError={() => setLoadFailed(true)}
-          mode={active}
-          tourPlaying={tourPlaying}
-          activeWaypoint={activeWaypoint}
-          onSelectWaypoint={(id) => {
-            setMode("putar");
-            onSelectWaypoint?.(id);
-          }}
-          onTourProgress={setTourProgress}
-          onPathAvailable={setPathAvailable}
-          agents={showAgents ? replay.overlay : null}
-          waypoints={waypoints}
-        />
+          <TwinScene
+            source={source}
+            onLoadError={() => setLoadFailed(true)}
+            mode={active}
+            tourPlaying={tourPlaying}
+            activeWaypoint={activeWaypoint}
+            onSelectWaypoint={(id) => {
+              setMode("putar");
+              onSelectWaypoint?.(id);
+            }}
+            onTourProgress={setTourProgress}
+            onPathAvailable={setPathAvailable}
+            agents={showAgents ? replay.overlay : null}
+            waypoints={waypoints}
+          />
         )}
 
         {showAgents && (
