@@ -176,6 +176,27 @@ def test_video_transcript_dashboard_and_measurement_endpoints(client: TestClient
     assert get_vid.status_code == 200
     assert get_vid.json()["blurred_faces_count"] == 12
 
+    # 1b. Video upload-url & complete (PRD 4.4.2)
+    url_res = client.post(
+        f"/api/v1/analyses/{anl_id}/video/upload-url",
+        json={"filename": "rekaman_fasad.mp4", "content_type": "video/mp4"},
+    )
+    assert url_res.status_code == 200
+    assert url_res.json()["bucket"] == "videos"
+    assert anl_id in url_res.json()["storage_key"]
+
+    comp_res = client.post(
+        f"/api/v1/analyses/{anl_id}/video/complete",
+        json={"cashier_at_s": 44.0, "duration_s": 48.0, "width": 1920, "height": 1080},
+    )
+    assert comp_res.status_code == 202
+    assert comp_res.json()["video"]["cashier_at_s"] == 44.0
+    assert comp_res.json()["transcript_job_id"].startswith("job_tr_")
+
+    # Clear auto-seeded segments before manual segment test
+    for existing_seg in client.get(f"/api/v1/analyses/{anl_id}/transcript").json():
+        client.delete(f"/api/v1/analyses/{anl_id}/transcript/segments/{existing_seg['id']}")
+
     # 2. Transcript segment create, list, patch, delete
     create_seg = client.post(
         f"/api/v1/analyses/{anl_id}/transcript/segments",

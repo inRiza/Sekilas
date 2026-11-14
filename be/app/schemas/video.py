@@ -15,21 +15,54 @@ class QualityIssue(StrEnum):
     too_dark = "too_dark"
     too_shaky = "too_shaky"
     too_short = "too_short"
+    too_long = "too_long"
+    low_resolution = "low_resolution"
     rotating_in_place = "rotating_in_place"
 
 
 class VideoQuality(BaseModel):
-    """PRD F2: ditolak jika gelap, goyang, < 20 detik."""
+    """PRD F2: ditolak jika gelap, goyang, < 20 detik, > 180 detik, atau sisi pendek < 480 px."""
 
     accepted: bool
     duration_s: float
+    shortest_side_px: int = 1080
     issues: list[QualityIssue] = []
+    warnings: list[str] = []
 
 
 class VideoUploadResult(BaseModel):
     video_id: str
     checkpoints: list[Checkpoint]
     quality: VideoQuality
+
+
+class VideoUploadUrlRequest(BaseModel):
+    filename: str = "video_rekaman_toko.mp4"
+    content_type: str = "video/mp4"
+
+
+class VideoUploadUrlResponse(BaseModel):
+    bucket: str = "videos"
+    storage_key: str
+    public_url: str
+
+
+class VideoCompleteRequest(BaseModel):
+    cashier_at_s: float
+    storage_key: str | None = None
+    original_filename: str | None = None
+    duration_s: float | None = None
+    width: int | None = None
+    height: int | None = None
+    blurred_faces_count: int | None = None
+    blurred_plates_count: int | None = None
+
+
+class VideoCompleteResponse(BaseModel):
+    video: "VideoMetadataOut"
+    transcript_job_id: str
+    twin_job_id: str
+    status: str = "memproses"
 
 
 class VideoMetadataIn(BaseModel):

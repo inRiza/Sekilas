@@ -543,6 +543,61 @@ export async function saveVideoMetadata(
   return saved;
 }
 
+export async function uploadVideoToSupabaseStorage(
+  analysisId: string,
+  file: File,
+): Promise<{ storageKey: string; publicUrl: string | null }> {
+  const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_') || 'video_rekaman_toko.mp4';
+  const storageKey = `${analysisId}/${Date.now()}_${safeName}`;
+  const lowerName = file.name.toLowerCase();
+  const contentType = lowerName.endsWith('.mov')
+    ? 'video/quicktime'
+    : lowerName.endsWith('.webm')
+      ? 'video/webm'
+      : file.type && file.type.startsWith('video/')
+        ? file.type
+        : 'video/mp4';
+
+  if (typeof window !== 'undefined') {
+    try {
+      const supabase = createClient();
+      const { error } = await supabase.storage.from('videos').upload(storageKey, file, {
+        cacheControl: '3600',
+        upsert: true,
+        contentType,
+      });
+      if (!error) {
+        const { data } = supabase.storage.from('videos').getPublicUrl(storageKey);
+        return { storageKey, publicUrl: data.publicUrl };
+      }
+    } catch {
+      // Fallback ke penyimpanan lokal bila tidak ada jaringan
+    }
+  }
+  return { storageKey, publicUrl: null };
+}
+
+export async function completeVideoUpload(
+  analysisId: string,
+  payload: Partial<VideoMetadata> & { cashier_at_s: number },
+): Promise<VideoMetadata> {
+  const saved = await saveVideoMetadata(analysisId, payload);
+  await tryApiFetch(`/analyses/${analysisId}/video/complete`, {
+    method: 'POST',
+    body: JSON.stringify({
+      cashier_at_s: payload.cashier_at_s,
+      storage_key: saved.storage_key,
+      original_filename: saved.original_filename,
+      duration_s: saved.duration_s,
+      width: saved.width,
+      height: saved.height,
+      blurred_faces_count: saved.blurred_faces_count,
+      blurred_plates_count: saved.blurred_plates_count,
+    }),
+  });
+  return saved;
+}
+
 /* ---------------- Transcript Segments CRUD (F3 & F4) ---------------- */
 
 function getLocalTranscriptMap(): Record<string, TranscriptSegment[]> {
