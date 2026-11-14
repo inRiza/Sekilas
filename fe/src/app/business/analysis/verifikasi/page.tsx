@@ -1,6 +1,6 @@
 'use client';
 
-import { Check, EyeOff, ImageIcon, PencilLine, Plus, Trash2 } from 'lucide-react';
+import { Camera, Check, EyeOff, PencilLine, Plus, Trash2 } from 'lucide-react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import React, { Suspense, useEffect, useState } from 'react';
 
@@ -29,13 +29,94 @@ function mmss(seconds: number) {
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
+function resolveFrameUrl(rawKey?: string, analysisId?: string): string | null {
+  if (!rawKey) return null;
+  if (rawKey.startsWith('http://') || rawKey.startsWith('https://') || rawKey.startsWith('data:image/')) {
+    return rawKey;
+  }
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://qqfyitqxrcufjskwaldp.supabase.co';
+  const cleanKey = rawKey.replace(/^\/+/, '');
+  if (cleanKey.includes('/')) {
+    return `${supabaseUrl}/storage/v1/object/public/videos/${cleanKey}`;
+  }
+  return `${supabaseUrl}/storage/v1/object/public/videos/${analysisId || 'frames'}/frames/${cleanKey}`;
+}
+
+function FrameProofThumbnail({
+  frameKey,
+  analysisId,
+  vantage,
+  timestampStart,
+  timestampEnd,
+}: {
+  frameKey?: string;
+  analysisId?: string;
+  vantage: TranscriptSegment['vantage'];
+  timestampStart: number;
+  timestampEnd: number;
+}) {
+  const [loadError, setLoadError] = useState(false);
+  const resolvedUrl = resolveFrameUrl(frameKey, analysisId);
+
+  if (resolvedUrl && !loadError) {
+    return (
+      <div className="group relative h-24 w-full shrink-0 overflow-hidden rounded-md border border-line bg-panel sm:w-40">
+        {/* eslint-disable-next-line @next/next/no-img-element -- frame bukti hasil ekstraksi video terburam */}
+        <img
+          src={resolvedUrl}
+          alt={`Frame bukti ${mmss(timestampStart)}`}
+          className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
+          onError={() => setLoadError(true)}
+        />
+        <div className="pointer-events-none absolute bottom-1 right-1 rounded bg-black/70 px-1.5 py-0.5 font-mono text-[10px] text-white/90">
+          {mmss(timestampStart)}
+        </div>
+      </div>
+    );
+  }
+
+  // Graceful visual snapshot fallback bergaya camera viewfinder sesuai design.md
+  const vantageColor =
+    vantage === 'jalan'
+      ? 'from-amber-950/20 to-panel'
+      : vantage === 'pintu'
+        ? 'from-primary/10 to-panel'
+        : 'from-ink/10 to-panel';
+
+  return (
+    <div
+      className={`relative flex h-24 w-full shrink-0 flex-col justify-between overflow-hidden rounded-md border border-line bg-gradient-to-br ${vantageColor} p-2.5 text-ink-soft sm:w-40`}
+    >
+      <div className="pointer-events-none absolute inset-1.5 rounded border border-dashed border-line/70" />
+      <div className="relative z-10 flex items-center justify-between">
+        <span className="flex items-center gap-1 text-[10px] font-medium text-ink">
+          <Camera size={11} className="text-primary" />
+          <span>{VANTAGE_LABEL[vantage]}</span>
+        </span>
+        <span className="rounded bg-white/90 px-1 py-0.5 font-mono text-[9px] font-semibold text-friction">
+          REC
+        </span>
+      </div>
+      <div className="relative z-10 flex flex-col items-center justify-center">
+        <span className="text-[11px] font-medium text-ink-soft">Snapshot Bukti</span>
+      </div>
+      <div className="relative z-10 flex items-center justify-between font-mono text-[10px] text-muted">
+        <span>{mmss(timestampStart)}</span>
+        <span>{mmss(timestampEnd)}</span>
+      </div>
+    </div>
+  );
+}
+
 function SegmentItem({
   seg,
+  analysisId,
   onConfirm,
   onSave,
   onDelete,
 }: {
   seg: TranscriptSegment;
+  analysisId: string;
   onConfirm: () => void;
   onSave: (narrative: string, notVisible: string) => void;
   onDelete: () => void;
@@ -67,21 +148,13 @@ function SegmentItem({
 
       {/* Isi: frame bukti + narasi */}
       <div className="mt-4 flex flex-col gap-4 sm:flex-row">
-        {seg.frame_keys &&
-        seg.frame_keys[0] &&
-        (seg.frame_keys[0].startsWith('http') || seg.frame_keys[0].startsWith('data:image/')) ? (
-          // eslint-disable-next-line @next/next/no-img-element -- frame bukti hasil ekstraksi video terburam
-          <img
-            src={seg.frame_keys[0]}
-            alt={`Frame bukti ${mmss(seg.timestamp_start)}`}
-            className="h-24 w-full shrink-0 rounded-md border border-line object-cover sm:w-40"
-          />
-        ) : (
-          <div className="flex h-24 w-full shrink-0 flex-col items-center justify-center gap-1 rounded-md bg-panel text-muted sm:w-40">
-            <ImageIcon size={18} />
-            <span className="text-[11px]">{seg.frame_keys?.[0] ?? 'Frame bukti'}</span>
-          </div>
-        )}
+        <FrameProofThumbnail
+          frameKey={seg.frame_keys?.[0]}
+          analysisId={analysisId}
+          vantage={seg.vantage}
+          timestampStart={seg.timestamp_start}
+          timestampEnd={seg.timestamp_end}
+        />
 
         <div className="min-w-0 flex-1">
           {editing ? (
@@ -274,6 +347,7 @@ function VerifikasiTranskripInner() {
                   <SegmentItem
                     key={seg.id}
                     seg={seg}
+                    analysisId={analysisId}
                     onConfirm={() => void handleConfirm(seg.id)}
                     onSave={(narrative, notVisible) => void handleSave(seg.id, narrative, notVisible)}
                     onDelete={() => void handleDelete(seg.id)}

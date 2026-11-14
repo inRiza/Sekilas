@@ -37,6 +37,141 @@ let detectorsPromise: Promise<{
   objectDetector: ObjectDetector | null;
 }> | null = null;
 
+/* ---------------- Web Worker + OffscreenCanvas Bridge ---------------- */
+
+type PendingWorkerResolver = (payload: {
+  boxes: PrivacyBox[];
+  bitmap?: ImageBitmap | null;
+  ready?: boolean;
+}) => void;
+
+let privacyWorker: Worker | null = null;
+let workerFailed = false;
+let workerMsgSeq = 0;
+const workerPending = new Map<number, PendingWorkerResolver>();
+
+function getPrivacyWorker(): Worker | null {
+  if (typeof window === 'undefined' || typeof Worker === 'undefined' || workerFailed) {
+    return null;
+  }
+  if (privacyWorker) return privacyWorker;
+
+  try {
+    const w = new Worker(new URL('./privacy-blur.worker.ts', import.meta.url), {
+      type: 'module',
+    });
+    w.onmessage = (ev: MessageEvent) => {
+      const data = ev.data as {
+        id?: number;
+        boxes?: PrivacyBox[];
+        bitmap?: ImageBitmap | null;
+        ready?: boolean;
+      };
+      if (!data || typeof data.id !== 'number') return;
+      const resolver = workerPending.get(data.id);
+      if (resolver) {
+        workerPending.delete(data.id);
+        resolver({
+          boxes: data.boxes ?? [],
+          bitmap: data.bitmap ?? null,
+          ready: data.ready,
+        });
+      }
+    };
+    w.onerror = () => {
+      workerFailed = true;
+      for (const [, resolver] of workerPending) {
+        resolver({ boxes: [], bitmap: null, ready: false });
+      }
+      workerPending.clear();
+      privacyWorker = null;
+    };
+    privacyWorker = w;
+    return w;
+  } catch {
+    workerFailed = true;
+    return null;
+  }
+}
+
+/**
+ * Jalankan deteksi bounding box MediaPipe di Web Worker agar thread utama UI tidak tersendat.
+ * Otomatis jatuh ke in-thread detector bila browser tidak mendukung module Worker / ImageBitmap.
+ */
+export async function detectPrivacyBoxesAsync(video: HTMLVideoElement): Promise<PrivacyBox[]> {
+  if (typeof window === 'undefined' || video.readyState < 2) return [];
+  const worker = getPrivacyWorker();
+  if (worker && typeof createImageBitmap === 'function') {
+    try {
+      const bitmap = await createImageBitmap(video);
+      const id = ++workerMsgSeq;
+      const res = await new Promise<{ boxes: PrivacyBox[] }>((resolve) => {
+        const timer = window.setTimeout(() => {
+          workerPending.delete(id);
+          resolve({ boxes: [] });
+        }, 2500);
+        workerPending.set(id, (payload) => {
+          window.clearTimeout(timer);
+          resolve({ boxes: payload.boxes });
+        });
+        worker.postMessage({ type: 'detect', id, bitmap }, [bitmap]);
+      });
+      return res.boxes;
+    } catch {
+      // Fallback ke deteksi sinkron bila transfer bitmap gagal
+    }
+  }
+  const detectors = await ensurePrivacyDetectors();
+  return detectPrivacyBoxesOnFrame(video, detectors);
+}
+
+/**
+ * Kirim frame ke Web Worker untuk dideteksi dan langsung dirender blur selektif pada OffscreenCanvas.
+ */
+async function redactFrameInWorker(
+  video: HTMLVideoElement,
+  targetW: number,
+  targetH: number,
+  detect: boolean,
+  previousBoxes: PrivacyBox[],
+): Promise<{ boxes: PrivacyBox[]; bitmap: ImageBitmap | null }> {
+  const worker = getPrivacyWorker();
+  if (!worker || typeof createImageBitmap !== 'function' || typeof OffscreenCanvas === 'undefined') {
+    return { boxes: previousBoxes, bitmap: null };
+  }
+  try {
+    const bitmap = await createImageBitmap(video);
+    const id = ++workerMsgSeq;
+    return await new Promise<{ boxes: PrivacyBox[]; bitmap: ImageBitmap | null }>((resolve) => {
+      const timer = window.setTimeout(() => {
+        workerPending.delete(id);
+        resolve({ boxes: previousBoxes, bitmap: null });
+      }, 2500);
+      workerPending.set(id, (payload) => {
+        window.clearTimeout(timer);
+        resolve({
+          boxes: payload.boxes,
+          bitmap: payload.bitmap ?? null,
+        });
+      });
+      worker.postMessage(
+        {
+          type: 'redact_frame',
+          id,
+          bitmap,
+          targetW,
+          targetH,
+          detect,
+          previousBoxes,
+        },
+        [bitmap],
+      );
+    });
+  } catch {
+    return { boxes: previousBoxes, bitmap: null };
+  }
+}
+
 let lastVideoTimestampMs = 0;
 function nextMonotonicTimestamp(): number {
   const now = Math.round(performance.now());
@@ -419,30 +554,73 @@ export async function exportRedactedVideoFile(
         resolve(redactedFile);
       };
 
-      // Jalankan pemutaran dipercepat agar transcode di perangkat selesai cepat
-      video.playbackRate = 4.0;
+      // Jalankan pemutaran dipercepat dan gunakan Web Worker + OffscreenCanvas agar UI tetap mulus
+      video.playbackRate = 3.5;
       let lastBoxes: PrivacyBox[] = [];
       let frameIdx = 0;
+      let workerBusy = false;
+      let lastReportedPct = -1;
+
+      const reportProgress = (ratio: number) => {
+        if (!onProgress) return;
+        const clamped = Math.max(0.01, Math.min(0.99, ratio));
+        const pct = Math.round(clamped * 100);
+        if (pct !== lastReportedPct) {
+          lastReportedPct = pct;
+          onProgress(clamped);
+        }
+      };
 
       const renderStep = () => {
         if (video.paused || video.ended) return;
-        if (frameIdx % 2 === 0) {
-          const rawBoxes = detectPrivacyBoxesOnFrame(video, detectors);
-          lastBoxes = rawBoxes.map((b) => ({
+        const shouldDetect = frameIdx % 2 === 0;
+        frameIdx += 1;
+
+        if (!workerBusy && getPrivacyWorker() && typeof OffscreenCanvas !== 'undefined') {
+          workerBusy = true;
+          void redactFrameInWorker(video, targetW, targetH, shouldDetect, lastBoxes).then((res) => {
+            workerBusy = false;
+            lastBoxes = res.boxes;
+            if (res.bitmap) {
+              ctx.save();
+              ctx.filter = 'none';
+              ctx.drawImage(res.bitmap, 0, 0, targetW, targetH);
+              ctx.restore();
+              res.bitmap.close();
+            } else {
+              const scaledBoxes = lastBoxes.map((b) => ({
+                ...b,
+                x: Math.round(b.x * scale),
+                y: Math.round(b.y * scale),
+                width: Math.round(b.width * scale),
+                height: Math.round(b.height * scale),
+              }));
+              renderSelectivePrivacyBlur(ctx, video, scaledBoxes, {
+                blurEnabled: true,
+                showIndicators: false,
+              });
+            }
+          });
+        } else if (!getPrivacyWorker() || typeof OffscreenCanvas === 'undefined') {
+          if (shouldDetect) {
+            const rawBoxes = detectPrivacyBoxesOnFrame(video, detectors);
+            lastBoxes = rawBoxes;
+          }
+          const scaledBoxes = lastBoxes.map((b) => ({
             ...b,
             x: Math.round(b.x * scale),
             y: Math.round(b.y * scale),
             width: Math.round(b.width * scale),
             height: Math.round(b.height * scale),
           }));
+          renderSelectivePrivacyBlur(ctx, video, scaledBoxes, {
+            blurEnabled: true,
+            showIndicators: false,
+          });
         }
-        frameIdx += 1;
-        renderSelectivePrivacyBlur(ctx, video, lastBoxes, {
-          blurEnabled: true,
-          showIndicators: false,
-        });
-        if (video.duration > 0 && onProgress) {
-          onProgress(Math.min(0.99, video.currentTime / video.duration));
+
+        if (video.duration > 0) {
+          reportProgress(video.currentTime / video.duration);
         }
         requestAnimationFrame(renderStep);
       };

@@ -2,6 +2,7 @@
 
 import {
   AlertTriangle,
+  Camera,
   Check,
   Eye,
   EyeOff,
@@ -20,6 +21,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input, Label } from '@/components/ui/form';
 import { ArrowLeftIcon, ArrowRightIcon } from '@/components/ui/icons';
+import { LiveCameraRecorder } from '@/components/video/live-camera-recorder';
 import {
   completeVideoUpload,
   fetchVideoMetadata,
@@ -27,8 +29,7 @@ import {
   uploadVideoToSupabaseStorage,
 } from '@/lib/api/crud';
 import {
-  detectPrivacyBoxesOnFrame,
-  ensurePrivacyDetectors,
+  detectPrivacyBoxesAsync,
   exportRedactedVideoFile,
   renderSelectivePrivacyBlur,
   type PrivacyBox,
@@ -101,6 +102,7 @@ function VideoUploadInner() {
   const [inspecting, setInspecting] = useState<boolean>(false);
 
   const [dragging, setDragging] = useState(false);
+  const [liveCameraOpen, setLiveCameraOpen] = useState(false);
   const [blurPreviewActive, setBlurPreviewActive] = useState(true);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentPlaySec, setCurrentPlaySec] = useState<number>(0);
@@ -127,8 +129,7 @@ function VideoUploadInner() {
       if (!ctx) return;
 
       if (forceDetect) {
-        const detectors = await ensurePrivacyDetectors();
-        const detected = detectPrivacyBoxesOnFrame(video, detectors);
+        const detected = await detectPrivacyBoxesAsync(video);
         lastBoxesRef.current = detected;
         setLiveDetectionsCount({
           faces: detected.filter((b) => b.kind === 'face').length,
@@ -228,7 +229,7 @@ function VideoUploadInner() {
   const cashierValid = cashierSec !== null && cashierSec > 0 && cashierSec <= Math.ceil(durationSec);
   const canContinue = hasVideo && accepted && cashierValid && !saving && !inspecting;
 
-  const pickFile = async (f: File | undefined) => {
+  const pickFile = async (f: File | undefined, overrideCashierSec?: number) => {
     if (!isSupportedVideoFile(f)) return;
     if (previewUrl && previewUrl.startsWith('blob:')) URL.revokeObjectURL(previewUrl);
 
@@ -236,6 +237,7 @@ function VideoUploadInner() {
     setSelectedFile(f);
     setPreviewUrl(url);
     setVideoName(f.name);
+    setLiveCameraOpen(false);
     setIsPlaying(false);
     setInspecting(true);
 
@@ -250,7 +252,13 @@ function VideoUploadInner() {
       setChecks(result.checks);
       setAccepted(result.accepted);
       setRejectionReasons(result.rejectionReasons);
-      setCashierTime(toMmSs(result.durationSec));
+      setCashierTime(
+        toMmSs(
+          overrideCashierSec && overrideCashierSec > 0
+            ? Math.min(overrideCashierSec, result.durationSec)
+            : result.durationSec,
+        ),
+      );
       setCurrentPlaySec(0);
     } finally {
       setInspecting(false);
@@ -421,6 +429,16 @@ function VideoUploadInner() {
                           variant="secondary"
                           size="sm"
                           className="!rounded-md"
+                          onClick={() => setLiveCameraOpen(true)}
+                        >
+                          <Camera size={14} />
+                          Rekam Ulang
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          size="sm"
+                          className="!rounded-md"
                           onClick={() => inputRef.current?.click()}
                         >
                           Ganti file
@@ -535,34 +553,59 @@ function VideoUploadInner() {
                       </div>
                     )}
                   </div>
+                ) : liveCameraOpen ? (
+                  <LiveCameraRecorder
+                    onComplete={(recordedFile, markedCashierSec) => {
+                      void pickFile(recordedFile, markedCashierSec);
+                    }}
+                    onCancel={() => setLiveCameraOpen(false)}
+                  />
                 ) : (
-                  <button
-                    type="button"
-                    onClick={() => inputRef.current?.click()}
-                    onDragOver={(e) => {
-                      e.preventDefault();
-                      setDragging(true);
-                    }}
-                    onDragLeave={() => setDragging(false)}
-                    onDrop={(e) => {
-                      e.preventDefault();
-                      setDragging(false);
-                      void pickFile(e.dataTransfer.files?.[0]);
-                    }}
-                    className={`flex h-[260px] w-full flex-col items-center justify-center gap-2 rounded-md border border-dashed px-4 text-center transition-colors ${
-                      dragging ? 'border-primary-40 bg-primary-10' : 'border-[#c9ced6] bg-panel hover:bg-hover'
-                    }`}
-                  >
-                    <span className="grid size-10 place-items-center rounded-md bg-white text-primary-40">
-                      <Upload size={18} />
-                    </span>
-                    <span className="text-[13px] font-medium text-ink">
-                      Tarik video ke sini atau <span className="text-primary-40">pilih file MP4 / MOV / WebM</span>
-                    </span>
-                    <span className="max-w-md text-[12px] text-muted">
-                      Rekam dengan kamera ponsel sambil berjalan pelan, lalu unggah file asli (bukan kiriman WhatsApp). Durasi 20 detik sampai 3 menit.
-                    </span>
-                  </button>
+                  <div className="space-y-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-line bg-panel px-4 py-3">
+                      <div className="text-[13px] text-ink-soft">
+                        Belum punya rekaman? Rekam langsung dengan panduan garis horizon & kecepatan langkah di layar.
+                      </div>
+                      <Button
+                        type="button"
+                        variant="primary"
+                        size="sm"
+                        className="!rounded-full"
+                        onClick={() => setLiveCameraOpen(true)}
+                      >
+                        <Camera size={14} />
+                        Buka Kamera Langsung
+                      </Button>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => inputRef.current?.click()}
+                      onDragOver={(e) => {
+                        e.preventDefault();
+                        setDragging(true);
+                      }}
+                      onDragLeave={() => setDragging(false)}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        setDragging(false);
+                        void pickFile(e.dataTransfer.files?.[0]);
+                      }}
+                      className={`flex h-[240px] w-full flex-col items-center justify-center gap-2 rounded-md border border-dashed px-4 text-center transition-colors ${
+                        dragging ? 'border-primary-40 bg-primary-10' : 'border-[#c9ced6] bg-panel hover:bg-hover'
+                      }`}
+                    >
+                      <span className="grid size-10 place-items-center rounded-md bg-white text-primary-40">
+                        <Upload size={18} />
+                      </span>
+                      <span className="text-[13px] font-medium text-ink">
+                        Tarik video ke sini atau <span className="text-primary-40">pilih file MP4 / MOV / WebM</span>
+                      </span>
+                      <span className="max-w-md text-[12px] text-muted">
+                        Rekam dengan kamera ponsel sambil berjalan pelan, lalu unggah file asli (bukan kiriman WhatsApp). Durasi 20 detik sampai 3 menit.
+                      </span>
+                    </button>
+                  </div>
                 )}
               </section>
 
