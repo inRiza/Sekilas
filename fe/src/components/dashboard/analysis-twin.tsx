@@ -71,7 +71,7 @@ export function AnalysisTwin({
   const failed = job?.status === 'gagal';
 
   return (
-    <div className="flex h-[420px] flex-col items-center justify-center gap-3 rounded-md border border-line bg-panel px-6 text-center lg:h-[520px]">
+    <div className="flex h-[420px] flex-col items-center justify-center gap-3 rounded-md border border-line bg-panel px-6 text-center lg:h-[560px]">
       {building ? (
         <>
           <LoaderCircle size={22} className="animate-spin text-primary-40" />
