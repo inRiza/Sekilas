@@ -1,4 +1,7 @@
-"""Data awal untuk Postgres lokal: isi supabase/seed.sql (analisis demo `selasar-kopi`).
+"""Data awal: isi supabase/seed.sql di Postgres lokal, lalu pasang Visual Twin contoh ke demo.
+
+Di Supabase hanya langkah kedua yang berjalan (sekali, saat aset demo masih kosong); berkas
+3D contoh diunggah ke Storage sehingga bisa dibuka dari mesin mana pun.
 
 Visual Twin demo diarahkan ke hasil pipeline lokal yang sudah ada di fe/public/samples.
 Di Supabase, seed dijalankan lewat `supabase db reset`, jadi langkah ini dilewati bila
@@ -7,7 +10,7 @@ data demo sudah ada.
 
 import logging
 
-from app.core.db import SessionLocal
+from app.core.db import SessionLocal, is_local_db
 from app.models import Analysis
 from app.services.twin.local_runner import REPO_ROOT, SAMPLES_DIR, publish_asset
 
@@ -22,6 +25,8 @@ DEMO_TWINS = ["goffee-depan-kasir", "addison-house", "south-building"]
 def seed_demo() -> None:
     with SessionLocal() as s:
         if s.get(Analysis, DEMO_ANALYSIS_ID) is None:
+            if not is_local_db() or s.get_bind().dialect.name != "postgresql":
+                return  # Supabase: seed lewat `supabase db reset`; SQLite: seed.sql khusus Postgres.
             if not SEED_SQL.exists():
                 log.warning("supabase/seed.sql tidak ditemukan; data demo dilewati.")
                 return
