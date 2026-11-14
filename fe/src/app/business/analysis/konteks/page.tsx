@@ -9,7 +9,9 @@ import { Button } from '@/components/ui/button';
 import { Chip, Input, Label, Textarea } from '@/components/ui/form';
 import { ArrowRightIcon } from '@/components/ui/icons';
 import { TimeSelect, isWithinHours, toMinutes } from '@/components/ui/time-select';
+import { ApiError, backend } from '@/lib/backend';
 import { MOCK_CONTEXT } from '@/lib/mock/context';
+import { useAnalysisId, withAid } from '@/lib/use-analysis';
 import { BusinessGoal, BusinessType, FixedConstraint, PasserbyType } from '@/types/api';
 
 /* ---------------- Menu ---------------- */
@@ -246,6 +248,9 @@ type Parking = 'motor' | 'mobil' | 'tidak_ada';
 
 function KonteksUsahaInner() {
   const router = useRouter();
+  const { aid } = useAnalysisId();
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   // 1. Informasi dasar
   const [businessType, setBusinessType] = useState<BusinessType | null>(MOCK_CONTEXT.business_type);
@@ -303,9 +308,38 @@ function KonteksUsahaInner() {
   const isAllValid = missing.size === 0;
   const err = (id: string) => showErrors && missing.has(id);
 
-  const handleNext = () => {
+  const handleNext = async () => {
     if (isAllValid) {
-      router.push('/business/analysis/video');
+      if (aid) {
+        setSaving(true);
+        setSaveError(null);
+        try {
+          await backend.saveContext(aid, {
+            business_type: businessType,
+            business_name: businessName.trim(),
+            location_name: locationName.trim(),
+            location_description: locationDescription.trim(),
+            surroundings,
+            surroundings_other: surroundingsOther.trim() || null,
+            passersby,
+            business_goal: businessGoal,
+            fixed_constraints: fixedConstraints,
+            menu_items: menuRows
+              .filter((r) => r.name.trim() && Number(r.price) > 0)
+              .map((r) => ({ name: r.name.trim(), price: Number(r.price) })),
+            opening_hours: { open: openHour, close: closeHour },
+            rush_hours: rushRanges.map((r) => ({ start: r.start, end: r.end })),
+            daily_sales_rp: dailySales ? Number(dailySales) : null,
+            daily_visitors: dailyVisitors ? Number(dailyVisitors) : null,
+            parking,
+          });
+        } catch (e) {
+          setSaveError(e instanceof ApiError ? e.message : 'Gagal menyimpan konteks.');
+          setSaving(false);
+          return;
+        }
+      }
+      router.push(withAid('/business/analysis/video', aid));
       return;
     }
     setShowErrors(true);
@@ -581,7 +615,8 @@ function KonteksUsahaInner() {
               <span className={`text-[13px] ${isAllValid ? 'text-impact' : 'text-muted'}`}>
                 {isAllValid ? 'Semua bidang wajib lengkap' : `${missing.size} bidang wajib belum terisi`}
               </span>
-              <Button variant="primary" size="lg" onClick={handleNext} className="justify-center !rounded-md">
+              {saveError && <span className="text-[12px] text-friction">{saveError}</span>}
+              <Button variant="primary" size="lg" disabled={saving} onClick={handleNext} className="justify-center !rounded-md">
                 {isAllValid ? 'Lanjut ke rekam video' : 'Lengkapi bidang wajib'} <ArrowRightIcon size={16} />
               </Button>
             </div>

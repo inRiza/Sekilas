@@ -1,7 +1,7 @@
 'use client';
 
 import { Box, Check, Eye, EyeOff, FileText, LoaderCircle, ShieldCheck, type LucideIcon } from 'lucide-react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import React, { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 
 import { SekilasMascot } from '@/components/brand/mascot';
@@ -9,6 +9,8 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ArrowLeftIcon, ArrowRightIcon } from '@/components/ui/icons';
 import { MOCK_TRANSCRIPT } from '@/lib/mock/transcript';
+import { withAid } from '@/lib/use-analysis';
+import { TWIN_STAGES, useTwin } from '@/lib/use-twin';
 import type { TranscriptSegment } from '@/types/api';
 
 /** Jeda antar-baris log pembacaan (UI simulasi; nanti diganti stream dari backend). */
@@ -99,6 +101,13 @@ function SectionTitle({ n, title, description }: { n: number; title: string; des
 
 function ProsesInner() {
   const router = useRouter();
+  const aid = useSearchParams().get('aid');
+  const { twin, error: twinError } = useTwin(aid);
+  const job = twin?.job ?? null;
+  const twinDone = Boolean(twin?.assets) && (!job || job.status === 'selesai');
+  const twinFailed = job?.status === 'gagal';
+  const twinStatus: StageStatus = twinDone ? 'done' : job ? (twinFailed ? 'waiting' : 'running') : 'waiting';
+  const twinPercent = job ? Math.round(job.progress * 100) : twinDone ? 100 : 0;
   const log = useMemo(() => buildLog(MOCK_TRANSCRIPT), []);
   const [shown, setShown] = useState(0);
   const logBoxRef = useRef<HTMLDivElement>(null);
@@ -143,25 +152,74 @@ function ProsesInner() {
               <section>
                 <SectionTitle n={1} title="Tahapan" description="Transkrip dan Visual Twin berjalan paralel; kamu tidak perlu menunggu 3D selesai." />
                 <ul className="space-y-2">
-                  <StageRow icon={ShieldCheck} title="Blur privasi" description="Wajah dan plat nomor diburamkan di perangkatmu." status="done" />
+                  <StageRow icon={ShieldCheck} title="Video diterima" description="Video tersimpan di server dan lolos cek durasi." status={aid ? 'done' : 'waiting'} />
                   <StageRow
                     icon={FileText}
                     title="Transkrip video"
-                    description={`${segmentsRead} dari ${MOCK_TRANSCRIPT.length} segmen dibaca, lengkap dengan frame bukti.`}
+                    description={`Contoh: ${segmentsRead} dari ${MOCK_TRANSCRIPT.length} segmen. Pembacaan AI asli belum tersambung.`}
                     status={transcriptDone ? 'done' : 'running'}
                   />
                   <StageRow
                     icon={Box}
                     title="Visual Twin 3D"
-                    description="Membangun peta 3D dari jalur kamera. Hasilnya menyusul di dasbor."
-                    status="running"
+                    description={
+                      twinFailed
+                        ? `Gagal: ${job?.message ?? 'coba unggah ulang video.'}`
+                        : twinDone
+                          ? `Selesai. ${twin?.assets?.registered ?? 0} dari ${twin?.assets?.frames ?? 0} frame terpetakan.`
+                          : job
+                            ? `${job.stage_label} (${twinPercent}%)`
+                            : aid
+                              ? 'Menunggu video diproses.'
+                              : 'Buka halaman ini dari langkah Rekam video.'
+                    }
+                    status={twinStatus}
                   />
                 </ul>
+                {twinError && <p className="mt-3 text-[12px] text-friction">{twinError}</p>}
               </section>
+
+              {/* Visual Twin 3D: progres asli dari backend */}
+              {aid && (
+                <section>
+                  <SectionTitle n={2} title="Visual Twin 3D" description="Dibangun dari frame video di server. Biasanya beberapa menit." />
+                  <div className="mb-4">
+                    <div className="mb-2 flex items-center justify-between text-[13px]">
+                      <span className="font-medium text-ink">{twinDone ? 'Visual Twin siap' : twinFailed ? 'Pembangunan gagal' : job?.stage_label ?? 'Menunggu'}</span>
+                      <span className="tabular-nums text-muted">{twinPercent}%</span>
+                    </div>
+                    <div className="h-1.5 w-full overflow-hidden rounded-full bg-soft">
+                      <div
+                        className={`h-full rounded-full transition-[width] duration-700 ease-out ${twinFailed ? 'bg-friction' : 'bg-primary-40'}`}
+                        style={{ width: `${twinPercent}%` }}
+                      />
+                    </div>
+                  </div>
+                  <ol className="space-y-1.5">
+                    {TWIN_STAGES.map((label, i) => {
+                      const stageNo = i + 1;
+                      const current = job?.stage ?? (twinDone ? TWIN_STAGES.length : 0);
+                      const state = twinDone || current > stageNo ? 'done' : current === stageNo && job?.status === 'berjalan' ? 'running' : 'waiting';
+                      return (
+                        <li key={label} className="flex items-center gap-3 rounded-md px-1 py-1 text-[13px]">
+                          <span
+                            className={`grid size-5 shrink-0 place-items-center rounded-full ${
+                              state === 'done' ? 'bg-impact-10 text-impact' : state === 'running' ? 'bg-primary-10 text-primary-40' : 'bg-soft text-subtle'
+                            }`}
+                          >
+                            {state === 'done' ? <Check size={12} strokeWidth={2.5} /> : state === 'running' ? <LoaderCircle size={12} className="animate-spin" /> : <span className="text-[10px]">{stageNo}</span>}
+                          </span>
+                          <span className={state === 'waiting' ? 'text-muted' : 'text-ink'}>{label}</span>
+                        </li>
+                      );
+                    })}
+                  </ol>
+                </section>
+              )}
 
               {/* 2. Log pembacaan */}
               <section>
-                <SectionTitle n={2} title="Yang sedang dibaca AI" description="Catatan muncul per segmen video, dari jalan sampai titik pesan." />
+                <SectionTitle n={aid ? 3 : 2} title="Yang sedang dibaca AI" description="Contoh tampilan pembacaan transkrip. Pembacaan VLM asli belum tersambung di demo ini." />
 
                 <div className="mb-4">
                   <div className="mb-2 flex items-center justify-between text-[13px]">
@@ -222,20 +280,33 @@ function ProsesInner() {
               <Button
                 variant="secondary"
                 size="lg"
-                onClick={() => router.push('/business/analysis/video')}
+                onClick={() => router.push(withAid('/business/analysis/video', aid))}
                 className="justify-center !rounded-md"
               >
                 <ArrowLeftIcon size={16} /> Kembali ke rekam video
               </Button>
-              <Button
-                variant="primary"
-                size="lg"
-                disabled={!transcriptDone}
-                onClick={() => transcriptDone && router.push('/business/analysis/verifikasi')}
-                className="justify-center !rounded-md"
-              >
-                Cek transkrip <ArrowRightIcon size={16} />
-              </Button>
+              <div className="flex flex-col gap-2 sm:flex-row">
+                {aid && (
+                  <Button
+                    variant="secondary"
+                    size="lg"
+                    disabled={!twinDone}
+                    onClick={() => twinDone && router.push(withAid('/business/analysis', aid))}
+                    className="justify-center !rounded-md"
+                  >
+                    Lihat Visual Twin
+                  </Button>
+                )}
+                <Button
+                  variant="primary"
+                  size="lg"
+                  disabled={!transcriptDone}
+                  onClick={() => transcriptDone && router.push(withAid('/business/analysis/verifikasi', aid))}
+                  className="justify-center !rounded-md"
+                >
+                  Cek transkrip <ArrowRightIcon size={16} />
+                </Button>
+              </div>
             </div>
           </div>
         </div>
