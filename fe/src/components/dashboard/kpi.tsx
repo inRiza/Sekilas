@@ -112,7 +112,7 @@ export function HeroCard({
 }
 
 /** Penyebab utama batal: kerangka sama dengan KPI lain; judul penuh, kode hipotesis jadi chip. */
-export function CauseCard({ title, rank }: { title: string; rank: string }) {
+export function CauseCard({ title, rank, detail }: { title: string; rank: string; detail?: string }) {
   // judul backend berbentuk "H8 · Menu dan harga ...": kodenya jadi chip agar judul mudah dibaca
   const match = /^(H\d+)\s·\s(.+)$/.exec(title);
   const code = match?.[1];
@@ -121,7 +121,7 @@ export function CauseCard({ title, rank }: { title: string; rank: string }) {
   return (
     <KpiCard
       label="Penyebab utama batal"
-      info={title}
+      info={detail || title}
       value={heading}
       sub={rank}
       icon={TriangleAlert}

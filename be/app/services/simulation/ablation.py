@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 
 from app.schemas.simulation import PersonaSpecOut
@@ -68,6 +69,55 @@ def compute_continuation_rates_by_segment(
     return rates
 
 
+_ZERO_BUYER_VANTAGE_PRIOR: dict[str, float] = {
+    "jalan": 0.15,
+    "pintu": 0.25,
+    "dalam": 0.45,
+}
+
+_CUE_NOT_VISIBLE_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "H1": ("papan nama", "plang", "nama usaha", "nama toko", "identitas toko", "penanda jalan"),
+    "H2": ("jam buka", "jam operasional", "status buka", "tutup"),
+    "H3": ("jenis makanan", "jenis hidangan", "jenis minuman", "jualan apa", "produk yang dijual"),
+    "H4": ("parkir", "berhenti", "bahu jalan"),
+    "H5": ("tangga", "pintu", "lorong", "jalur masuk", "akses masuk"),
+    "H6": ("redup", "gelap", "pencahayaan", "kebersihan", "kotor", "berantakan", "suram"),
+    "H7": ("sepi", "kosong", "penuh", "sesak"),
+    "H8": ("daftar menu", "daftar harga", "papan menu", "harga", "menu"),
+    "H9": ("mahal", "anggaran", "paket hemat"),
+    "H10": ("kasir", "antre", "titik pesan"),
+    "H11": ("qris", "non-tunai", "debit", "metode bayar"),
+    "H12": ("bungkus", "takeaway", "waktu saji", "estimasi", "waktu tunggu"),
+    "H13": ("kursi", "tempat duduk", "area tunggu", "meja makan"),
+    "H14": ("huruf kecil", "terlalu kecil", "pudar", "silau", "kusam", "pantulan"),
+}
+
+
+def _prune_resolved_not_visible(orig_not_visible: str, resolved_cues: set[str]) -> str:
+    """Hapus hanya klausa masalah yang isyaratnya ditangani; pertahankan isu lain pada segmen yang sama."""
+    raw = orig_not_visible.strip()
+    if not raw or not resolved_cues:
+        return orig_not_visible
+
+    clauses = [c.strip() for c in re.split(r"(?<=[.;!])\s+|\s*;\s*|\n+", raw) if c.strip()]
+    if len(clauses) == 1 and "," in clauses[0]:
+        clauses = [c.strip() for c in clauses[0].split(",") if c.strip()]
+
+    remaining: list[str] = []
+    for clause in clauses:
+        low = clause.lower()
+        matched_cues = {
+            cue
+            for cue, kws in _CUE_NOT_VISIBLE_KEYWORDS.items()
+            if any(kw in low for kw in kws)
+        }
+        if matched_cues and matched_cues.issubset(resolved_cues):
+            continue
+        remaining.append(clause)
+
+    return " ".join(remaining).strip()
+
+
 def compute_quick_estimate_projection(
     *,
     segments: list[SegmentInput],
@@ -100,10 +150,12 @@ def compute_quick_estimate_projection(
         touched_seg_ids.update(target_segs)
 
     cont_rates = compute_continuation_rates_by_segment(segments=segments, baseline_results=baseline_results)
+    seg_vantage_map = {s.id: s.vantage for s in segments}
 
     tambahan_memesan = 0.0
     extra_stop = 0.0
     extra_enter = 0.0
+    used_zero_buyer_prior = False
 
     for r in baseline_results:
         if r.final_decision == "memesan":
@@ -126,7 +178,11 @@ def compute_quick_estimate_projection(
 
         p_berbalik = min(1.0, teratasi / hambatan_total)
         laju = cont_rates.get(r.stopped_at_segment_id or "", 0.0)
-        # Jika tidak ada agen yang sempat memesan di baseline (laju=0), tetap gunakan laju konservatif 0.0
+        if laju <= 0.0 and buyers_base == 0:
+            # Saat baseline 0 pembeli, laju empiris mengunci estimasi di +0; pakai prior konservatif per vantage
+            stop_vantage = seg_vantage_map.get(r.stopped_at_segment_id or "", "jalan")
+            laju = _ZERO_BUYER_VANTAGE_PRIOR.get(stop_vantage, 0.2)
+            used_zero_buyer_prior = True
         tambahan_memesan += p_berbalik * laju
         if r.final_decision == "lewat":
             extra_stop += p_berbalik
@@ -145,11 +201,16 @@ def compute_quick_estimate_projection(
             low_accuracy = True
             break
 
-    accuracy_note = (
-        "Estimasi cepat pada segmen awal (jalan) kurang akurat karena agen yang langsung lewat belum memiliki skor hambatan di segmen berikutnya. Jalankan Verifikasi Simulasi untuk hasil terukur."
-        if low_accuracy
-        else None
-    )
+    note_parts: list[str] = []
+    if low_accuracy:
+        note_parts.append(
+            "Estimasi cepat pada segmen awal (jalan) kurang akurat karena agen yang langsung lewat belum memiliki skor hambatan di segmen berikutnya. Jalankan Verifikasi Simulasi untuk hasil terukur."
+        )
+    if used_zero_buyer_prior and tambahan_memesan > 0:
+        note_parts.append(
+            "Baseline 0 pembeli memakai asumsi kelanjutan konservatif (15%–45% sesuai titik berhenti) sebagai perkiraan awal sebelum Verifikasi Simulasi."
+        )
+    accuracy_note = " ".join(note_parts) if note_parts else None
 
     base_lewat = sum(1 for r in baseline_results if r.final_decision == "lewat")
     base_berhenti = sum(1 for r in baseline_results if r.final_decision == "berhenti_lalu_pergi")
@@ -182,13 +243,14 @@ def _rewrite_target_segments_from_actions(
     checked_actions: list[tuple[str, list[str], dict[str, str] | None]],
 ) -> tuple[list[SegmentInput], list[str], int]:
     """Render segmen 'sesudah' dari spec_template tindakan, opsional diperhalus LLM, + diff check."""
-    updates_by_seg: dict[str, list[str]] = {}
+    updates_by_seg: dict[str, list[tuple[str, str]]] = {}
     for action_id, seg_ids, slot_params in checked_actions:
+        act = ACTION_BY_ID.get(action_id)
         rendered = render_action_spec(action_id, slot_params)
-        if not rendered:
+        if not rendered or act is None:
             continue
         for sid in seg_ids:
-            updates_by_seg.setdefault(sid, []).append(rendered)
+            updates_by_seg.setdefault(sid, []).append((act.cue_code, rendered))
 
     target_seg_ids = [s.id for s in segments if s.id in updates_by_seg]
     if not target_seg_ids:
@@ -197,20 +259,24 @@ def _rewrite_target_segments_from_actions(
     seg_idx_map = {s.id: i for i, s in enumerate(segments)}
     min_edited_idx = min(seg_idx_map[sid] for sid in target_seg_ids)
 
-    # Render deterministik dari template berslot
+    # Render deterministik dari template berslot & pangkas hanya klausa not_visible yang ditangani
     updated_segments: list[SegmentInput] = []
     for seg in segments:
         if seg.id not in updates_by_seg:
             updated_segments.append(seg)
             continue
-        applied_specs = " ".join(updates_by_seg[seg.id])
-        new_nar = f"{seg.narrative} [Perbaikan diterapkan: {applied_specs}]"
+        seg_updates = updates_by_seg[seg.id]
+        applied_specs = " ".join(spec for _, spec in seg_updates)
+        resolved_cues = {cue_code for cue_code, _ in seg_updates}
+        base_nar = seg.narrative.rstrip()
+        new_nar = f"{base_nar} (Setelah perbaikan: {applied_specs})"
+        new_not_vis = _prune_resolved_not_visible(seg.not_visible, resolved_cues)
         updated_segments.append(
             SegmentInput(
                 id=seg.id,
                 vantage=seg.vantage,
                 narrative=new_nar,
-                not_visible="Sudah ditangani oleh perbaikan yang diterapkan pada titik ini.",
+                not_visible=new_not_vis,
             )
         )
 

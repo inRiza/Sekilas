@@ -10,6 +10,7 @@ from app.services.llm.router import LLMUnavailableError, get_llm_router
 from app.services.simulation.catalog import (
     ACTION_BY_ID,
     HYPOTHESIS_BY_CODE,
+    CatalogAction,
     get_actions_for_cue,
     render_action_spec,
 )
@@ -92,9 +93,17 @@ def aggregate_cue_scores(results: list[AgentRunResult]) -> list[CueAggregate]:
         hyp = HYPOTHESIS_BY_CODE.get(code)
         if not hyp:
             continue
-        pct_non = (len(cue_non_buyer_agents.get(code, set())) / max(1, n_non)) if n_non else 0.0
-        pct_buy = (len(cue_buyer_agents.get(code, set())) / max(1, n_buy)) if n_buy else 0.0
-        lift = pct_non / max(0.05, pct_buy)
+        cnt_non = len(cue_non_buyer_agents.get(code, set()))
+        cnt_buy = len(cue_buyer_agents.get(code, set()))
+        pct_non = (cnt_non / n_non) if n_non else 0.0
+        if n_buy > 0:
+            # Laplace smoothing (+0.5 / +1.0) mencegah lonjakan palsu 20x dan menyaring fluke 1 agen
+            pct_non_smooth = (cnt_non + 0.5) / (n_non + 1.0)
+            pct_buy_smooth = (cnt_buy + 0.5) / (n_buy + 1.0)
+            lift = pct_non_smooth / pct_buy_smooth
+        else:
+            # Saat belum ada pembeli di baseline, jaga skala bounded 1.0..2.0 agar peringkat tetap terbedakan
+            lift = (1.0 + pct_non) if cnt_non > 0 else 1.0
         share_pct = (share_val / max(1, n_non)) * 100.0 if n_non else 0.0
         segs_unique = list(dict.fromkeys(s for s in cue_segments.get(code, []) if s))
         agent_ids = sorted(cue_non_buyer_agents.get(code, set()))
@@ -138,7 +147,49 @@ def _select_relevant_cues(
         and c.lift > 1.0
     ]
     chosen = strong or [c for c in pool if c.affected_agents_count >= 2] or pool[:3]
-    return chosen[:5]
+    return chosen[:6]
+
+
+_EFFORT_FALLBACK_BONUS: dict[str, float] = {
+    "Rendah": 0.15,
+    "Sedang": 0.05,
+    "Tinggi": 0.0,
+}
+
+_ACTION_CONTEXT_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "A1.1": ("trotoar", "tidak terlihat", "papan nama", "plang"),
+    "A1.2": ("ranting", "pohon", "barang", "terhalang", "tertutup"),
+    "A1.3": ("redup", "gelap", "malam", "sorot", "lampu"),
+    "A2.2": ("gelap", "lampu", "malam"),
+    "A3.2": ("foto", "menu"),
+    "A5.3": ("tangga", "lantai", "lorong"),
+    "A6.2": ("kotor", "berantakan", "kardus", "barang"),
+    "A11.1": ("pintu", "qris", "non-tunai"),
+    "A14.2": ("silau", "kaca", "pantulan"),
+}
+
+
+def _pick_best_fallback_action(
+    cue: CueAggregate,
+    allowed_acts: list[CatalogAction],
+    segments_by_id: dict[str, SegmentInput],
+) -> str:
+    """Pilih tindakan katalog paling relevan berdasar bukti segmen/kutipan, usaha rendah, & efikasi."""
+    evidence_parts = list(cue.sample_quotes)
+    for sid in cue.top_segment_ids:
+        seg = segments_by_id.get(sid)
+        if seg:
+            evidence_parts.append(f"{seg.narrative} {seg.not_visible}")
+    evidence_low = " ".join(evidence_parts).lower()
+
+    def _score(act: CatalogAction) -> tuple[float, float, int]:
+        kws = _ACTION_CONTEXT_KEYWORDS.get(act.action_id, ())
+        hits = sum(1 for kw in kws if kw in evidence_low)
+        effort_bonus = _EFFORT_FALLBACK_BONUS.get(act.effort, 0.0)
+        return (round(act.efficacy + effort_bonus + hits * 0.08, 4), act.efficacy, -act.cost_rp)
+
+    best = max(allowed_acts, key=_score)
+    return best.action_id
 
 
 def generate_catalog_recommendations(
@@ -163,9 +214,12 @@ def generate_catalog_recommendations(
             {
                 "action_id": a.action_id,
                 "title": a.title,
+                "spec_template": a.spec_template,
                 "slots": list(a.default_slots.keys()),
                 "default_slots": a.default_slots,
                 "effort": a.effort,
+                "cost_rp": a.cost_rp,
+                "affected_area": a.affected_area,
                 "efficacy": a.efficacy,
             }
             for a in acts
@@ -173,28 +227,33 @@ def generate_catalog_recommendations(
 
     selected_by_cue: dict[str, dict[str, Any]] = {}
     router = get_llm_router()
-    valid_seg_ids = {s.id for s in segments}
+    segments_by_id = {s.id: s for s in segments}
+    valid_seg_ids = set(segments_by_id)
 
     id_to_alias = {s.id: f"S{i + 1}" for i, s in enumerate(segments)}
     alias_to_id = {f"S{i + 1}": s.id for i, s in enumerate(segments)}
 
     if not router.is_mock_mode and top_cues:
         sys_p = (
-            "Kamu menyusun prioritas perbaikan toko UMKM. "
-            "Kamu HANYA boleh memilih action_id dari daftar kandidat yang diberikan dan mengisi slot parameternya "
-            "berdasarkan bukti segmen transkrip. JANGAN mengarang angka efikasi atau tindakan di luar katalog."
+            "Kamu menyusun prioritas perbaikan toko UMKM F&B dari hasil simulasi agen pelanggan. "
+            "Pilih action_id PALING TEPAT dari kandidat per masalah dan isi slot_params secara spesifik sesuai kondisi segmen & keluhan agen (sebut jenis sajian, lokasi pintu/trotoar/kasir, dll). "
+            "Kamu HANYA boleh memilih action_id yang ada di kandidat. JANGAN mengarang angka efikasi atau tindakan di luar katalog."
         )
-        seg_summary = "\n".join(f"- {id_to_alias[s.id]} ({s.vantage}): {s.narrative[:120]}" for s in segments)
+        seg_summary = "\n".join(
+            f"- {id_to_alias[s.id]} ({s.vantage}): {s.narrative[:140]} | Belum terlihat: {s.not_visible[:100]}"
+            for s in segments
+        )
         cue_summary = "\n".join(
             f"- {c.cue_code} ({c.title}): {c.affected_agents_count}/{c.total_non_buyers} agen gagal, "
-            f"segmen={[id_to_alias.get(sid, sid) for sid in c.top_segment_ids]}, "
+            f"kutipan={c.sample_quotes[:2]}, segmen={[id_to_alias.get(sid, sid) for sid in c.top_segment_ids]}, "
             f"kandidat={candidates_by_cue.get(c.cue_code, [])}"
             for c in top_cues
         )
         usr_p = (
             f"Tujuan pemilik: {owner_goals or ['meningkatkan konversi']}\n"
+            f"Batasan pemilik (tidak bisa diubah): {cannot_change or []}\n"
             f"Transkrip ringkas:\n{seg_summary}\n\n"
-            f"Masalah teratas & kandidat tindakan:\n{cue_summary}\n\n"
+            f"Masalah teratas, kutipan agen & kandidat tindakan:\n{cue_summary}\n\n"
             'Kembalikan JSON (pakai segment_ids S1..Sk): '
             '{"recommendations": [{"cue_code": str, "action_id": str, "slot_params": {str: str}, "segment_ids": [str]}]}'
         )
@@ -222,7 +281,7 @@ def generate_catalog_recommendations(
         llm_choice = selected_by_cue.get(c.cue_code) or {}
         chosen_id = str(llm_choice.get("action_id") or "")
         if chosen_id not in allowed_ids:
-            chosen_id = allowed_acts[0].action_id
+            chosen_id = _pick_best_fallback_action(c, allowed_acts, segments_by_id)
 
         action = ACTION_BY_ID[chosen_id]
         # Validasi rentang efikasi dari katalog
