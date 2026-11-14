@@ -151,6 +151,8 @@ class WhatIfStageComparisonOut(BaseModel):
     baseline_pct: int
     projected_pct: int
     delta_label: str
+    baseline_count: int | None = None
+    projected_count: int | None = None
 
 
 class WhatIfProjectionOut(BaseModel):

@@ -85,6 +85,8 @@ function DashboardResultInner() {
 
   const [data, setData] = useState<DashboardData | null>(null);
   const [projection, setProjection] = useState<WhatIfProjectionData | null>(null);
+  const [lastVerifiedProjection, setLastVerifiedProjection] = useState<WhatIfProjectionData | null>(null);
+  const [lastVerifiedCheckedIds, setLastVerifiedCheckedIds] = useState<string[]>([]);
   const [activeWaypoint, setActiveWaypoint] = useState<string | null>(null);
   const [fixes, setFixes] = useState<FixOption[]>([]);
   const [showSecondaryFixes, setShowSecondaryFixes] = useState(false);
@@ -111,33 +113,44 @@ function DashboardResultInner() {
       void fetchDashboardData(analysisId)
         .then((res) => {
           setData(res);
+          const nextFixes: FixOption[] =
+            res.recommendations && res.recommendations.length > 0
+              ? (() => {
+                  const hasPriority = res.recommendations.some((rec) => rec.priority_tag === 'Prioritas');
+                  return res.recommendations.map((rec) => ({
+                    id: rec.id,
+                    rank: rec.rank,
+                    priority_tag: rec.priority_tag,
+                    title: rec.title,
+                    description: rec.description,
+                    location_zone: rec.location_zone,
+                    impact_label: rec.estimated_lift_range || `Dampak ${rec.impact.toLowerCase()}`,
+                    effort_label:
+                      rec.effort === 'Rendah'
+                        ? 'Usaha rendah'
+                        : rec.effort === 'Tinggi'
+                          ? 'Usaha tinggi'
+                          : 'Usaha sedang',
+                    cost_rp: rec.cost_rp ?? null,
+                    affected_agents_count: rec.affected_agents_count ?? 0,
+                    is_checked: hasPriority ? rec.priority_tag === 'Prioritas' : true,
+                  }));
+                })()
+              : [];
+          setFixes(nextFixes);
+
           if (res.what_if_projection) {
             setProjection(res.what_if_projection);
-          }
-          if (res.recommendations && res.recommendations.length > 0) {
-            const hasPriority = res.recommendations.some((rec) => rec.priority_tag === 'Prioritas');
-            setFixes(
-              res.recommendations.map((rec) => ({
-                id: rec.id,
-                rank: rec.rank,
-                priority_tag: rec.priority_tag,
-                title: rec.title,
-                description: rec.description,
-                location_zone: rec.location_zone,
-                impact_label: rec.estimated_lift_range || `Dampak ${rec.impact.toLowerCase()}`,
-                effort_label:
-                  rec.effort === 'Rendah'
-                    ? 'Usaha rendah'
-                    : rec.effort === 'Tinggi'
-                      ? 'Usaha tinggi'
-                      : 'Usaha sedang',
-                cost_rp: rec.cost_rp ?? null,
-                affected_agents_count: rec.affected_agents_count ?? 0,
-                is_checked: hasPriority ? rec.priority_tag === 'Prioritas' : true,
-              })),
-            );
+            if (res.what_if_projection.mode === 'terverifikasi_simulasi') {
+              setLastVerifiedProjection(res.what_if_projection);
+              setLastVerifiedCheckedIds(nextFixes.filter((f) => f.is_checked).map((f) => f.id));
+            } else {
+              setLastVerifiedProjection(null);
+              setLastVerifiedCheckedIds([]);
+            }
           } else {
-            setFixes([]);
+            setLastVerifiedProjection(null);
+            setLastVerifiedCheckedIds([]);
           }
           if (res.waypoints && res.waypoints.length > 0) {
             const hotspot = res.waypoints.find((w) => w.is_hotspot) ?? res.waypoints[0];
@@ -203,12 +216,27 @@ function DashboardResultInner() {
       const updated = await runWhatIfProjection(analysisId, checkedIds, 'terverifikasi_simulasi');
       if (updated) {
         setProjection(updated);
+        if (updated.mode === 'terverifikasi_simulasi') {
+          setLastVerifiedProjection(updated);
+          setLastVerifiedCheckedIds(checkedIds);
+        }
       }
     } catch (err) {
       setWhatIfError(err instanceof Error ? err.message : 'Gagal menjalankan simulasi ulang.');
     } finally {
       setIsSimulating(false);
     }
+  };
+
+  const handleRestoreLastVerified = () => {
+    if (!lastVerifiedProjection) return;
+    quickAbortRef.current?.abort();
+    quickSeqRef.current += 1;
+    setIsQuickUpdating(false);
+    setWhatIfError(null);
+    setProjection(lastVerifiedProjection);
+    const verifiedSet = new Set(lastVerifiedCheckedIds);
+    setFixes((prev) => prev.map((f) => ({ ...f, is_checked: verifiedSet.has(f.id) })));
   };
 
   if (loadError) {
@@ -545,6 +573,22 @@ function DashboardResultInner() {
               </div>
             )}
 
+            {lastVerifiedProjection && projection.mode !== 'terverifikasi_simulasi' && (
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-primary-20 bg-primary-10/60 px-4 py-2.5 text-xs text-ink-soft">
+                <p className="leading-relaxed">
+                  Pilihan perbaikan diubah setelah simulasi ulang terakhir, sehingga proyeksi kembali ke{' '}
+                  <strong className="font-semibold text-ink">Estimasi cepat</strong>. Jalankan simulasi ulang untuk memverifikasi kombinasi baru.
+                </p>
+                <button
+                  type="button"
+                  onClick={handleRestoreLastVerified}
+                  className="shrink-0 rounded-full bg-white px-3 py-1 text-[11px] font-semibold text-primary-40 ring-1 ring-primary-20 transition hover:bg-primary-10"
+                >
+                  Lihat hasil terverifikasi terakhir
+                </button>
+              </div>
+            )}
+
             {projection.low_accuracy_early_edit && projection.accuracy_note && (
               <div className="flex items-start gap-2.5 rounded-xl border border-friction/40 bg-friction-10 px-4 py-3 text-xs text-friction">
                 <TriangleAlert size={15} className="mt-0.5 shrink-0" />
@@ -566,7 +610,10 @@ function DashboardResultInner() {
             </div>
 
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-              {projection.stages_comparison.map((stage, idx) => (
+              {projection.stages_comparison.map((stage, idx) => {
+                const baseCount = stage.baseline_count ?? Math.round((stage.baseline_pct / 100) * totalAgents);
+                const projCount = stage.projected_count ?? Math.round((stage.projected_pct / 100) * totalAgents);
+                return (
                 <div key={stage.id} className="space-y-2.5 rounded-xl bg-panel p-3.5 ring-1 ring-line/70">
                   <div className="flex items-center justify-between text-xs">
                     <span className="font-semibold text-ink">
@@ -590,7 +637,7 @@ function DashboardResultInner() {
                       />
                     </div>
                     <span className="w-12 shrink-0 text-right font-mono text-[11px] text-muted">
-                      {Math.round((stage.baseline_pct / 100) * totalAgents)}/{totalAgents}
+                      {baseCount}/{totalAgents}
                     </span>
                   </div>
 
@@ -603,11 +650,12 @@ function DashboardResultInner() {
                       />
                     </div>
                     <span className="w-12 shrink-0 text-right font-mono text-[11px] font-semibold text-primary-40">
-                      {Math.round((stage.projected_pct / 100) * totalAgents)}/{totalAgents}
+                      {projCount}/{totalAgents}
                     </span>
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
 
             <div className="rounded-xl bg-primary-10/60 p-4 text-xs ring-1 ring-primary-20">

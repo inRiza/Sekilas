@@ -242,6 +242,8 @@ export interface WhatIfProjectionData {
     baseline_pct: number;
     projected_pct: number;
     delta_label: string;
+    baseline_count?: number;
+    projected_count?: number;
   }>;
   model_conclusion: string;
   mode?: 'estimasi_cepat' | 'terverifikasi_simulasi';
