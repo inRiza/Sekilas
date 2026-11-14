@@ -2,10 +2,11 @@
 
 import React, { useState, Suspense } from 'react';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import { TrendingDown, TrendingUp, TriangleAlert, Wallet, type LucideIcon } from 'lucide-react';
 import { InfoIcon, TrendingUpIcon } from '@/components/ui/icons';
 import { Badge } from '@/components/ui/badge';
-import { TwinViewer } from '@/components/dashboard/twin-viewer';
+import { AnalysisTwin } from '@/components/dashboard/analysis-twin';
 import { MOCK_DASHBOARD, MOCK_WHAT_IF_PROJECTION, WhatIfFix } from '@/lib/mock/dashboard';
 
 const KPI_TONE = {
@@ -86,6 +87,8 @@ function KpiCard({
 }
 
 function DashboardResultInner() {
+  // Analisis dari URL (?aid=); tanpa aid, pakai analisis demo bawaan backend.
+  const aid = useSearchParams().get('aid') ?? 'ana_demo';
   const data = MOCK_DASHBOARD;
   const projection = MOCK_WHAT_IF_PROJECTION;
 
@@ -203,10 +206,7 @@ function DashboardResultInner() {
         <div id="twin" className="space-y-6">
           {/* Visual Twin 3D: selebar layar, dengan tab Putar / Jalan / Tur */}
           <div className="space-y-4">
-            <TwinViewer
-              source={{ kind: 'ply', url: '/samples/goffee-depan-kasir.ply', name: 'goffee-depan-kasir' }}
-              meta={['48 detik', '3 zona']}
-            />
+            <AnalysisTwin aid={aid} />
             <div className="rounded-xl border border-line bg-white overflow-hidden">
               {/* 2D Waypoint Progression Bar */}
               <div className="p-4 bg-white">
