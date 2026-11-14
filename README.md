@@ -2,6 +2,27 @@
 
 Simulator calon pelanggan berbasis *Multi-Agent LLM* dan *Visual Twin 3D* untuk membantu UMKM kuliner memetakan titik gesekan fisik toko dari satu rekaman video ponsel. Spesifikasi lengkap: [context/PRD.md](context/PRD.md) (v1.4) & [context/design.md](context/design.md).
 
+## Fitur Utama & Alur Kerja
+
+1. **Autentikasi & Manajemen Bisnis/Cabang (`/masuk`, `/daftar`, `/businesses`, `/businesses/analyses`)**
+   - Login/registrasi berbasis Supabase Auth dengan isolasi data per pengguna (*Row-Level Security*).
+   - Pengelolaan banyak bisnis/cabang dan riwayat siklus analisis per cabang.
+2. **Wizard Analisis 6 Langkah (`/business/analysis/...`)**
+   - **Konteks & Menu (`/konteks`):** profil usaha, target pelanggan/jam ramai, daftar menu & harga, serta kendala awal.
+   - **Unggah & Inspeksi Video (`/video`):** validasi kualitas video di browser, *privacy blur* otomatis di sisi klien sebelum unggah ke bucket privat `videos`, penandaan titik referensi (mis. kasir), dan sampling frame bukti.
+   - **Pemrosesan Paralel AI & 3D (`/proses`):**
+     - *Transkrip VLM*: membaca frame video untuk mengekstrak segmen & checkpoint pengalaman pelanggan dari depan toko sampai kasir/area duduk.
+     - *Visual Twin 3D*: membangun peta kamera dan ruang 3D (`.ply`, `.splat`, `camera_path.json`) beserta diagnosis kualitas pemetaan.
+   - **Verifikasi Transkrip (`/verifikasi`):** pemilik meninjau dan mengoreksi hasil pembacaan AI sebelum simulasi dijalankan.
+   - **Konfigurasi Persona & Agen (`/agents`):** membentuk populasi agen pelanggan virtual dengan beragam persona dan sensitivitas terhadap antrean, harga, kejelasan menu, serta suasana.
+   - **Simulasi Multi-Agent (`/simulasi`):** simulasi perjalanan agen melewati tiap segmen toko untuk memetakan di mana dan mengapa calon pelanggan ragu atau *drop-off* (Mode 1: baseline).
+3. **Dasbor Hasil, Rekomendasi & Penampil 3D (`/dasbor`, `/hasil`)**
+   - **KPI & Funnel Drop-off:** ringkasan tingkat konversi, titik *drop-off* tertinggi, dan *key insights* penyebab utama.
+   - **Peringkat Masalah & Rekomendasi Pareto:** prioritas aksi perbaikan berdampak tertinggi dengan usaha paling ringan (toggle *Prioritas / Nanti*) serta **Proyeksi Mode 2** untuk mensimulasikan dampak perbaikan.
+   - **Video Waypoint & Replay Agen:** lompat langsung ke detik video bukti per checkpoint (via Signed URL) beserta narasi keputusan agen.
+   - **Visual Twin 3D Interaktif:** penampil Gaussian Splat / Point Cloud di browser dengan navigasi jalur kamera dan penandaan zona toko.
+   - **Rencana Pengukuran Lapangan:** target metrik evaluasi pasca-perbaikan di toko nyata.
+
 ## Struktur Repositori
 
 ```text
