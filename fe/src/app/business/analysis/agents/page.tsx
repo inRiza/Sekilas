@@ -1,13 +1,14 @@
 'use client';
 
 import { ChevronDown, Clock, MapPin, Quote, UserRound, Wallet } from 'lucide-react';
-import { useRouter } from 'next/navigation';
-import React, { Suspense, useMemo, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import React, { Suspense, useEffect, useMemo, useState } from 'react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Chip } from '@/components/ui/form';
 import { ArrowLeftIcon } from '@/components/ui/icons';
+import { fetchAgentDecisions } from '@/lib/api/crud';
 import { MOCK_AGENTS } from '@/lib/mock/agents';
 import type { AgentDecision, FinalDecision } from '@/types/api';
 
@@ -99,20 +100,37 @@ function AgentItem({ agent, open, onToggle }: { agent: AgentDecision; open: bool
 
 function AgenExplorerInner() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const analysisId = searchParams.get('analysisId') || 'selasar-kopi';
+  const businessId = searchParams.get('businessId');
+  const querySuffix = `?analysisId=${encodeURIComponent(analysisId)}${
+    businessId ? `&businessId=${encodeURIComponent(businessId)}` : ''
+  }`;
+
+  const [allAgents, setAllAgents] = useState<AgentDecision[]>(MOCK_AGENTS);
   const [decisionFilter, setDecisionFilter] = useState<'all' | FinalDecision>('all');
   const [segmentFilter, setSegmentFilter] = useState<string>('all');
   const [openId, setOpenId] = useState<number | null>(MOCK_AGENTS[0]?.agent_id ?? null);
 
-  const segments = useMemo(() => Array.from(new Set(MOCK_AGENTS.map((a) => a.persona.segment))), []);
+  useEffect(() => {
+    void fetchAgentDecisions(analysisId).then((list) => {
+      if (list.length > 0) {
+        setAllAgents(list);
+        setOpenId(list[0]?.agent_id ?? null);
+      }
+    });
+  }, [analysisId]);
+
+  const segments = useMemo(() => Array.from(new Set(allAgents.map((a) => a.persona.segment))), [allAgents]);
 
   const agents = useMemo(
     () =>
-      MOCK_AGENTS.filter(
+      allAgents.filter(
         (a) =>
           (decisionFilter === 'all' || a.final_decision === decisionFilter) &&
           (segmentFilter === 'all' || a.persona.segment === segmentFilter),
       ),
-    [decisionFilter, segmentFilter],
+    [allAgents, decisionFilter, segmentFilter],
   );
 
   return (
@@ -172,7 +190,7 @@ function AgenExplorerInner() {
 
             {/* Kaki container */}
             <div className="flex items-center rounded-b-md bg-panel px-6 py-5 sm:px-10">
-              <Button variant="secondary" size="lg" onClick={() => router.push('/business/analysis')} className="!rounded-md">
+              <Button variant="secondary" size="lg" onClick={() => router.push(`/business/analysis${querySuffix}`)} className="!rounded-md">
                 <ArrowLeftIcon size={16} /> Kembali ke dasbor
               </Button>
             </div>

@@ -11,12 +11,8 @@ export const MOCK_ANALYSES: Analysis[] = [
     created_at: '2026-11-13T14:30:00Z',
     status: 'ready',
     quality_label: 'Kualitas baik',
-    total_agents: 20, // 20 agen untuk ruang lingkup demo (PRD v1.2 Bagian 9 & F5)
+    total_agents: 20, // 20 agen untuk ruang lingkup demo (PRD v1.4 Bagian 9 & F5)
     thumbnail_url: '/samples/selasar-thumb.jpg',
-    step_progress: {
-      current_step: 4,
-      total_steps: 4,
-    },
   },
   {
     id: 'selasar-dago-eval',
@@ -30,10 +26,6 @@ export const MOCK_ANALYSES: Analysis[] = [
     quality_label: 'Kualitas baik',
     total_agents: 20,
     thumbnail_url: '/samples/bakso-thumb.jpg',
-    step_progress: {
-      current_step: 4,
-      total_steps: 4,
-    },
   },
   {
     id: 'selasar-night-run',
@@ -46,9 +38,5 @@ export const MOCK_ANALYSES: Analysis[] = [
     status: 'processing',
     total_agents: 20,
     thumbnail_url: '/samples/warkop-thumb.jpg',
-    step_progress: {
-      current_step: 3,
-      total_steps: 4,
-    },
   },
 ];

@@ -8,11 +8,21 @@ import { useTwin } from '@/lib/use-twin';
 import { TwinViewer } from './twin-viewer';
 
 /**
- * Visual Twin satu analisis dari backend (GET /analyses/{aid}/twin):
- * menampilkan progres saat dibangun, pesan saat gagal, dan viewer 3D saat siap.
+ * Visual Twin satu analisis dari backend (GET /analyses/{id}/twin): progres saat dibangun,
+ * pesan saat gagal, dan viewer 3D (splat bila ada, selain itu awan titik) saat siap.
  */
-export function AnalysisTwin({ aid }: { aid: string }) {
-  const { twin, error } = useTwin(aid);
+export function AnalysisTwin({
+  analysisId,
+  meta = [],
+  activeWaypoint,
+  onSelectWaypoint,
+}: {
+  analysisId: string;
+  meta?: string[];
+  activeWaypoint?: string | null;
+  onSelectWaypoint?: (id: string) => void;
+}) {
+  const { twin, error } = useTwin(analysisId);
   const job = twin?.job;
   const assets = twin?.assets;
 
@@ -25,7 +35,14 @@ export function AnalysisTwin({ aid }: { aid: string }) {
         <TwinViewer
           key={url}
           source={{ kind, url, name }}
-          meta={[assets.quality_label, `${assets.registered} dari ${assets.frames} frame`, kind === 'splat' ? 'Splat' : 'Awan titik']}
+          meta={[
+            assets.quality_label,
+            `${assets.registered_frames} dari ${assets.total_frames} frame`,
+            kind === 'splat' ? 'Splat' : 'Awan titik',
+            ...meta,
+          ]}
+          activeWaypoint={activeWaypoint}
+          onSelectWaypoint={onSelectWaypoint}
         />
       );
     }

@@ -27,5 +27,4 @@ export const MOCK_CONTEXT: BusinessContext = {
     { start: '12:00', end: '14:00' },
     { start: '19:00', end: '21:30' },
   ],
-  nearby_competitors: 'Sebelah kiri ada minimarket, seberang jalan ada kafe besar 3 lantai yang ramai mahasiswa',
 };

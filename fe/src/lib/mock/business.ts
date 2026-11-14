@@ -16,6 +16,7 @@ export const MOCK_BUSINESSES: Business[] = [
     branch_name: 'Dipatiukur (Pusat)',
     category: 'kedai',
     address: 'Jl. Dipati Ukur No. 42, Coblong, Bandung',
+    primary_analysis_id: 'selasar-kopi',
     context: {
       ...MOCK_CONTEXT,
       business_name: 'Selasar Kopi & Roti',
@@ -31,6 +32,7 @@ export const MOCK_BUSINESSES: Business[] = [
     branch_name: 'Dago Atas',
     category: 'kafe',
     address: 'Jl. Ir. H. Juanda No. 185, Dago, Bandung',
+    primary_analysis_id: 'selasar-dago-eval',
     context: {
       ...MOCK_CONTEXT,
       business_name: 'Selasar Kopi & Roti - Dago',
