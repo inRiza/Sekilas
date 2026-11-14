@@ -18,7 +18,7 @@ const STAGES: { icon: LucideIcon; title: string; description: string }[] = [
   { icon: Users, title: 'Membentuk persona', description: 'Calon pelanggan dibentuk dari konteks usaha dan lingkungan sekitar.' },
   { icon: Route, title: 'Agen menelusuri jalur', description: 'Setiap agen membaca transkrip berurutan dan memutuskan lanjut atau pergi.' },
   { icon: ListOrdered, title: 'Merangkum alasan', description: 'Alasan agen dipetakan ke katalog masalah lalu diurutkan.' },
-  { icon: BarChart3, title: 'Menyusun dasbor', description: 'Corong, peta gesekan, dan rekomendasi perbaikan.' },
+  { icon: BarChart3, title: 'Menyusun dasbor', description: 'Alur pengunjung, titik yang membuat batal, dan saran perbaikan.' },
 ];
 
 const DECISION: Record<string, { label: string; variant: 'impact' | 'friction' | 'neutral' | 'primary' }> = {
