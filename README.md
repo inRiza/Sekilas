@@ -6,7 +6,7 @@ Simulator calon pelanggan berbasis *Multi-Agent LLM* dan *Visual Twin 3D* untuk 
 
 ```text
 fe/          Next.js 16 (App Router): Landing page, Manajemen Bisnis/Cabang, Wizard Analisis, Dasbor & Penampil 3D
-be/          FastAPI + SQLAlchemy 2.0: CRUD Bisnis/Analisis/Konteks, Transkrip VLM, Simulasi Agen, Dasbor, RAG
+be/          FastAPI + SQLAlchemy 2.0: CRUD Bisnis/Analisis/Konteks, Transkrip VLM, Simulasi Agen, Dasbor
 twin/        Worker GPU: Video -> Visual Twin 3D (COLMAP / Brush Gaussian Splatting / Point Cloud)
 supabase/    Migrasi SQL (`migrations/`) & data awal (`seed.sql`) yang terhubung ke proyek Supabase
 context/     PRD v1.4 & Panduan Sistem Desain (Editorial Warmth)
