@@ -91,7 +91,7 @@ flowchart LR
 ## Dokumentasi Penggunaan AI
 
 ### A. AI Agentic Assistant dalam Proses Pengembangan
-Selama pengembangan proyek ini, tim menggunakan **AI coding assistant berbasis agent** (**Google Antigravity**) sebagai alat bantu pengembangan dengan pengawasan dan verifikasi penuh dari tim pengembang:
+Selama pengembangan proyek ini, tim menggunakan **AI coding assistant berbasis agent** sebagai alat bantu pengembangan dengan pengawasan dan verifikasi penuh dari tim pengembang:
 - **Perancangan & Audit Teknis:** membantu meninjau arsitektur, keamanan akses media (migrasi bucket privat `videos` + Signed URL + RLS Supabase Storage), serta merancang checklist perbaikan bertahap.
 - **Implementasi & Refaktor Kode:** membantu penulisan dan pembaruan kode pada backend FastAPI (`be/`), komponen antarmuka Next.js (`fe/`), migrasi SQL (`supabase/migrations/`), serta skrip pipeline Visual Twin 3D (`twin/scripts/local_twin.sh`).
 - **Pengujian, Debugging & Dokumentasi:** membantu penulisan test (`pytest` & `vitest`), penelusuran error runtime/deployment/CI, verifikasi linter & build (`ruff`, `tsc`, `eslint`, `next build`), serta penyusunan dokumentasi `README.md`.
