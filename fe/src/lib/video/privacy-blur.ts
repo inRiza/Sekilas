@@ -337,7 +337,8 @@ export function detectPrivacyBoxesOnFrame(
       for (const det of faceRes.detections ?? []) {
         if (!det.boundingBox) continue;
         const score = det.categories?.[0]?.score ?? 0.7;
-        boxes.push(expandAndClampBox(det.boundingBox, frameW, frameH, 0.22, 0.26, 'face', score));
+        // Padding minimal (2% X, 4% Y) agar elips blur hanya menutupi wajah secara presisi
+        boxes.push(expandAndClampBox(det.boundingBox, frameW, frameH, 0.02, 0.04, 'face', score));
       }
     } catch {
       // Abaikan bila frame transisi belum siap
@@ -357,14 +358,17 @@ export function detectPrivacyBoxesOnFrame(
           const plateBoxes = derivePlateBoxesFromVehicle(det.boundingBox, cat, score, frameW, frameH);
           boxes.push(...plateBoxes);
         } else if (cat === 'person') {
-          // Estimasi area kepala/wajah di 26% bagian atas bounding box person
-          const headW = Math.max(24, Math.round(det.boundingBox.width * 0.56));
-          const headH = Math.max(24, Math.round(det.boundingBox.height * 0.26));
+          // Estimasi area wajah yang ketat (tidak melebar ke bahu/latar)
+          const headW = Math.max(14, Math.round(Math.min(det.boundingBox.width * 0.34, det.boundingBox.height * 0.16)));
+          const headH = Math.max(16, Math.round(Math.min(det.boundingBox.height * 0.18, headW * 1.25)));
           const headX = Math.max(
             0,
             Math.min(frameW - headW, Math.round(det.boundingBox.originX + (det.boundingBox.width - headW) / 2)),
           );
-          const headY = Math.max(0, Math.round(det.boundingBox.originY));
+          const headY = Math.max(
+            0,
+            Math.min(frameH - headH, Math.round(det.boundingBox.originY + det.boundingBox.height * 0.02)),
+          );
           const candidate: PrivacyBox = {
             kind: 'face',
             x: headX,
