@@ -19,8 +19,10 @@ export interface Business {
   category: BusinessType;
   address: string;
   primary_analysis_id?: string | null;
+  analyses_count?: number;
   context: BusinessContext;
   created_at: string;
+  updated_at?: string;
 }
 
 export type AnalysisStatus = 'draft' | 'processing' | 'ready' | 'stale' | 'failed';
@@ -33,10 +35,13 @@ export interface Analysis {
   name: string;
   business_type: string;
   created_at: string;
+  updated_at?: string;
   status: AnalysisStatus;
+  stale?: boolean;
   quality_label?: 'Kualitas baik' | 'Kualitas cukup' | 'Kualitas rendah';
   total_agents: number; // 500 untuk analisis penuh, 20 untuk demo
   thumbnail_url?: string;
+  context?: BusinessContext;
 }
 
 // ---------------- F1. Konteks Usaha ----------------

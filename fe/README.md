@@ -1,36 +1,56 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Sekilas Frontend (`fe/`)
 
-## Getting Started
+Aplikasi web Next.js 16 (App Router, React 19, Tailwind CSS v4) untuk **Sekilas** — simulator keputusan calon pelanggan dan *Visual Twin 3D* bagi pemilik UMKM kuliner. Mengikuti sistem desain *Editorial Warmth* ([`design.md`](design.md)).
 
-First, run the development server:
+## Menjalankan
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
+bun install
 bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Buka [http://localhost:3000](http://localhost:3000) di peramban. Secara bawaan aplikasi terhubung ke API backend di `http://localhost:8000` (dapat diubah melalui `NEXT_PUBLIC_API_URL`) dan memiliki *fallback* penyimpanan lokal otomatis saat dijalankan mandiri.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Pemeriksaan Tipe & Linter
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+npx next typegen
+npm run lint
+npx tsc --noEmit
+```
 
-## Learn More
+## Peta Rute Utama
 
-To learn more about Next.js, take a look at the following resources:
+| Rute | Deskripsi |
+| :--- | :--- |
+| `/` | Landing page interaktif (*MacbookScroll* & *HairlineStall* 3D) |
+| `/masuk`, `/daftar` | Halaman autentikasi pengguna |
+| `/businesses` | **Manajemen Bisnis (CRUD):** Daftar tempat usaha/cabang, tambah cabang, edit identitas cabang, hapus cabang |
+| `/businesses/analyses` | **Manajemen Analisis Cabang (CRUD):** Riwayat analisis per cabang, buat analisis baru, ubah nama, atur analisis utama (`primary_analysis_id`), hapus analisis |
+| `/business/analysis/konteks` | **Langkah 1 Wizard (F1):** Form Konteks Usaha 5 seksi (8 bidang wajib, input menu manual/Excel/foto, jam buka & ramai, penjualan & fasilitas parkir) |
+| `/business/analysis/video` | **Langkah 2 Wizard (F2):** Panduan & unggah rekaman video ponsel |
+| `/business/analysis/proses` | **Langkah 3 Wizard (F3):** Status pemrosesan ekstraksi VLM & pembangunan 3D |
+| `/business/analysis/verifikasi` | **Langkah 4 Wizard (F4):** Tinjau dan koreksi kartu transkrip kejadian |
+| `/business/analysis/simulasi` | **Langkah 5 Wizard (F5):** Pantau jalannya simulasi agen pelanggan |
+| `/business/analysis` | **Dasbor Hasil (F6 & F7):** KPI corong keputusan, penampil Visual Twin 3D, rekomendasi Pareto, proyeksi *what-if*, & asisten tanya jawab |
+| `/business/analysis/agents` | **Jelajah Agen:** Filter dan baca monolog keputusan tiap persona agen |
+| `/dasbor`, `/hasil` | *Workbench* lokal untuk pengujian *pipeline* 3D COLMAP/Brush (`twin/scripts/local_twin.sh`) |
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Struktur Kode (`src/`)
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```text
+src/
+  app/                    Halaman App Router & route API lokal (/api/twin)
+  components/
+    brand/                Logo & identitas visual Sekilas
+    dashboard/            Penampil 3D Gaussian Splat / Point Cloud & lembar cetak pengukuran
+    landing/              Komponen interaktif landing page
+    layout/               AppShell, AppSidebar (pohon bisnis & analisis reaktif), AppNavbar, WizardProgress
+    ui/                   Primitif UI (Button, Dialog, Select, TimeSelect, Form, Badge, Sidebar, Icons)
+  lib/
+    api/crud.ts           Klien CRUD untuk /api/v1/businesses, /analyses, dan /context + sinkronisasi state
+    mock/                 Data referensi awal untuk demo Selasar Kopi & Roti
+    twin/                 Utilitas pemuatan aset 3D lokal
+  types/
+    api.ts                Single Source of Truth kontrak tipe data Frontend <-> Backend (PRD v1.4)
+```
