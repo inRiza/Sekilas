@@ -9,11 +9,12 @@ Simulator calon pelanggan berbasis *Multi-Agent LLM* dan *Visual Twin 3D* untuk 
 
 ## Tim Pengembang
 
-- **Nama Tim:** *(Isi nama tim)*
+- **Nama Tim:** Sekilas
 - **Daftar Anggota:**
-  - Muhammad Rizain Firdaus (`@inRiza`)
-  - `@iammadsfq`
-  - `@gitaa001`
+  - Muhammad Rizain Firdaus
+  - Ahmad Syafiq
+  - Anggita Najmi
+  - Stefany Josefina Santono
 
 ---
 
