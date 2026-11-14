@@ -6,7 +6,8 @@ from app.schemas.context import BusinessContext, BusinessType
 
 
 class BusinessCreate(BaseModel):
-    user_id: str = "usr_01"
+    user_id: str | None = None
+    owner_id: str | None = None
     name: str = Field(min_length=1, max_length=255)
     branch_name: str = Field(default="Pusat", max_length=255)
     category: BusinessType = "kedai"
@@ -26,6 +27,7 @@ class BusinessUpdate(BaseModel):
 class BusinessOut(BaseModel):
     id: str
     user_id: str
+    owner_id: str | None = None
     name: str
     branch_name: str
     category: BusinessType
