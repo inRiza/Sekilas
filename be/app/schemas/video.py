@@ -44,7 +44,11 @@ class VideoUploadUrlRequest(BaseModel):
 class VideoUploadUrlResponse(BaseModel):
     bucket: str = "videos"
     storage_key: str
-    public_url: str
+    signed_url: str
+    upload_url: str
+    upload_token: str | None = None
+    expires_in: int = 3600
+    public_url: str | None = None
 
 
 class VideoCompleteRequest(BaseModel):

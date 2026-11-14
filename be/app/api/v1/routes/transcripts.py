@@ -1,9 +1,12 @@
 """Halaman 5 Verifikasi Transkrip (F3, F4)."""
 
-from fastapi import APIRouter, HTTPException, Response, status
+from typing import Annotated
+
+from fastapi import APIRouter, Header, HTTPException, Request, Response, status
 
 from app.core.auth import CurrentUserDep
 from app.core.db import SessionDep
+from app.core.storage import extract_bearer_token
 from app.models.entities import TranscriptSegment
 from app.schemas.transcript import (
     TranscriptSegmentCreate,
@@ -22,12 +25,23 @@ router = APIRouter(prefix="/analyses/{analysis_id}/transcript", tags=["transcrip
 
 
 @router.get("", response_model=list[TranscriptSegmentOut])
-def get_transcript(analysis_id: str, session: SessionDep, _user: CurrentUserDep) -> list[TranscriptSegmentOut]:
+def get_transcript(
+    analysis_id: str,
+    request: Request,
+    session: SessionDep,
+    _user: CurrentUserDep,
+    authorization: Annotated[str | None, Header()] = None,
+) -> list[TranscriptSegmentOut]:
     """Ambil daftar segmen transkrip VLM terurut waktu mulai."""
     analysis = load_analysis_with_relations(session, analysis_id)
     if analysis is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Analisis tidak ditemukan")
-    return list_transcript_segments(session, analysis.id)
+    return list_transcript_segments(
+        session,
+        analysis.id,
+        bearer_token=extract_bearer_token(authorization),
+        base_url=str(request.base_url).rstrip("/"),
+    )
 
 
 @router.post("/segments", response_model=TranscriptSegmentOut, status_code=status.HTTP_201_CREATED)
