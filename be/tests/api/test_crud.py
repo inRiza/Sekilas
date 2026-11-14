@@ -288,6 +288,13 @@ def test_dashboard_kpi_drop_off_shows_percentage_and_matches_highest_stage(clien
     kpi = dash["kpi"]
     assert kpi["drop_off_rate_text"].endswith("%")
     assert "agen" not in kpi["drop_off_rate_text"]
+    assert kpi["potential_loss_amount"] == "Belum dihitung"
+    assert dash["what_if_projection"]["revenue_lift"] == "Belum dihitung"
+    assert len(dash["recommendations"]) >= 1
+    first_rec = dash["recommendations"][0]
+    assert first_rec["cost_rp"] is not None
+    assert len(first_rec["segment_ids"]) >= 1
+    assert first_rec["affected_agents_count"] >= 1
 
     highest_stage = next(s for s in dash["funnel_stages"] if s.get("is_highest_friction"))
     expected_pct = f"{highest_stage['drop_off_rate']:.1f}".rstrip("0").rstrip(".").replace(".", ",") + "%"

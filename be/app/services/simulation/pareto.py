@@ -29,6 +29,7 @@ class CueAggregate:
     total_relevance: float
     top_segment_ids: list[str]
     sample_quotes: list[str]
+    affected_agent_ids: list[int] | None = None
 
 
 @dataclass
@@ -45,6 +46,9 @@ class CuratedRecommendation:
     segment_ids: list[str]
     quote_agent_ids: list[int]
     is_priority: bool = False
+    share_pct: float = 0.0
+    lift: float = 1.0
+    affected_agents_count: int = 0
 
 
 def aggregate_cue_scores(results: list[AgentRunResult]) -> list[CueAggregate]:
@@ -93,22 +97,48 @@ def aggregate_cue_scores(results: list[AgentRunResult]) -> list[CueAggregate]:
         lift = pct_non / max(0.05, pct_buy)
         share_pct = (share_val / max(1, n_non)) * 100.0 if n_non else 0.0
         segs_unique = list(dict.fromkeys(s for s in cue_segments.get(code, []) if s))
+        agent_ids = sorted(cue_non_buyer_agents.get(code, set()))
         aggregates.append(
             CueAggregate(
                 cue_code=code,
                 title=hyp.title,
                 share_pct=round(share_pct, 1),
-                affected_agents_count=len(cue_non_buyer_agents.get(code, set())),
+                affected_agents_count=len(agent_ids),
                 total_non_buyers=n_non,
                 lift=round(lift, 2),
                 total_relevance=cue_rel_sum.get(code, 0.0),
                 top_segment_ids=segs_unique[:3],
                 sample_quotes=cue_quotes.get(code, [])[:3],
+                affected_agent_ids=agent_ids,
             )
         )
 
     aggregates.sort(key=lambda c: (c.lift > 1.0, c.share_pct, c.total_relevance), reverse=True)
     return aggregates
+
+
+def _select_relevant_cues(
+    cues: list[CueAggregate],
+    cannot_change: list[str] | None,
+) -> list[CueAggregate]:
+    """Saring hanya isyarat yang berdampak nyata dan memiliki tindakan yang tidak terblokir batasan pemilik."""
+    non_h0 = [c for c in cues if c.cue_code != "H0" and c.affected_agents_count > 0]
+    if not non_h0:
+        return []
+
+    unblocked = [
+        c for c in non_h0 if get_actions_for_cue(c.cue_code, cannot_change, allow_fallback=False)
+    ]
+    pool = unblocked or non_h0
+
+    strong = [
+        c
+        for c in pool
+        if (c.total_non_buyers < 3 or (c.affected_agents_count >= 2 or c.share_pct >= 10.0))
+        and c.lift > 1.0
+    ]
+    chosen = strong or [c for c in pool if c.affected_agents_count >= 2] or pool[:3]
+    return chosen[:5]
 
 
 def generate_catalog_recommendations(
@@ -122,7 +152,7 @@ def generate_catalog_recommendations(
 
     Nilai efikasi ``e`` dan definisi tindakan selalu diambil dari ``ACTION_CATALOG`` (tidak dikarang LLM).
     """
-    top_cues = [c for c in cues if c.cue_code != "H0"][:5]
+    top_cues = _select_relevant_cues(cues, cannot_change)
     if not top_cues:
         return []
 
@@ -210,8 +240,9 @@ def generate_catalog_recommendations(
         if not seg_ids:
             seg_ids = c.top_segment_ids or ([segments[0].id] if segments else [])
 
+        # Aturan Pareto 80/20: item teratas hingga kontribusi kumulatif melewati 80% ditandai Prioritas.
+        is_prio = idx == 1 or (cum_share / total_share) < 0.80
         cum_share += c.share_pct
-        is_prio = (cum_share / total_share) <= 0.85 or idx <= 2
 
         recs.append(
             CuratedRecommendation(
@@ -225,8 +256,11 @@ def generate_catalog_recommendations(
                 cost_rp=action.cost_rp,
                 impact_score=round(c.share_pct * efficacy, 1),
                 segment_ids=seg_ids,
-                quote_agent_ids=[],
+                quote_agent_ids=list(c.affected_agent_ids or []),
                 is_priority=is_prio,
+                share_pct=c.share_pct,
+                lift=c.lift,
+                affected_agents_count=c.affected_agents_count,
             )
         )
 

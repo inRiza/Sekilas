@@ -1099,6 +1099,11 @@ def run_simulation_for_analysis(
         target_seg = seg_map.get(rec.segment_ids[0]) if rec.segment_ids else segs[0]
         time_str = _mmss(target_seg.timestamp_start) if target_seg else "00:00"
         impact_lbl = "Tinggi" if rec.impact_score >= 18 else ("Sedang" if rec.impact_score >= 9 else "Rendah")
+        est_lift_agents = (
+            min(rec.affected_agents_count, max(1, round(rec.affected_agents_count * rec.efficacy)))
+            if rec.affected_agents_count > 0
+            else max(1, round(rec.efficacy * 6))
+        )
         session.add(
             RecommendationItem(
                 id=f"rec_{analysis.id}_{rank_idx}",
@@ -1112,8 +1117,14 @@ def run_simulation_for_analysis(
                 description=rec.description,
                 impact=impact_lbl,
                 effort=rec.effort,
-                estimated_lift_range=f"+{max(1, round(rec.efficacy * 6))} dari {total} agen",
+                share=rec.share_pct,
+                lift=rec.lift,
+                estimated_lift_range=f"+{est_lift_agents} dari {total} agen",
+                cost_min_rp=rec.cost_rp,
+                cost_max_rp=rec.cost_rp,
                 location_zone=f"{(target_seg.vantage if target_seg else 'jalan').title()} (Detik {time_str})",
+                segment_ids=list(rec.segment_ids),
+                quote_agent_ids=list(rec.quote_agent_ids),
             )
         )
 
@@ -1245,16 +1256,20 @@ def compute_what_if_projection(
     from app.services.simulation.runner import AgentRunResult, SegmentInput
 
     biz = analysis.business
+    ctx = analysis.context
     bname = (
         biz.name
         if biz is not None
-        else (analysis.context.business_name if analysis.context is not None else analysis.name)
+        else (ctx.business_name if ctx is not None else analysis.name)
     )
+    btype = ctx.business_type if ctx and ctx.business_type else "usaha kuliner"
+    loc_desc = (ctx.location_description if ctx and ctx.location_description else "") or f"fasad depan {bname}"
     total = max(1, analysis.total_agents or 20)
     menus = list(analysis.menu_items or [])
-    avg_ticket = round(sum(m.price for m in menus) / len(menus)) if menus else 20000
+    avg_ticket = round(sum(m.price for m in menus) / len(menus)) if menus else None
 
-    active_ids = set(checked_ids) if checked_ids is not None else {r.id for r in recommendations}
+    priority_ids = {r.id for r in recommendations if r.priority_tag == "Prioritas"}
+    active_ids = set(checked_ids) if checked_ids is not None else (priority_ids or {r.id for r in recommendations})
     checked_recs = [r for r in recommendations if r.id in active_ids]
     rec_row_by_id = {r.id: r for r in (rec_rows or [])}
 
@@ -1292,12 +1307,16 @@ def compute_what_if_projection(
             )
             for d in decisions
         ]
+        valid_seg_ids = {s.id for s in segments}
         checked_actions: list[tuple[str, list[str]]] = []
         for r in checked_recs:
             row = rec_row_by_id.get(r.id)
             action_id = row.action_id if row else "A8.1"
-            target_sids = [s.id for s in segments if s.vantage in r.location_zone.lower()] or (
-                [segments[0].id] if segments else []
+            stored_sids = [sid for sid in (row.segment_ids or []) if sid in valid_seg_ids] if row else []
+            target_sids = (
+                stored_sids
+                or [s.id for s in segments if s.vantage in r.location_zone.lower()]
+                or ([segments[0].id] if segments else [])
             )
             checked_actions.append((action_id, target_sids))
 
@@ -1319,7 +1338,7 @@ def compute_what_if_projection(
                 personas=persona_specs,
                 segments=seg_inputs,
                 baseline_results=baseline_runs,
-                business_summary=f"{bname}",
+                business_summary=f"{bname} ({btype}), berlokasi di {loc_desc}.",
                 checked_actions=[(aid, sids, None) for aid, sids in checked_actions],
                 batch_size=10,
                 seed=persona_specs[0].seed if persona_specs else 42,
@@ -1358,10 +1377,13 @@ def compute_what_if_projection(
     highest_drop = max((s.drop_off_rate for s in funnel_stages[:3]), default=50.0)
     proj_drop = max(10.0, highest_drop - max(0, proj_order_pct - base_order_pct) * 0.9)
 
-    daily_visitors = (analysis.context.daily_visitors if analysis.context and analysis.context.daily_visitors else None) or 60
-    extra_daily_buyers = max(0, round(daily_visitors * ((buyers_proj - buyers_base) / total)))
-    daily_rev_lift = extra_daily_buyers * avg_ticket
-    rev_lift_str = f"+{_format_rp_short(daily_rev_lift).replace('Rp ', '')}" if daily_rev_lift > 0 else "Rp 0"
+    daily_visitors = ctx.daily_visitors if ctx and ctx.daily_visitors else None
+    if daily_visitors and avg_ticket:
+        extra_daily_buyers = max(0, round(daily_visitors * ((buyers_proj - buyers_base) / total)))
+        daily_rev_lift = extra_daily_buyers * avg_ticket
+        rev_lift_str = f"+{_format_rp_short(daily_rev_lift).replace('Rp ', '')}" if daily_rev_lift > 0 else "Rp 0"
+    else:
+        rev_lift_str = "Belum dihitung"
     cost_str = _format_rp_short(total_cost_rp) if total_cost_rp > 0 else "Rp 0"
 
     def _delta(base: int, proj: int) -> str:
@@ -1520,6 +1542,8 @@ def build_dashboard_data(
         ),
     ]
 
+    from app.services.simulation.catalog import ACTION_BY_ID
+
     # Recommendations from DB
     rec_stmt = (
         select(RecommendationItem)
@@ -1538,6 +1562,13 @@ def build_dashboard_data(
             effort=r.effort,
             estimated_lift_range=r.estimated_lift_range,
             location_zone=r.location_zone,
+            cost_rp=(
+                r.cost_min_rp
+                if r.cost_min_rp is not None
+                else (ACTION_BY_ID[r.action_id].cost_rp if r.action_id in ACTION_BY_ID else None)
+            ),
+            segment_ids=list(r.segment_ids or []),
+            affected_agents_count=len(r.quote_agent_ids or []),
         )
         for r in rec_rows
     ]

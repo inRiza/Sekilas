@@ -148,7 +148,8 @@ ACTION_CATALOG: tuple[CatalogAction, ...] = (
         effort="Rendah",
         cost_rp=150_000,
         affected_area="fasad",
-        cannot_change_tags=("fasad", "sewa_gedung"),
+        # Papan/banner tetap boleh dipasang walau struktur bangunan ('fasad') tidak bisa diubah.
+        cannot_change_tags=("sewa_gedung",),
     ),
     CatalogAction(
         action_id="A1.2",
@@ -250,7 +251,7 @@ ACTION_CATALOG: tuple[CatalogAction, ...] = (
         effort="Tinggi",
         cost_rp=350_000,
         affected_area="struktur_pintu",
-        cannot_change_tags=("struktur", "tangga", "renovasi"),
+        cannot_change_tags=("fasad", "struktur", "tangga", "renovasi"),
     ),
     CatalogAction(
         action_id="A6.1",
@@ -328,7 +329,12 @@ ACTION_CATALOG: tuple[CatalogAction, ...] = (
 ACTION_BY_ID: dict[str, CatalogAction] = {a.action_id: a for a in ACTION_CATALOG}
 
 
-def get_actions_for_cue(cue_code: str, cannot_change: list[str] | None = None) -> list[CatalogAction]:
+def get_actions_for_cue(
+    cue_code: str,
+    cannot_change: list[str] | None = None,
+    *,
+    allow_fallback: bool = True,
+) -> list[CatalogAction]:
     """Ambil kandidat tindakan dari katalog yang cocok dengan ``cue_code`` dan tidak melanggar batasan pemilik."""
     blocked = {c.strip().lower() for c in (cannot_change or []) if c.strip()}
     candidates: list[CatalogAction] = []
@@ -338,8 +344,10 @@ def get_actions_for_cue(cue_code: str, cannot_change: list[str] | None = None) -
         if blocked and any(tag in b for tag in act.cannot_change_tags for b in blocked):
             continue
         candidates.append(act)
-    # Jika semua terblokir, tetap kembalikan kandidat asli agar pemilik masih melihat opsi alternatif
-    return candidates or [a for a in ACTION_CATALOG if a.cue_code == cue_code]
+    if candidates or not allow_fallback:
+        return candidates
+    # Jika semua terblokir dan fallback diizinkan, kembalikan kandidat asli agar tidak kosong
+    return [a for a in ACTION_CATALOG if a.cue_code == cue_code]
 
 
 def render_action_spec(action_id: str, slot_params: dict[str, str] | None = None) -> str:
