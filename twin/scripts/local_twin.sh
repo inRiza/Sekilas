@@ -68,9 +68,13 @@ rm -rf "$work/colmap" && mkdir -p "$work/colmap/sparse"
 : > "$log"
 # Tahap dijalankan terpisah (bukan automatic_reconstructor) agar loop detection
 # berbasis vocabulary tree bisa dimatikan; cukup sequential matching untuk video.
+max_img_flag="--SiftExtraction.max_image_size"
+if colmap feature_extractor --help 2>&1 | grep -q -- "--FeatureExtraction.max_image_size"; then
+  max_img_flag="--FeatureExtraction.max_image_size"
+fi
 colmap feature_extractor --database_path "$db" --image_path "$work/images" \
   --ImageReader.single_camera 1 --FeatureExtraction.use_gpu 0 \
-  --FeatureExtraction.max_image_size 1600 --SiftExtraction.max_num_features 4096 >> "$log" 2>&1 \
+  "$max_img_flag" 1600 --SiftExtraction.max_num_features 4096 >> "$log" 2>&1 \
   || fail "ekstraksi fitur"
 echo "      fitur selesai"
 if [[ "$matcher" == exhaustive ]]; then
