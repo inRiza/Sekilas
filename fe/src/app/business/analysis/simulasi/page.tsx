@@ -34,7 +34,23 @@ const SEGMENT_LABEL = (s: string) => {
   return t.charAt(0).toUpperCase() + t.slice(1);
 };
 
-function stageStatus(stage: number, tick: number, agentTicks: number): 'done' | 'running' | 'waiting' {
+function stageStatus(
+  stage: number,
+  tick: number,
+  agentTicks: number,
+  isRunning: boolean,
+  hasError: boolean,
+): 'done' | 'running' | 'waiting' | 'error' {
+  if (hasError) {
+    if (stage === 0) return 'done';
+    if (stage === 1) return 'error';
+    return 'waiting';
+  }
+  if (isRunning) {
+    if (stage === 0) return tick >= 1 ? 'done' : 'running';
+    if (stage === 1) return tick >= 1 ? 'running' : 'waiting';
+    return 'waiting';
+  }
   const totalTicks = 1 + agentTicks + 2;
   const start = [0, 1, 1 + agentTicks, 2 + agentTicks][stage]!;
   const end = [1, 1 + agentTicks, 2 + agentTicks, totalTicks][stage]!;
@@ -66,7 +82,11 @@ function SimulasiAgenInner() {
     businessId ? `&businessId=${encodeURIComponent(businessId)}` : ''
   }`;
 
-  const [agents, setAgents] = useState<AgentDecision[]>(MOCK_AGENTS);
+  const [agents, setAgents] = useState<AgentDecision[]>(
+    analysisId === 'selasar-kopi' ? MOCK_AGENTS : [],
+  );
+  const [isRunning, setIsRunning] = useState<boolean>(analysisId !== 'selasar-kopi');
+  const [simError, setSimError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
   const feedRef = useRef<HTMLDivElement>(null);
 
@@ -76,10 +96,20 @@ function SimulasiAgenInner() {
   useEffect(() => {
     let active = true;
     const run = async () => {
-      await triggerSimulationRun(analysisId);
-      const list = await fetchAgentDecisions(analysisId);
-      if (active && list.length > 0) {
-        setAgents(list);
+      try {
+        setIsRunning(true);
+        setSimError(null);
+        await triggerSimulationRun(analysisId);
+        const list = await fetchAgentDecisions(analysisId);
+        if (active && list.length > 0) {
+          setAgents(list);
+        }
+      } catch (err) {
+        if (active) {
+          setSimError(err instanceof Error ? err.message : 'Gagal menjalankan simulasi agen.');
+        }
+      } finally {
+        if (active) setIsRunning(false);
       }
     };
     void run();
@@ -89,10 +119,13 @@ function SimulasiAgenInner() {
   }, [analysisId]);
 
   useEffect(() => {
+    if (simError) return;
+    if (isRunning && tick >= 1) return;
     if (tick >= totalTicks) return;
-    const t = setTimeout(() => setTick((n) => n + 1), TICK_MS);
+    const stepMs = agents.length > 0 ? 250 : TICK_MS;
+    const t = setTimeout(() => setTick((n) => n + 1), stepMs);
     return () => clearTimeout(t);
-  }, [tick, totalTicks]);
+  }, [tick, totalTicks, agents.length, simError, isRunning]);
 
   // Gulir kotak monolog saja (bukan seluruh halaman) ke entri terbaru.
   useEffect(() => {
@@ -100,9 +133,17 @@ function SimulasiAgenInner() {
     if (box) box.scrollTo({ top: box.scrollHeight, behavior: 'smooth' });
   }, [tick]);
 
-  const done = tick >= totalTicks;
-  const progress = Math.min(100, Math.round((tick / totalTicks) * 100));
-  const agentsShown = Math.max(0, Math.min(agentTicks, tick - 1));
+  const done = !isRunning && !simError && agents.length > 0 && tick >= totalTicks;
+  const progress = simError
+    ? 35
+    : isRunning
+      ? tick >= 1
+        ? 35
+        : 15
+      : done
+        ? 100
+        : Math.min(95, Math.round((tick / totalTicks) * 100));
+  const agentsShown = isRunning || agents.length === 0 ? 0 : Math.max(0, Math.min(agents.length, tick - 1));
 
   return (
     <div className="flex min-h-full flex-col bg-white">
@@ -130,7 +171,7 @@ function SimulasiAgenInner() {
                   <div className="mb-2 flex items-center justify-between text-[13px]">
                     <span className="flex items-center gap-2 font-medium text-ink">
                       <SekilasMascot size={22} />
-                      {done ? 'Simulasi selesai' : 'Menjalankan simulasi…'}
+                      {simError ? 'Simulasi gagal' : done ? 'Simulasi selesai' : 'Menjalankan simulasi 20 agen…'}
                     </span>
                     <span className="tabular-nums text-muted">{progress}%</span>
                   </div>
@@ -140,7 +181,7 @@ function SimulasiAgenInner() {
                 </div>
                 <ul className="space-y-2">
                   {STAGES.map((st, i) => {
-                    const status = stageStatus(i, tick, agentTicks);
+                    const status = stageStatus(i, tick, agentTicks, isRunning, Boolean(simError));
                     const Icon = st.icon;
                     return (
                       <li key={st.title} className="flex items-center gap-3 rounded-md border border-line px-4 py-3">
@@ -150,7 +191,9 @@ function SimulasiAgenInner() {
                               ? 'bg-impact-10 text-impact'
                               : status === 'running'
                                 ? 'bg-primary-10 text-primary-40'
-                                : 'bg-soft text-subtle'
+                                : status === 'error'
+                                  ? 'bg-friction-10 text-friction'
+                                  : 'bg-soft text-subtle'
                           }`}
                         >
                           {status === 'done' ? (
@@ -165,8 +208,24 @@ function SimulasiAgenInner() {
                           <p className={`text-[13px] font-medium ${status === 'waiting' ? 'text-muted' : 'text-ink'}`}>{st.title}</p>
                           <p className="mt-0.5 text-[12px] text-muted">{st.description}</p>
                         </div>
-                        <Badge variant={status === 'done' ? 'impact' : status === 'running' ? 'primary' : 'neutral'}>
-                          {status === 'done' ? 'Selesai' : status === 'running' ? 'Berjalan' : 'Menunggu'}
+                        <Badge
+                          variant={
+                            status === 'done'
+                              ? 'impact'
+                              : status === 'running'
+                                ? 'primary'
+                                : status === 'error'
+                                  ? 'friction'
+                                  : 'neutral'
+                          }
+                        >
+                          {status === 'done'
+                            ? 'Selesai'
+                            : status === 'running'
+                              ? 'Berjalan'
+                              : status === 'error'
+                                ? 'Gagal'
+                                : 'Menunggu'}
                         </Badge>
                       </li>
                     );
@@ -182,7 +241,13 @@ function SimulasiAgenInner() {
                   description="Contoh monolog saat agen menelusuri jalur. Semua monolog bisa dibaca di Jelajah agen setelah selesai."
                 />
                 <div ref={feedRef} className="max-h-[440px] space-y-2 overflow-y-auto rounded-md border border-line bg-panel p-2">
-                  {agentsShown === 0 && (
+                  {simError && (
+                    <div className="rounded-md border border-friction/40 bg-friction-10 px-4 py-3 text-[13px] text-friction">
+                      <p className="font-medium">Simulasi agen gagal dijalankan</p>
+                      <p className="mt-0.5 text-[12px]">{simError}</p>
+                    </div>
+                  )}
+                  {!simError && agentsShown === 0 && (
                     <div className="flex items-center gap-3 px-3 py-6 text-[13px] text-muted">
                       <LoaderCircle size={14} className="animate-spin text-primary-40" />
                       Menyiapkan persona calon pelanggan…

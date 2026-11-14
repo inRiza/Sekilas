@@ -11,6 +11,7 @@ import { Dialog } from '@/components/ui/dialog';
 import { Input, Label } from '@/components/ui/form';
 import { ArrowRightIcon, PlusIcon, StoreIcon } from '@/components/ui/icons';
 import {
+  cloneAnalysisWithTranscript,
   createAnalysis,
   deleteAnalysis,
   fetchAnalyses,
@@ -251,13 +252,29 @@ function BusinessAnalysesInner() {
                       </div>
                     </div>
 
-                    <div className="mt-4 pt-2 flex items-center gap-2">
+                    <div className="mt-4 pt-2 flex flex-wrap items-center gap-2">
                       <Link
                         href={`/business/analysis/konteks?analysisId=${encodeURIComponent(analysis.id)}&businessId=${encodeURIComponent(activeBiz.id)}`}
                         className="h-8.5 px-3 rounded-md border border-line bg-white text-xs font-medium text-muted hover:text-ink hover:bg-panel flex items-center justify-center transition"
                       >
                         Konteks
                       </Link>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          try {
+                            const cloned = await cloneAnalysisWithTranscript(analysis.id);
+                            router.push(
+                              `/business/analysis/verifikasi?analysisId=${encodeURIComponent(cloned.id)}&businessId=${encodeURIComponent(activeBiz.id)}`,
+                            );
+                          } catch (err) {
+                            alert(err instanceof Error ? err.message : 'Gagal menyalin analisis.');
+                          }
+                        }}
+                        className="h-8.5 px-3 rounded-md border border-line bg-white text-xs font-medium text-muted hover:text-ink hover:bg-panel flex items-center justify-center transition"
+                      >
+                        Salin transkrip
+                      </button>
                       {isReady ? (
                         <Link
                           href={`/business/analysis?analysisId=${encodeURIComponent(analysis.id)}`}

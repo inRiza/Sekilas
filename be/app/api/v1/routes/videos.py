@@ -28,6 +28,7 @@ from app.services.crud import (
     upsert_video_metadata,
     video_model_to_schema,
 )
+from app.services.llm.router import LLMUnavailableError
 from app.services.twin.local_runner import VIDEO_EXTS, find_local_video, local_video_dir
 
 router = APIRouter(prefix="/analyses/{analysis_id}/video", tags=["video"])
@@ -130,9 +131,12 @@ def complete_video_upload(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Stempel waktu kasir harus lebih dari 0 detik",
         )
-    return complete_video_and_enqueue_jobs(
-        session, analysis, body, actor=user.id, idempotency_key=idempotency_key
-    )
+    try:
+        return complete_video_and_enqueue_jobs(
+            session, analysis, body, actor=user.id, idempotency_key=idempotency_key
+        )
+    except LLMUnavailableError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
 
 @router.get("/processing", response_model=JobState)

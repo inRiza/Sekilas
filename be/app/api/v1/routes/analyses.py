@@ -9,9 +9,10 @@ from sqlalchemy.orm import selectinload
 from app.core.db import SessionDep
 from app.models.entities import Analysis as AnalysisModel
 from app.models.entities import Business as BusinessModel
-from app.schemas.analysis import Analysis, AnalysisCreate, AnalysisUpdate
+from app.schemas.analysis import Analysis, AnalysisCloneRequest, AnalysisCreate, AnalysisUpdate
 from app.services.crud import (
     analysis_to_schema,
+    clone_analysis_with_transcript,
     default_context_for_business,
     load_analysis_with_relations,
     upsert_analysis_context,
@@ -155,3 +156,16 @@ def delete_analysis(
 
     session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/{analysis_id}/clone", response_model=Analysis, status_code=status.HTTP_201_CREATED)
+def clone_analysis(
+    analysis_id: str,
+    session: SessionDep,
+    body: AnalysisCloneRequest | None = None,
+) -> Analysis:
+    """Buat analisis baru dengan menyalin konteks, video, dan transkrip yang sama (tanpa menjalankan simulasi)."""
+    source = load_analysis_with_relations(session, analysis_id)
+    if source is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Analisis sumber tidak ditemukan.")
+    return clone_analysis_with_transcript(session, source, name=body.name if body else None)

@@ -384,12 +384,13 @@ class AgentDecisionRecord(Base, TimestampMixin):
     stopped_at_segment_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     deciding_factor: Mapped[str] = mapped_column(Text, nullable=False)
     factor_segment_ids: Mapped[list[str]] = mapped_column(JSONB, default=list, nullable=False)
-    hesitation_score: Mapped[int] = mapped_column(Integer, default=1, nullable=False)  # 1..5
+    # Jejak monolog & keputusan per segmen untuk structural prefix reuse saat Mode 2 (terverifikasi_simulasi)
+    segment_traces: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, default=list, nullable=False)
 
-    # Pesan 2: Atribusi ke katalog hipotesis (H1..H10, H0) dengan kutipan terverifikasi
+    # Pesan 2: Atribusi ke katalog isyarat (H1..H10, H0) dengan arah & relevansi 0..3
     attributions: Mapped[list[dict[str, Any]]] = mapped_column(
         JSONB, default=list, nullable=False
-    )  # [{"hypothesis_id": "H8", "strength": 3, "evidence": "..."}]
+    )  # [{"cue_code": "H8", "direction": "menghambat", "relevance_score": 3, "evidence": "..."}]
     primary_hypothesis_id: Mapped[str | None] = mapped_column(String(16), nullable=True)
     other_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
