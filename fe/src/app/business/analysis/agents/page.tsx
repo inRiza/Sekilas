@@ -1,6 +1,6 @@
 'use client';
 
-import { ChevronDown, Clock, MapPin, Quote, UserRound, Wallet } from 'lucide-react';
+import { ChevronDown, Clock, MapPin, Quote, Route, UserRound, Wallet } from 'lucide-react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import React, { Suspense, useEffect, useMemo, useState } from 'react';
 
@@ -9,7 +9,6 @@ import { Button } from '@/components/ui/button';
 import { Chip } from '@/components/ui/form';
 import { ArrowLeftIcon } from '@/components/ui/icons';
 import { fetchAgentDecisions } from '@/lib/api/crud';
-import { MOCK_AGENTS } from '@/lib/mock/agents';
 import type { AgentDecision, FinalDecision } from '@/types/api';
 
 const DECISION: Record<FinalDecision, { label: string; variant: 'impact' | 'friction' | 'neutral' | 'primary' }> = {
@@ -34,7 +33,17 @@ function humanize(value: string) {
 }
 
 /** Satu agen: ringkas saat tertutup, lengkap (monolog, persona, alasan) saat dibuka. */
-function AgentItem({ agent, open, onToggle }: { agent: AgentDecision; open: boolean; onToggle: () => void }) {
+function AgentItem({
+  agent,
+  open,
+  onToggle,
+  onPlay3d,
+}: {
+  agent: AgentDecision;
+  open: boolean;
+  onToggle: () => void;
+  onPlay3d: () => void;
+}) {
   const d = DECISION[agent.final_decision];
   const p = agent.persona;
 
@@ -96,6 +105,10 @@ function AgentItem({ agent, open, onToggle }: { agent: AgentDecision; open: bool
               </Badge>
             </div>
           </div>
+
+          <Button variant="secondary" size="sm" className="!rounded-md" onClick={onPlay3d}>
+            <Route size={14} /> Putar perjalanannya di Visual Twin
+          </Button>
         </div>
       )}
     </li>
@@ -111,14 +124,10 @@ function AgenExplorerInner() {
     businessId ? `&businessId=${encodeURIComponent(businessId)}` : ''
   }`;
 
-  const [allAgents, setAllAgents] = useState<AgentDecision[]>(
-    analysisId === 'selasar-kopi' ? MOCK_AGENTS : [],
-  );
+  const [allAgents, setAllAgents] = useState<AgentDecision[]>([]);
   const [decisionFilter, setDecisionFilter] = useState<'all' | FinalDecision>('all');
   const [segmentFilter, setSegmentFilter] = useState<string>('all');
-  const [openId, setOpenId] = useState<number | null>(
-    analysisId === 'selasar-kopi' ? (MOCK_AGENTS[0]?.agent_id ?? null) : null,
-  );
+  const [openId, setOpenId] = useState<number | null>(null);
 
   useEffect(() => {
     void fetchAgentDecisions(analysisId).then((list) => {
@@ -190,6 +199,7 @@ function AgenExplorerInner() {
                       agent={a}
                       open={openId === a.agent_id}
                       onToggle={() => setOpenId((id) => (id === a.agent_id ? null : a.agent_id))}
+                      onPlay3d={() => router.push(`/business/analysis${querySuffix}&agent=${a.agent_id}#twin`)}
                     />
                   ))}
                 </ul>
