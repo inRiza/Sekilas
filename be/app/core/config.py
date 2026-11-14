@@ -12,6 +12,8 @@ class Settings(BaseSettings):
     cors_origins: list[str] = ["http://localhost:3000"]
 
     database_url: str = "postgresql+psycopg://sekilas:sekilas@localhost:5432/sekilas"
+    supabase_url: str = "https://qqfyitqxrcufjskwaldp.supabase.co"
+    supabase_publishable_key: str = "sb_publishable_lcbTN_odHD3JCdPqbUFfLw_vkeTdfWq"
     redis_url: str = "redis://localhost:6379/0"
     storage_dir: Path = Path("./storage")
 

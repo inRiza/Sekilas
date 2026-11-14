@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException, Response, status
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
+from app.core.auth import CurrentUserDep
 from app.core.db import SessionDep
 from app.models.entities import Analysis as AnalysisModel
 from app.models.entities import Business as BusinessModel
@@ -41,8 +42,10 @@ def list_businesses(
 def create_business(
     body: BusinessCreate,
     session: SessionDep,
+    current_user: CurrentUserDep,
 ) -> BusinessOut:
-    ensure_user(session, body.user_id or DEFAULT_USER_ID)
+    resolved_user_id = body.user_id if body.user_id and body.user_id != DEFAULT_USER_ID else current_user.id
+    ensure_user(session, resolved_user_id)
     biz_id = f"biz_{uuid4().hex[:12]}"
     ctx = body.context or default_context_for_business(
         name=body.name.strip(),
@@ -51,7 +54,7 @@ def create_business(
     )
     biz = BusinessModel(
         id=biz_id,
-        user_id=body.user_id or DEFAULT_USER_ID,
+        user_id=resolved_user_id,
         name=body.name.strip(),
         branch_name=(body.branch_name or "Pusat").strip() or "Pusat",
         category=body.category,
