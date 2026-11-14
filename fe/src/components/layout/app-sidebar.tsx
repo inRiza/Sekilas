@@ -225,7 +225,7 @@ function AppSidebarInner() {
         <Link
           href={newAnalysisTargetHref}
           title="Analisis baru"
-          className="btn-primary flex h-9 items-center justify-center gap-2 rounded-lg px-3 text-[13px] font-medium text-white group-data-[collapsible=icon]/sidebar:px-0 [&>span]:group-data-[collapsible=icon]/sidebar:hidden"
+          className="btn-primary flex h-9 items-center justify-center gap-2 rounded-md px-3 text-[13px] font-medium text-white group-data-[collapsible=icon]/sidebar:px-0 [&>span]:group-data-[collapsible=icon]/sidebar:hidden"
         >
           <PlusIcon size={16} />
           <span>Analisis baru</span>

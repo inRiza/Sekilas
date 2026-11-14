@@ -165,7 +165,7 @@ function DemoTwin({
             <button
               type="button"
               onClick={() => onSelectWaypoint?.(z.id)}
-              className={`whitespace-nowrap rounded-full border px-2.5 py-0.5 font-mono text-[10px] transition shadow-xs ${
+              className={`whitespace-nowrap rounded-md border px-2.5 py-0.5 font-mono text-[10px] transition shadow-xs ${
                 isSelected
                   ? "border-primary-40 bg-primary-40 text-white font-semibold scale-105"
                   : z.hot
@@ -750,7 +750,7 @@ function AgentLayer({
               <button
                 type="button"
                 onClick={() => onSelectStop?.(selected ? null : stop.index)}
-                className={`whitespace-nowrap rounded-full border px-2 py-0.5 text-[11px] font-medium shadow-[0_1px_2px_rgba(16,24,40,0.08)] transition ${
+                className={`whitespace-nowrap rounded-md border px-2 py-0.5 text-[11px] font-medium shadow-[0_1px_2px_rgba(16,24,40,0.08)] transition ${
                   selected
                     ? 'border-ink bg-ink text-white'
                     : leaks > 0
@@ -967,7 +967,7 @@ function ModelStage({
               <button
                 type="button"
                 onClick={() => onSelectWaypoint?.(pin.id)}
-                className={`whitespace-nowrap rounded-full border px-2.5 py-0.5 font-mono text-[10px] transition shadow-xs ${
+                className={`whitespace-nowrap rounded-md border px-2.5 py-0.5 font-mono text-[10px] transition shadow-xs ${
                   isSelected
                     ? "border-primary-40 bg-primary-40 text-white font-semibold scale-105"
                     : pin.hot
