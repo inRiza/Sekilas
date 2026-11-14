@@ -187,9 +187,12 @@ Lihat panduan lengkap dan opsi worker GPU di [twin/README.md](twin/README.md).
 
 ## Akun Demonstrasi
 
-Aplikasi menggunakan **Supabase Auth** untuk autentikasi pengguna:
-- **Pendaftaran / Login:** pengguna dapat membuat akun baru langsung melalui halaman `/daftar` atau masuk di `/masuk`.
-- **Data Contoh Bawaan:** [`supabase/seed.sql`](supabase/seed.sql) menyediakan data sampel analisis (*Selasar Kopi*, `selasar-kopi`) untuk demonstrasi alur dasbor dan Visual Twin 3D. *(Tambahkan email & kata sandi akun demo tim di sini apabila akun demo khusus telah didaftarkan di Supabase Auth.)*
+Aplikasi menggunakan **Supabase Auth** untuk autentikasi pengguna. Untuk pengujian cepat, silakan masuk melalui `/masuk` menggunakan akun demonstrasi berikut:
+
+- **Email:** `icon.firdaus@gmail.com`
+- **Password:** `icanmainsekilas`
+
+Pengguna juga dapat membuat akun baru langsung melalui `/daftar`. Data sampel bawaan (*Selasar Kopi*, `selasar-kopi`) tersedia di [`supabase/seed.sql`](supabase/seed.sql).
 
 ---
 
