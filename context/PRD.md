@@ -21,8 +21,10 @@
 13. **Bisnis -> analisis.** Akun punya beberapa bisnis; tiap bisnis punya beberapa analisis. Konteks usaha **disalin (snapshot)** ke tiap analisis saat dibuat, bukan dirujuk ke bisnis, agar hasil lama tetap bisa diaudit. Bisnis menyimpan `primary_analysis_id` yang dibuka dari daftar bisnis (4.1).
 14. **Proyeksi dua tingkat.** Mencentang perbaikan langsung memberi `perkiraan_cepat` (estimator, tanpa LLM). Hasil `terverifikasi_simulasi` hanya dari run ablasi berpasangan (F6-D), dicache, dan dijalankan atas permintaan (4.4.4).
 15. **Checkpoint dipilih AI, pemilik hanya mengonfirmasi titik kasir.** Pemilik tidak mengetuk checkpoint saat merekam. VLM menandai checkpoint jalur (terlihat dari jalan, pintu atau tangga, penanda atau papan, menu dan harga, titik pesan) beserta stempel waktunya saat menyusun transkrip; pemilik hanya mengisi atau mengonfirmasi menit titik pesan/kasir, yang menjadi akhir jalur (4.3).
+16. **Tanpa RAG dan tanpa edit transkrip via LLM.** Panel Tanya Sekilas, basis pengetahuan RAG (dulu F8), dan usulan edit transkrip oleh LLM dikeluarkan dari lingkup. Transkrip dikoreksi pemilik lewat edit langsung (F4); cara menjalankan perbaikan diambil dari katalog tindakan (F6-C).
 
 **Perubahan 1.4 terhadap 1.3:**
+- RAG/Panel Tanya Sekilas (F8) dan edit transkrip via LLM dihapus dari lingkup (keputusan 16); halaman 5, F4, risiko, stack, milestone, dan pertanyaan terbuka disesuaikan.
 - Model data bertingkat akun -> bisnis -> analisis, dengan konteks snapshot per analisis dan `primary_analysis_id` di bisnis (4.1).
 - Tabel 4.4 diganti kontrak API lengkap: rute bisnis, analisis dan wizard, hasil, jelajah agen, proyeksi, mode demo, status dan `next_action`, serta aturan lintas endpoint (202 + job, `Idempotency-Key`, galat 409 berkode, versi di setiap respons, paginasi kursor, kuota, kepemilikan) (4.2, 4.4).
 - Checkpoint tidak lagi diketuk pemilik: VLM menandai checkpoint dari video, pemilik hanya mengonfirmasi titik kasir; zona dari checkpoint AI (F2, F3, 4.3, F7).
@@ -420,7 +422,7 @@ Aplikasi berbentuk wizard satu arah (halaman 1 sampai 7), dengan dua halaman lan
 
 **4. Memproses.** Progres bertahap (mengunggah, membaca video, menyusun kejadian, membangun tampilan 3D). Transkrip dan Visual Twin berjalan paralel; halaman 5 terbuka begitu transkrip siap. Jika transkrip gagal, ada tombol Coba lagi tanpa kehilangan video. Jika Visual Twin gagal, alur lanjut dengan tampilan cadangan.
 
-**5. Verifikasi Transkrip.** Pemutar video dengan garis waktu segmen, dan daftar segmen berpasangan dengan frame bukti. Aksi per segmen: Benar, Ubah, Hapus, Tambah. Edit via LLM (instruksi singkat, hasil sebelum/sesudah, berlaku setelah Terima). Segmen berkeyakinan rendah masuk antrean wajib konfirmasi. Tombol Jalankan Simulasi nonaktif sampai antrean itu kosong. Peta mini Visual Twin tampil jika sudah siap.
+**5. Verifikasi Transkrip.** Pemutar video dengan garis waktu segmen, dan daftar segmen berpasangan dengan frame bukti. Aksi per segmen: Benar, Ubah (edit teks langsung), Hapus, Tambah. Segmen berkeyakinan rendah masuk antrean wajib konfirmasi. Tombol Jalankan Simulasi nonaktif sampai antrean itu kosong. Peta mini Visual Twin tampil jika sudah siap.
 
 **6. Menjalankan Simulasi.** Progres agen (misal 320 dari 500 agen, atau 10 dari 20 pada demo), dengan tahap menjalankan agen, mengagregasi, dan menyusun dasbor. Jika sebagian batch gagal, batch itu diulang otomatis; jika tetap gagal, dasbor memberi penanda jumlah agen yang berhasil.
 
@@ -473,7 +475,7 @@ Catatan KPI: Hipotesis utama dan porsi dijelaskan diambil dari skor atribusi (F6
 | --- | --- |
 | **Wajib** | Halaman 2, 3, 5, 7: konteks, rekam, verifikasi, dasbor (KPI, corong 4 tahap, peta panas, rekomendasi) |
 | **Versi sederhana** | Halaman 1 satu tombol; halaman 4 dan 6 layar tunggu; halaman 10 daftar sederhana; Visual Twin berupa awan titik dan jalur kamera tanpa Gaussian Splatting |
-| **Boleh ditunda** | Halaman 8 (jadi panel), halaman 9 (jadi bagian akhir dasbor), lapisan agen beranimasi, peta mini di halaman 5, Panel Tanya Sekilas (RAG), edit via LLM |
+| **Boleh ditunda** | Halaman 8 (jadi panel), halaman 9 (jadi bagian akhir dasbor), lapisan agen beranimasi, peta mini di halaman 5 |
 
 ---
 
@@ -618,8 +620,7 @@ interface TranscriptCheckpoint {          // dipilih VLM saat transkripsi (4.3)
 Transkrip diperiksa pemilik sebelum simulasi, karena satu salah baca akan terduplikasi di 500 agen.
 
 - **Tampilan:** pemutar video dan daftar segmen berpasangan dengan frame, tersinkron.
-- **Aksi per segmen:** Benar, Ubah (edit teks langsung, selalu tersedia dan tidak bergantung LLM), Hapus, Tambah segmen.
-- **Edit via LLM (tambahan):** pemilik menulis instruksi singkat, LLM mengusulkan perbaikan sebagai sebelum dan sesudah, berlaku hanya setelah Terima.
+- **Aksi per segmen:** Benar, Ubah (edit teks langsung oleh pemilik, tanpa LLM), Hapus, Tambah segmen.
 - **Beban minimal:** hanya segmen `tidak_pasti` yang wajib dikonfirmasi atau dihapus; sisanya cukup ditinjau.
 
 **Kriteria penerimaan:**
@@ -784,7 +785,7 @@ Untuk setiap segmen: jumlah agen dengan `stopped_at_segment_id` sama dengan id s
 
 #### C. Atribusi ke Katalog Hipotesis dan Skor
 
-**Katalog hipotesis.** Daftar tetap masalah yang mungkin terjadi pada tempat makan. Satu katalog dipakai bersama oleh pesan 2 agen (F5), rekomendasi, dan RAG (F8). Setiap butir berisi definisi, kapan termasuk, kapan tidak termasuk (dengan 1 sampai 2 contoh kalimat), sudut pandang terkait (`vantage` dari F3), dan tindakan perbaikan dari katalog tindakan. Isi awal (usulan, dikurasi tim):
+**Katalog hipotesis.** Daftar tetap masalah yang mungkin terjadi pada tempat makan. Satu katalog dipakai bersama oleh pesan 2 agen (F5) dan rekomendasi. Setiap butir berisi definisi, kapan termasuk, kapan tidak termasuk (dengan 1 sampai 2 contoh kalimat), sudut pandang terkait (`vantage` dari F3), dan tindakan perbaikan dari katalog tindakan. Isi awal (usulan, dikurasi tim):
 
 | ID | Hipotesis | `vantage` terkait |
 | --- | --- | --- |
@@ -823,7 +824,7 @@ Daftar prioritas perbaikan disusun **tanpa VLM tambahan**. Semua bahannya sudah 
 | Batasan pemilik | chip "tujuan" dan "tidak bisa diubah" dari F1 |
 | Lokasi | pose kamera segmen terkait (4.3, F7) |
 
-**Katalog tindakan (wajib, bukan bagian RAG opsional).** Untuk setiap hipotesis H1 sampai H10 tersedia 2 sampai 4 tindakan baku yang dikurasi tim, masing-masing dengan id, judul, usaha (rendah, sedang, tinggi), perkiraan biaya kasar, dan bagian toko yang diubah (dipakai untuk mencocokkan chip "tidak bisa diubah"). Contoh: H2 -> `A2.1` pasang papan jam buka yang terbaca dari jalan (rendah), `A2.2` lampu atau tanda BUKA yang menyala (rendah); H5 -> `A5.1` penunjuk arah dan info di kaki tangga (rendah), `A5.2` perbaikan akses masuk (tinggi).
+**Katalog tindakan (wajib).** Untuk setiap hipotesis H1 sampai H10 tersedia 2 sampai 4 tindakan baku yang dikurasi tim, masing-masing dengan id, judul, usaha (rendah, sedang, tinggi), perkiraan biaya kasar, dan bagian toko yang diubah (dipakai untuk mencocokkan chip "tidak bisa diubah"). Contoh: H2 -> `A2.1` pasang papan jam buka yang terbaca dari jalan (rendah), `A2.2` lampu atau tanda BUKA yang menyala (rendah); H5 -> `A5.1` penunjuk arah dan info di kaki tangga (rendah), `A5.2` perbaikan akses masuk (tinggi).
 
 **Alur penyusunan:**
 
@@ -933,14 +934,6 @@ Penjangkaran pin ke segmen transkrip terjadi saat agregasi (4.3), bukan di pipel
 - Model tampil tegak dan berdiri di lantai grid.
 - Tidak ada wajah atau plat terbaca di model, karena hanya dibangun dari frame terburam.
 
-### F8. Basis Pengetahuan Pendamping (RAG), opsional dan ditunda
-
-Basis pengetahuan hanya membantu menjelaskan, tidak menghitung.
-
-- **Isi:** katalog hipotesis (F6-C, dipakai juga oleh pesan 2 agen dan rekomendasi), katalog tindakan (cara menjalankan, perkiraan biaya kasar), panduan praktik UMKM makanan, riwayat analisis toko yang sama.
-- **Penggunaan:** kartu cara menjalankan untuk rekomendasi yang sudah lolos peringkat (F6-C), dan Panel Tanya Sekilas.
-- **Aturan:** setiap jawaban menampilkan sumber atau menjawab *Belum ada panduan untuk ini*. RAG tidak boleh menambah rekomendasi Prioritas atau mengubah angka dampak. Angka di jawaban lewat verifier yang sama dengan F6.
-
 ---
 
 ## 7. Kebutuhan Non-Fungsional
@@ -950,9 +943,9 @@ Basis pengetahuan hanya membantu menjelaskan, tidak menghitung.
 | **Privasi** | Wajah dan plat diburamkan di browser sebelum unggah. Hanya video terburam yang dikirim ke vendor model. Video mentah dihapus setelah ekstraksi frame; yang disimpan hanya frame bukti terburam, transkrip, dan model 3D dari frame terburam. Orang dan kendaraan di-masking dari model 3D. VLM dilarang menulis ciri pribadi orang. Mengacu UU Pelindungan Data Pribadi (UU 27/2022). |
 | **Kinerja** | Transkrip siap dalam kurang dari 2 menit untuk video 2 menit. Visual Twin kurang dari 5 menit di GPU (paralel). Satu run 500 agen kurang dari 3 menit (demo 20 agen <30 detik). Ablasi berjalan di latar belakang dan hasilnya muncul bertahap di dasbor. |
 | **Kinerja tampilan** | Dasbor interaktif di ponsel kelas menengah. Visual Twin dimuat bertahap dan beralih ke tampilan cadangan otomatis. |
-| **Keterbacaan** | Mobile-first, bahasa Indonesia, tanpa istilah teknis di layar pemilik (tidak ada kata point cloud, splat, RAG, ablasi). |
+| **Keterbacaan** | Mobile-first, bahasa Indonesia, tanpa istilah teknis di layar pemilik (tidak ada kata point cloud, splat, ablasi). |
 | **Auditabilitas** | Fitur input F1, versi matriks $W$, seed, versi tabel segmen, versi template prompt, daftar `PersonaSpec`, versi model LLM/VLM, semua panggilan model, perubahan transkrip oleh pemilik, parameter rekonstruksi 3D, dan nomor run tercatat (misal lewat Postgres dan Langfuse). Versi model dikunci per analisis. Mengubah isian F1 menandai persona dan hasil kedaluwarsa. |
-| **Keandalan** | Output JSON divalidasi skema; batch yang gagal diulang tanpa menjalankan ulang batch lain. Jika LLM gagal, edit langsung tetap bisa dipakai. Jika rekonstruksi 3D gagal atau kualitas rendah, dasbor tetap utuh dengan tampilan cadangan. |
+| **Keandalan** | Output JSON divalidasi skema; batch yang gagal diulang tanpa menjalankan ulang batch lain. Jika rekonstruksi 3D gagal atau kualitas rendah, dasbor tetap utuh dengan tampilan cadangan. |
 | **Biaya (PERKIRAAN)** | *Perkiraan biaya berdasarkan asumsi token, bukan hasil ukur pasti:*<br>- **Tarif GPT-6 Luna:** \$0,10 input / \$0,50 output per juta token (cache read \$0,01 per juta token; Batch API \$0,05 input / \$0,25 output).<br>- **Tarif Gemini 3.8 Flash:** \$0,75 input / \$3,75 output per juta token (harga perkenalan s.d. 31 Des 2026, setelahnya \$1,50 / \$7,50).<br>- **Biaya agen per analisis (1 run dasar, pesan 1 + pesan 2):** per batch 10 agen, pesan 1 sekitar \$0,003 (input ±8 ribu token, sebagian dari cache; output ±5 ribu token) dan pesan 2 sekitar \$0,001 (konteks dari cache, output ±1,5 ribu token).<br>- **Analisis penuh 500 agen:** 50 batch x 2 pesan = 100 panggilan, sekitar \$0,2 (±Rp3.600).<br>- **Demo 20 agen:** 2 batch x 2 pesan = 4 panggilan ditambah ringkasan, sekitar \$0,01 sampai \$0,015 (±Rp200 sampai Rp300).<br>- **Penyusunan rekomendasi (F6-D langkah 3):** 1 panggilan LLM teks per analisis, sekitar \$0,002 (±Rp40).<br>- **Ablasi opsional:** per hipotesis yang diuji bertambah satu run pesan 1, sekitar \$0,15 (500 agen) atau \$0,006 (20 agen).<br>- **Di luar biaya agen:** VLM Gemini dan Visual Twin (GPU atau mode lokal gratis) dihitung terpisah; perkiraan sebelumnya untuk komponen ini tidak berubah.<br>- **Kurs acuan:** Rp18.096 per US\$ (JISDOR, 10 November 2026).<br>- **Optimasi biaya:** Sebagian besar biaya ada pada token output agen. Langkah penghematan: batasi `max_output_tokens`, turunkan kedalaman mode `thinking`, gunakan prompt caching untuk sistem pesan/transkrip, hanya tulis hipotesis bernilai di atas 0 di pesan 2, serta alihkan run ablasi opsional ke Batch API (diskon 50%). |
 | **Infrastruktur 3D** | Produksi: GPU NVIDIA (CUDA) sebagai antrean pekerjaan terpisah dari API utama. Pengembangan: mode lokal CPU/Metal (11.2). |
 | **Lisensi** | Hanya komponen berlisensi yang mengizinkan pemakaian komersial yang masuk jalur produksi (lihat 11.1). Video uji berlisensi Creative Commons dicantumkan atribusinya (Lampiran A). |
@@ -1019,7 +1012,7 @@ Basis pengetahuan hanya membantu menjelaskan, tidak menghitung.
 | Pemilik malas verifikasi | Hanya segmen tidak pasti yang wajib |
 | Video terlalu panjang atau berhenti sembarang | Isian titik kasir dan batas durasi otomatis |
 | Video terkompres (WhatsApp, media sosial) | Cek resolusi sisi terpendek, sarankan file asli dari galeri |
-| Rekomendasi generik atau biaya karangan | Rekomendasi hanya dari hipotesis yang lolos peringkat dan disertai kutipan agen; RAG hanya mengisi cara menjalankan dengan sumber; filter batasan "tidak bisa diubah" dari F1 |
+| Rekomendasi generik atau biaya karangan | Rekomendasi hanya dari hipotesis yang lolos peringkat dan disertai kutipan agen; cara menjalankan diambil dari katalog tindakan yang dikurasi; filter batasan "tidak bisa diubah" dari F1 |
 | 3 sampai 5 video kalibrasi tidak cukup untuk klaim statistik | Klaim dibatasi pada hipotesis titik gesekan dan perbandingan peringkat |
 | Waktu hackathon tidak cukup | Ikuti prioritas 5.6 |
 
@@ -1038,7 +1031,6 @@ Basis pengetahuan hanya membantu menjelaskan, tidak menghitung.
 - Katalog hipotesis H1 sampai H10 ditambah H0; 1 run dasar; ablasi opsional atas permintaan (disaring dengan batasan "tidak bisa diubah" dari F1).
 - Kalibrasi pada 3 sampai 5 video dengan tally manual.
 - Visual Twin: satu jalur per video, awan titik sebagai standar, Gaussian Splatting opsional.
-- RAG: opsional; jika dikerjakan, katalog hipotesis dan tindakan plus 10 sampai 20 dokumen panduan.
 
 ---
 
@@ -1077,7 +1069,6 @@ Basis pengetahuan hanya membantu menjelaskan, tidak menghitung.
 | Format 3D | `transforms.json` antar tahap; PLY terdesimasi (atau SPZ/`.splat` untuk splat); JSON untuk jalur dan metadata |
 | Data | Postgres, object storage untuk frame dan aset 3D |
 | Observabilitas | Langfuse |
-| RAG (opsional) | Postgres dengan pgvector atau Chroma, embedding multibahasa |
 
 ### 11.1 Visual Twin: pendekatan reverse engineering dan lisensi
 
@@ -1135,6 +1126,10 @@ video -> ffmpeg (2-3 fps) -> COLMAP resmi, CPU:
 - Dijalankan lewat `twin/scripts/local_twin.sh <video> <nama> [--fps N] [--splat] [--matcher exhaustive] [--reuse]`. Hasil terbit otomatis ke halaman Riwayat.
 - Waktu terukur di Apple M1 16 GB: awan titik sekitar 5 sampai 7 menit untuk 120 sampai 160 frame; dengan splat 2.000 sampai 3.000 langkah total sekitar 13 sampai 16 menit.
 - Bentuk keluaran sama dengan mode GPU, sehingga dasbor tidak perlu tahu mode mana yang dipakai.
+- **Integrasi dengan API (demo):** `POST /analyses/{aid}/video/complete` membalas 202 dan memulai dua job di thread proses API: transkrip VLM dan Visual Twin. Status dibaca lewat `GET /analyses/{aid}/video/processing` (transkrip) dan `GET /analyses/{aid}/twin` (3D, per tahap). Antrean worker terpisah (4.2) tetap target produksi.
+- Job twin mengambil video terburam dari Supabase Storage (`storage_key`), atau dari salinan yang dikirim FE ke `POST /analyses/{aid}/video/file` bila unggahan ke Storage gagal. Salinan lokal dihapus begitu job selesai (bagian 7, privasi).
+- Hasil 3D (`.ply`, `.splat`, `.json` arah atas, `.path.json` jalur kamera) diunggah ke Storage di `videos/twins/<aid>/`; URL publiknya disimpan di `twin_assets`. Bila server dimulai ulang saat job berjalan, job dilanjutkan otomatis selama videonya masih tersedia.
+- Zona jalur (F7) diturunkan dari sudut pandang segmen transkrip (jalan, pintu, dalam); nama ubahan pemilik disimpan lewat `POST /analyses/{aid}/twin/zones/{zone_id}/rename`.
 
 ---
 
@@ -1144,7 +1139,7 @@ Urutan sengaja menempatkan pemodelan persona diskret (M4a) dan uji validitas per
 
 - [ ] **M1: Ingesti.** Form konteks F1 satu kolom (Informasi dasar, Pelanggan & tujuan, Menu & harga lewat unggah Excel atau foto, Jam operasional), rekam atau unggah video dengan isian stempel waktu kasir, indikator gerak, blur wajah dan plat di browser, pembuangan frame buram.
 - [ ] **M2: Transkrip VLM.** Gemini 3.8 Flash menghasilkan `TranscriptSegment[]` tak terstruktur dengan frame bukti dan kolom `not_visible` (prompt VLM hanya menerima satu kalimat jenis usaha, tanpa data form lain).
-- [ ] **M3: Verifikasi.** Sinkron video dan segmen, edit langsung, konfirmasi segmen tidak pasti. Edit via LLM menyusul jika ada waktu.
+- [ ] **M3: Verifikasi.** Sinkron video dan segmen, edit langsung, konfirmasi segmen tidak pasti.
 - [ ] **M4a: Model persona.** Pembuatan tabel segmen diskret, penulisan tangan matriks $W$, implementasi penyesuaian marginal IPF, generator `PersonaSpec` berbasis seed tetap, pengujian stratifikasi dari input F1.
 - [ ] **M4b: Mesin agen.** Template prompt slot-fill dari `PersonaSpec`, batching GPT-6 Luna dengan prompt caching, validasi skema keluaran 4 tahap (tanpa `will_return`), penyimpanan monolog dan keputusan agen di Postgres.
 - [ ] **M5: Spike validitas.**
@@ -1159,7 +1154,7 @@ Urutan sengaja menempatkan pemodelan persona diskret (M4a) dan uji validitas per
 - [ ] **M10: Rekomendasi dan Pareto.** Kurasi katalog tindakan (2 sampai 4 tindakan per hipotesis), panggilan LLM penyesuaian dengan validasi `action_id` dan `segment_ids`, Pareto dari share, filter batasan "tidak bisa diubah", tanda Prioritas. Ablasi opsional (penulisan ulang segmen dengan templat, run berpasangan, matriks disebut x terbukti) bila ada waktu.
 - [ ] **M11: Rencana pengukuran.** Lembar tally cetak dengan titik berdiri dari Visual Twin, jadwal observasi dari jam ramai F1, catatan kepercayaan.
 - [ ] **M12: Kalibrasi.** 3 sampai 5 video dengan tally manual, uji arah efek, uji ketepatan pin.
-- [ ] **M13 (opsional):** Gaussian Splatting di produksi, lapisan Agen beranimasi, Jelajah Agen dengan jalur agen, peta mini di halaman 5, edit via LLM, RAG dan Panel Tanya Sekilas.
+- [ ] **M13 (opsional):** Gaussian Splatting di produksi, lapisan Agen beranimasi, Jelajah Agen dengan jalur agen, peta mini di halaman 5.
 
 ---
 
@@ -1176,10 +1171,9 @@ Urutan sengaja menempatkan pemodelan persona diskret (M4a) dan uji validitas per
 9. **VGGT lolos lisensi** untuk pemakaian komersial? Jika tidak, jalur produksi tetap COLMAP.
 10. **Apakah fitur geometris** (jarak pandang papan, jumlah anak tangga) nanti dijadikan isyarat simulasi? Usul: tidak untuk demo.
 11. **Skenario lingkungan** (hujan, jam ramai): dikeluarkan dari demo; dievaluasi lagi setelah kalibrasi.
-12. **RAG:** jika dikerjakan, siapa yang mengkurasi isinya dan seberapa sering diperbarui?
-13. **Kurasi tabel segmen dan matriks $W$:** Siapa yang bertanggung jawab mengisi dan mengurasi tabel segmen dan parameter bobot $W$, serta apa sumber data rujukannya (misal data BPS per kecamatan, survei demografi, atau konsensus tim)? Kapan jadwal peninjauan ulangnya?
-14. **Kontrol slider segmen oleh pemilik:** Apakah pemilik usaha diizinkan mengubah sebaran proporsi segmen secara manual lewat slider (misal pada layar konfirmasi "Siapa yang biasanya lewat?") atau sebaran dibiarkan terkunci murni dari model diskret? (usulan)
-15. **Batas masukan prompt agen:** Apakah input tambahan F1 selain tipe sekitar dan profil pelanggan (misalnya tujuan bisnis UMKM atau batasan tidak bisa diubah) perlu dimasukkan ke prompt penalaran agen? Saat ini diputuskan TIDAK (hanya digunakan pada lapisan rekomendasi Pareto).
+12. **Kurasi tabel segmen dan matriks $W$:** Siapa yang bertanggung jawab mengisi dan mengurasi tabel segmen dan parameter bobot $W$, serta apa sumber data rujukannya (misal data BPS per kecamatan, survei demografi, atau konsensus tim)? Kapan jadwal peninjauan ulangnya?
+13. **Kontrol slider segmen oleh pemilik:** Apakah pemilik usaha diizinkan mengubah sebaran proporsi segmen secara manual lewat slider (misal pada layar konfirmasi "Siapa yang biasanya lewat?") atau sebaran dibiarkan terkunci murni dari model diskret? (usulan)
+14. **Batas masukan prompt agen:** Apakah input tambahan F1 selain tipe sekitar dan profil pelanggan (misalnya tujuan bisnis UMKM atau batasan tidak bisa diubah) perlu dimasukkan ke prompt penalaran agen? Saat ini diputuskan TIDAK (hanya digunakan pada lapisan rekomendasi Pareto).
 
 ---
 
